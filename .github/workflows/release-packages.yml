@@ -229,7 +229,19 @@ jobs:
       - name: Compute SHA256 sidecar (Unix)
         if: runner.os != 'Windows'
         run: |
-          sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
+          # Linux ships `sha256sum` (coreutils); macOS ships `shasum -a 256`
+          # but no `sha256sum`. Both produce the same `<hash>  <filename>`
+          # output format that Scoop / Homebrew / dpkg parse from the first
+          # whitespace-separated field. Pre-fix the macOS legs of this matrix
+          # bombed at v0.5.386's release-packages.yml run with
+          # `sha256sum: command not found` (exit 127), cancelling the
+          # x86_64-apple-darwin sibling via fail-fast and shipping a release
+          # without macOS binaries.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
+          else
+            shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
+          fi
           cat "${{ matrix.artifact }}.tar.gz.sha256"
 
       - name: Compute SHA256 sidecar (Windows)
@@ -243,20 +255,38 @@ jobs:
           Get-Content "${{ matrix.artifact }}.zip.sha256"
 
       - name: Upload release asset (Unix)
-        if: runner.os != 'Windows' && github.event_name == 'release'
+        if: runner.os != 'Windows' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" "${{ matrix.artifact }}.tar.gz" --clobber
-          gh release upload "${{ github.event.release.tag_name }}" "${{ matrix.artifact }}.tar.gz.sha256" --clobber
+          # workflow_dispatch fallback: `github.event.release.tag_name` is
+          # only set for `release` events, so when triggered manually we
+          # look up the latest published release tag and upload to that.
+          # Pre-fix the v0.5.386 release shipped with NO assets uploaded
+          # because the original `release` run failed at await-tests, my
+          # workflow_dispatch bypass succeeded the build but skipped this
+          # upload step entirely.
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+            echo "workflow_dispatch fallback: uploading to latest release tag $TAG"
+          fi
+          gh release upload "$TAG" "${{ matrix.artifact }}.tar.gz" --clobber
+          gh release upload "$TAG" "${{ matrix.artifact }}.tar.gz.sha256" --clobber
 
       - name: Upload release asset (Windows)
-        if: runner.os == 'Windows' && github.event_name == 'release'
+        if: runner.os == 'Windows' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" "${{ matrix.artifact }}.zip" --clobber
-          gh release upload "${{ github.event.release.tag_name }}" "${{ matrix.artifact }}.zip.sha256" --clobber
+          $tag = "${{ github.event.release.tag_name }}"
+          if (-not $tag) {
+            $tag = (gh release list --limit 1 --json tagName --jq '.[0].tagName')
+            Write-Host "workflow_dispatch fallback: uploading to latest release tag $tag"
+          }
+          gh release upload "$tag" "${{ matrix.artifact }}.zip" --clobber
+          gh release upload "$tag" "${{ matrix.artifact }}.zip.sha256" --clobber
 
       - name: Upload build artifact (Unix, for deb + npm-publish jobs)
         if: runner.os != 'Windows'
