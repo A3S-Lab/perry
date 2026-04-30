@@ -6869,8 +6869,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         Expr::ArrayIsArray(o) => {
             // Fast path: static type is definitively array → emit
             // TAG_TRUE at compile time. Slow path: indeterminate
-            // type (Any / Unknown / no annotation) → emit runtime
-            // call to `js_array_is_array`, which correctly handles
+            // type (Any / Unknown / no annotation / Union including
+            // a non-array variant) → emit runtime call to
+            // `js_array_is_array`, which correctly handles
             // JSON.parse results, closure-captured values, function
             // returns typed `any`, and lazy arrays
             // (GC_TYPE_LAZY_ARRAY). Emitting TAG_FALSE as a compile-
@@ -6878,11 +6879,27 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // whenever the operand's static type was Any: the user's
             // `Array.isArray(JSON.parse("[...]"))` would always
             // return false despite being a real array at runtime.
+            //
+            // The fast-path TRUE check used to delegate to
+            // `is_array_expr`, but that helper deliberately treats a
+            // Union as array-typed when ANY variant is Array — which
+            // is correct for routing `.length` / `.push` dispatch on
+            // `T[] | null` after a truthy narrow, but wrong for
+            // `Array.isArray`: a parameter typed `number | number[]`
+            // would constant-fold to TAG_TRUE for every call site,
+            // making the if-guard always pick the array branch even
+            // when the runtime value is a number (issue #324). Use a
+            // strict match here instead — only pure `Array(_)` /
+            // `Tuple(_)` types short-circuit; anything Union-shaped
+            // falls through to the runtime.
             let v = lower_expr(ctx, o)?;
-            if is_array_expr(ctx, o) {
-                return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_TRUE)));
-            }
             if let Some(ty) = crate::type_analysis::static_type_of(ctx, o) {
+                if matches!(
+                    ty,
+                    perry_types::Type::Array(_) | perry_types::Type::Tuple(_)
+                ) {
+                    return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_TRUE)));
+                }
                 // Definitively not an array: emit TAG_FALSE. Leaves
                 // numeric / string / boolean literals and known
                 // object-class instances on the fast path.
