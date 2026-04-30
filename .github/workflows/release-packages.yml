@@ -54,12 +54,27 @@ jobs:
           # of burning the 45-min budget.
           for wf_file in "test.yml" "simctl-tests.yml"; do
             echo "::group::Waiting for $wf_file"
-            deadline=$(( SECONDS + 45 * 60 ))
+            # 60-min budget per workflow. Bumped from 45 → 60 after v0.5.386's
+            # release-packages run timed out at the 45-min wall while the
+            # newer Tests run on the same SHA was still in its doc-tests
+            # leg (40-50 min total). Tests on macos-14 routinely takes 50+
+            # min wall, so 45 min was always cutting it close. 60 min still
+            # well under the GitHub workflow-level 6h timeout.
+            deadline=$(( SECONDS + 60 * 60 ))
             retry_on_error=1
             while :; do
               set +e
+              # `per_page=20` (was 1) — return the LAST 20 runs on this SHA
+              # ordered by created_at desc, then `select(.conclusion ==
+              # "success")` to find the first successful one. Pre-fix
+              # per_page=1 returned only the newest run on the SHA, which
+              # might be in_progress while an older run on the SAME SHA was
+              # already green — the gate hung until timeout. Happened twice
+              # during v0.5.386's release-packages cycle (the main-branch
+              # Tests run was green, but a tag-triggered Tests run on the
+              # same SHA was newer + still running, locking the gate).
               api_out=$(gh api \
-                "/repos/$REPO/actions/workflows/$wf_file/runs?head_sha=$SHA&per_page=1" \
+                "/repos/$REPO/actions/workflows/$wf_file/runs?head_sha=$SHA&per_page=20" \
                 2>&1)
               rc=$?
               set -e
@@ -76,21 +91,27 @@ jobs:
                 exit 1
               fi
               retry_on_error=1
-              status=$(echo "$api_out" | jq -r '.workflow_runs[0].status // empty')
-              conclusion=$(echo "$api_out" | jq -r '.workflow_runs[0].conclusion // empty')
-              url=$(echo "$api_out" | jq -r '.workflow_runs[0].html_url // empty')
-              if [ -z "$status" ]; then
+              # Look for ANY successful run on this SHA (order-independent).
+              success_url=$(echo "$api_out" | jq -r '.workflow_runs[] | select(.status == "completed" and .conclusion == "success") | .html_url' | head -1)
+              # Look for any failed/cancelled/timed-out completed run as a
+              # FAIL signal — but only if there's NO successful run for
+              # this SHA. This way a flaky run that someone reran to green
+              # doesn't block the release.
+              fail_url=$(echo "$api_out" | jq -r '.workflow_runs[] | select(.status == "completed" and .conclusion != "success") | .html_url' | head -1)
+              # Newest run for the "still running" status line.
+              latest_status=$(echo "$api_out" | jq -r '.workflow_runs[0].status // empty')
+              latest_url=$(echo "$api_out" | jq -r '.workflow_runs[0].html_url // empty')
+              if [ -n "$success_url" ]; then
+                echo "  OK  $wf_file passed: $success_url"
+                break
+              elif [ -z "$latest_status" ]; then
                 echo "  no run found yet for $wf_file on $SHA — waiting"
-              elif [ "$status" = "completed" ]; then
-                if [ "$conclusion" = "success" ]; then
-                  echo "  OK  $wf_file passed: $url"
-                  break
-                else
-                  echo "  FAIL  $wf_file $conclusion: $url"
-                  exit 1
-                fi
+              elif [ "$latest_status" = "completed" ] && [ -n "$fail_url" ]; then
+                echo "  FAIL  $wf_file: every completed run on this SHA failed"
+                echo "        most-recent: $fail_url"
+                exit 1
               else
-                echo "  $wf_file: $status ($url) — waiting"
+                echo "  $wf_file: latest=$latest_status ($latest_url) — waiting"
               fi
               if [ $SECONDS -ge $deadline ]; then
                 echo "  timed out waiting for $wf_file"

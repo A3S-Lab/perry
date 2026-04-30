@@ -32,79 +32,30 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          shared-key: "${{ runner.os }}-perry"
+          # PRs read from cache; only main writes new entries.
+          # Avoids cache thrash from short-lived branches.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
   # ---------------------------------------------------------------------------
-  # Build compiler + runtime once, cache for downstream jobs
-  # ---------------------------------------------------------------------------
-  build:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      # macos-14 ships with ~14 GB free disk after the preinstalled Xcode +
-      # iOS/tvOS/watchOS simulator runtime images. Several `cargo build
-      # --release` jobs in this workflow consistently OOM'd at the cache
-      # restore step (`No space left on device` from the runner's own
-      # diagnostic writer, before cargo even started). Wiping the simulator
-      # runtime IMAGES — not the SDKs — reclaims ~15-25 GB without
-      # affecting cross-compile to `aarch64-apple-ios-sim` (that only needs
-      # the SDK, which lives inside the active Xcode app).
-      - name: Free up disk space (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          BEFORE=$(df -h / | tail -1 | awk '{print $4}')
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/*Simulator* || true
-          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/* || true
-          AFTER=$(df -h / | tail -1 | awk '{print $4}')
-          echo "Disk free: ${BEFORE} -> ${AFTER}"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          # NOTE: deliberately NOT caching `target/` — on macos-14 runners
-          # (~14 GB free out of the box after preinstalled Xcode + sims) the
-          # restored release artifacts pushed disk usage past the limit and
-          # the runner OOM'd before cargo even started. Registry+git cache
-          # alone gives ~80% of the warm-build win without the disk hit.
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Build release (runtime + stdlib + compiler)
-        run: cargo build --release
-
-      - name: Upload built binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: perry-binaries
-          path: |
-            target/release/perry
-            target/release/libperry_runtime.a
-            target/release/libperry_stdlib.a
-          retention-days: 1
-
-  # ---------------------------------------------------------------------------
   # Rust unit tests (266+ tests across all crates)
   # ---------------------------------------------------------------------------
+  # Note: a separate `build` job that produced runtime/stdlib/compiler
+  # artifacts USED to live here. It only fed `binary-size` (which now does
+  # its own quick build) — every other job did `cargo build --release`
+  # itself anyway, so `needs: build` was a serializing barrier with no
+  # cache benefit. Removed in v0.5.387 along with the `actions/cache@v4`
+  # blocks (replaced by `Swatinem/rust-cache@v2`, which handles target/
+  # pruning intelligently and avoids the disk-pressure issue that
+  # required the manual simulator-runtime wipe + cache=registry-only
+  # workaround). Each downstream job below builds in parallel directly.
   cargo-test:
     runs-on: macos-14
-    needs: build
     steps:
       - uses: actions/checkout@v4
 
@@ -116,31 +67,13 @@ jobs:
       # runtime IMAGES — not the SDKs — reclaims ~15-25 GB without
       # affecting cross-compile to `aarch64-apple-ios-sim` (that only needs
       # the SDK, which lives inside the active Xcode app).
-      - name: Free up disk space (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          BEFORE=$(df -h / | tail -1 | awk '{print $4}')
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/*Simulator* || true
-          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/* || true
-          AFTER=$(df -h / | tail -1 | awk '{print $4}')
-          echo "Disk free: ${BEFORE} -> ${AFTER}"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          # NOTE: deliberately NOT caching `target/` — on macos-14 runners
-          # (~14 GB free out of the box after preinstalled Xcode + sims) the
-          # restored release artifacts pushed disk usage past the limit and
-          # the runner OOM'd before cargo even started. Registry+git cache
-          # alone gives ~80% of the warm-build win without the disk hit.
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          shared-key: "${{ runner.os }}-perry"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run cargo test
         # Exclude UI backends that don't build on the macOS-14 CI image:
@@ -166,7 +99,6 @@ jobs:
   # ---------------------------------------------------------------------------
   parity:
     runs-on: macos-14
-    needs: build
     steps:
       - uses: actions/checkout@v4
 
@@ -178,31 +110,13 @@ jobs:
       # runtime IMAGES — not the SDKs — reclaims ~15-25 GB without
       # affecting cross-compile to `aarch64-apple-ios-sim` (that only needs
       # the SDK, which lives inside the active Xcode app).
-      - name: Free up disk space (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          BEFORE=$(df -h / | tail -1 | awk '{print $4}')
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/*Simulator* || true
-          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/* || true
-          AFTER=$(df -h / | tail -1 | awk '{print $4}')
-          echo "Disk free: ${BEFORE} -> ${AFTER}"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          # NOTE: deliberately NOT caching `target/` — on macos-14 runners
-          # (~14 GB free out of the box after preinstalled Xcode + sims) the
-          # restored release artifacts pushed disk usage past the limit and
-          # the runner OOM'd before cargo even started. Registry+git cache
-          # alone gives ~80% of the warm-build win without the disk hit.
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          shared-key: "${{ runner.os }}-perry"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -285,7 +199,6 @@ jobs:
   # ---------------------------------------------------------------------------
   compile-smoke:
     runs-on: macos-14
-    needs: build
     steps:
       - uses: actions/checkout@v4
 
@@ -297,31 +210,13 @@ jobs:
       # runtime IMAGES — not the SDKs — reclaims ~15-25 GB without
       # affecting cross-compile to `aarch64-apple-ios-sim` (that only needs
       # the SDK, which lives inside the active Xcode app).
-      - name: Free up disk space (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          BEFORE=$(df -h / | tail -1 | awk '{print $4}')
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/*Simulator* || true
-          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/* || true
-          AFTER=$(df -h / | tail -1 | awk '{print $4}')
-          echo "Disk free: ${BEFORE} -> ${AFTER}"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          # NOTE: deliberately NOT caching `target/` — on macos-14 runners
-          # (~14 GB free out of the box after preinstalled Xcode + sims) the
-          # restored release artifacts pushed disk usage past the limit and
-          # the runner OOM'd before cargo even started. Registry+git cache
-          # alone gives ~80% of the warm-build win without the disk hit.
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          shared-key: "${{ runner.os }}-perry"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build compiler
         run: cargo build --release
@@ -523,7 +418,6 @@ jobs:
   # until Linux/Windows baselines stabilize).
   # ---------------------------------------------------------------------------
   doc-tests:
-    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -654,19 +548,10 @@ jobs:
         if: matrix.os == 'macos-14' || matrix.os == 'ubuntu-24.04'
         run: rustup target add aarch64-linux-android
 
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          # NOTE: deliberately NOT caching `target/` — on macos-14 runners
-          # (~14 GB free out of the box after preinstalled Xcode + sims) the
-          # restored release artifacts pushed disk usage past the limit and
-          # the runner OOM'd before cargo even started. Registry+git cache
-          # alone gives ~80% of the warm-build win without the disk hit.
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          shared-key: "${{ runner.os }}-perry"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build compiler + UI backend + harness
         run: cargo build --release -p perry -p perry-runtime -p perry-stdlib -p ${{ matrix.ui_backend }} -p perry-doc-tests
@@ -725,15 +610,19 @@ jobs:
   binary-size:
     if: github.ref == 'refs/heads/main'
     runs-on: macos-14
-    needs: build
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download binaries
-        uses: actions/download-artifact@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
         with:
-          name: perry-binaries
-          path: target/release/
+          shared-key: "${{ runner.os }}-perry"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build release binaries
+        run: cargo build --release -p perry -p perry-runtime -p perry-stdlib
 
       - name: Report binary sizes
         run: |
