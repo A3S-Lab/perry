@@ -918,20 +918,22 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
             // (no array/map/set equivalent). Exclude: slice, indexOf,
             // lastIndexOf, includes, at, concat — these also exist on
             // arrays and would break when the receiver is an Any-typed
-            // array. Also exclude multi-arg variants that the string
-            // dispatcher doesn't support (startsWith 2-arg, etc.).
+            // array. startsWith/endsWith are string-only in JS so the
+            // 2-arg form (searchString, position) is also unambiguous.
             let is_string_only_method = match property.as_str() {
                 "split" | "charCodeAt" | "charAt" | "trim" | "trimStart" | "trimEnd"
                 | "substring" | "substr" | "toLowerCase" | "toUpperCase" | "replaceAll"
                 | "padStart" | "padEnd" | "repeat" | "normalize" | "codePointAt"
                 | "localeCompare" => true,
-                // slice/indexOf/includes/startsWith/endsWith exist on both
-                // strings and arrays. Route to string path only when args
-                // rule out the array variant (e.g., slice(0) is ambiguous
-                // but slice() with 0 args is always array.slice to copy).
+                // slice/indexOf/includes exist on both strings and arrays.
+                // Route to string path only when args rule out the array
+                // variant (e.g., slice(0) is ambiguous but slice() with 0
+                // args is always array.slice to copy).
                 "slice" if !args.is_empty() => true,
                 "indexOf" | "includes" if args.len() == 1 => true,
-                "startsWith" | "endsWith" if args.len() == 1 => true,
+                // startsWith / endsWith only exist on String — both 1-arg
+                // and 2-arg (searchString, position) forms route here.
+                "startsWith" | "endsWith" if args.len() == 1 || args.len() == 2 => true,
                 "lastIndexOf" if args.len() == 1 => true,
                 _ => false,
             };

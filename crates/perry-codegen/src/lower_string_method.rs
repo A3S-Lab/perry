@@ -546,27 +546,48 @@ pub(crate) fn lower_string_method(
             Ok(nanbox_string_inline(blk, &result))
         }
         "startsWith" | "endsWith" => {
-            if args.len() != 1 {
+            // Spec allows the 2-arg form: startsWith(searchString, position)
+            // and endsWith(searchString, endPosition). Closes #315.
+            if args.is_empty() || args.len() > 2 {
                 bail!(
-                    "perry-codegen: String.{} expects 1 arg, got {}",
+                    "perry-codegen: String.{} expects 1 or 2 args, got {}",
                     property,
                     args.len()
                 );
             }
             let other_box = lower_expr(ctx, &args[0])?;
+            let pos_d = if args.len() == 2 {
+                Some(lower_expr(ctx, &args[1])?)
+            } else {
+                None
+            };
             let blk = ctx.block();
             let recv_handle = unbox_str_handle(blk, &recv_box);
             let other_handle = unbox_str_handle(blk, &other_box);
-            let runtime_fn = if property == "startsWith" {
-                "js_string_starts_with"
+            let result_i32 = if let Some(pos_d) = pos_d {
+                let pos_i32 = blk.fptosi(DOUBLE, &pos_d, I32);
+                let runtime_fn = if property == "startsWith" {
+                    "js_string_starts_with_at"
+                } else {
+                    "js_string_ends_with_at"
+                };
+                blk.call(
+                    I32,
+                    runtime_fn,
+                    &[(I64, &recv_handle), (I64, &other_handle), (I32, &pos_i32)],
+                )
             } else {
-                "js_string_ends_with"
+                let runtime_fn = if property == "startsWith" {
+                    "js_string_starts_with"
+                } else {
+                    "js_string_ends_with"
+                };
+                blk.call(
+                    I32,
+                    runtime_fn,
+                    &[(I64, &recv_handle), (I64, &other_handle)],
+                )
             };
-            let result_i32 = blk.call(
-                I32,
-                runtime_fn,
-                &[(I64, &recv_handle), (I64, &other_handle)],
-            );
             Ok(i32_bool_to_nanbox(blk, &result_i32))
         }
         "includes" => {

@@ -1413,6 +1413,90 @@ pub extern "C" fn js_string_ends_with(s: *const StringHeader, suffix: *const Str
     1
 }
 
+/// Check if a string starts with `prefix` at UTF-16 code-unit `position`.
+/// Mirrors `String.prototype.startsWith(searchString, position)` — clamps
+/// negative positions to 0 and positions past the end to length.
+#[no_mangle]
+pub extern "C" fn js_string_starts_with_at(
+    s: *const StringHeader,
+    prefix: *const StringHeader,
+    position: i32,
+) -> i32 {
+    if !is_valid_string_ptr(s) || !is_valid_string_ptr(prefix) {
+        return 0;
+    }
+
+    let u16len = unsafe { (*s).utf16_len } as i32;
+    let pos = position.max(0).min(u16len) as usize;
+
+    let prefix_blen = unsafe { (*prefix).byte_len } as usize;
+
+    let byte_start = if is_ascii_string(s) {
+        pos
+    } else {
+        utf16_offset_to_byte_offset(string_as_str(s), pos)
+    };
+
+    let blen = unsafe { (*s).byte_len } as usize;
+    if byte_start + prefix_blen > blen {
+        return 0;
+    }
+
+    unsafe {
+        let data = string_data(s).add(byte_start);
+        let prefix_data = string_data(prefix);
+        for i in 0..prefix_blen {
+            if *data.add(i) != *prefix_data.add(i) {
+                return 0;
+            }
+        }
+    }
+
+    1
+}
+
+/// Check if a string ends with `suffix` if truncated to UTF-16 code-unit
+/// `end_position`. Mirrors `String.prototype.endsWith(searchString, endPosition)`
+/// — clamps negative positions to 0 and positions past the end to length.
+#[no_mangle]
+pub extern "C" fn js_string_ends_with_at(
+    s: *const StringHeader,
+    suffix: *const StringHeader,
+    end_position: i32,
+) -> i32 {
+    if !is_valid_string_ptr(s) || !is_valid_string_ptr(suffix) {
+        return 0;
+    }
+
+    let u16len = unsafe { (*s).utf16_len } as i32;
+    let end_u16 = end_position.max(0).min(u16len) as usize;
+
+    let byte_end = if is_ascii_string(s) {
+        end_u16
+    } else {
+        utf16_offset_to_byte_offset(string_as_str(s), end_u16)
+    };
+
+    let suffix_blen = unsafe { (*suffix).byte_len } as usize;
+    if suffix_blen > byte_end {
+        return 0;
+    }
+
+    let byte_start = byte_end - suffix_blen;
+
+    unsafe {
+        let data = string_data(s).add(byte_start);
+        let suffix_data = string_data(suffix);
+        for i in 0..suffix_blen {
+            if *data.add(i) != *suffix_data.add(i) {
+                return 0;
+            }
+        }
+    }
+
+    1
+}
+
 /// Get character code at index (returns UTF-16 code unit, or NaN if out of bounds).
 /// Index is in UTF-16 code units (matches JS spec). For ASCII strings this is
 /// equivalent to byte indexing; for multi-byte UTF-8 we walk codepoints without
