@@ -1,6 +1,6 @@
 // demonstrates: map / filter / reduce on arrays
 // docs: docs/src/stdlib/arrays.md
-// platforms: macos, linux, windows
+// platforms: macos, linux
 // targets: wasm, web, android
 
 const nums = [1, 2, 3, 4, 5]
