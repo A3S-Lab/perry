@@ -88,7 +88,7 @@ The user splices three artifacts into a DevEco Studio project — `libentry.so`,
 
 Write a TypeScript program with `App({body: ...})`:
 
-```ts
+```typescript,no-test
 // hi.ts
 import { App, VStack, Text, Button, showToast } from "perry/ui";
 

@@ -7,7 +7,7 @@ Touch Bar / Control Center) integration.
 
 ## Quick start
 
-```typescript
+```typescript,no-test
 import {
   createPlayer,
   play,
@@ -218,7 +218,7 @@ the watch's Now Playing complication / glance screen.
 
 ## Subsonic example
 
-```typescript
+```typescript,no-test
 import { createPlayer, play, setNowPlaying, onStateChange } from "perry/media";
 
 function streamUrl(serverUrl: string, user: string, pass: string, songId: string): string {
