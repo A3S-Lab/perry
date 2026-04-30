@@ -22,9 +22,7 @@ use windows::core::HSTRING;
 use windows::Foundation::{TimeSpan, Uri};
 use windows::Media::Core::MediaSource;
 use windows::Media::Playback::{MediaPlaybackState, MediaPlayer};
-use windows::Media::{
-    MediaPlaybackStatus, MediaPlaybackType, SystemMediaTransportControlsButton,
-};
+use windows::Media::{MediaPlaybackStatus, MediaPlaybackType, SystemMediaTransportControlsButton};
 use windows::Storage::Streams::RandomAccessStreamReference;
 
 extern "C" {
@@ -327,7 +325,8 @@ pub fn set_now_playing(
             let player_handle = handle;
             let _ = smtc.ButtonPressed(&TypedEventHandler::new(move |_, args| {
                 if let Some(args) = args {
-                    let args: &windows::Media::SystemMediaTransportControlsButtonPressedEventArgs = args;
+                    let args: &windows::Media::SystemMediaTransportControlsButtonPressedEventArgs =
+                        args;
                     if let Ok(button) = args.Button() {
                         enqueue_button(player_handle, button);
                     }

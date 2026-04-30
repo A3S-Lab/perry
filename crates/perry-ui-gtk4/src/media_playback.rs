@@ -805,7 +805,9 @@ mod mpris {
             Ok(())
         }
         async fn seek(&self, offset: Time) -> fdo::Result<()> {
-            send_cmd(Command::SeekRelative(offset.as_micros() as f64 / 1_000_000.0));
+            send_cmd(Command::SeekRelative(
+                offset.as_micros() as f64 / 1_000_000.0,
+            ));
             Ok(())
         }
         async fn set_position(&self, _track_id: TrackId, position: Time) -> fdo::Result<()> {

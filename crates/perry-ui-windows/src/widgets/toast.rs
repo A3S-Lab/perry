@@ -25,8 +25,8 @@ use windows::Win32::Foundation::*;
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontW, CreateRoundRectRgn, CreateSolidBrush, DeleteObject, DrawTextW,
-    EndPaint, FillRect, SelectObject, SetBkMode, SetTextColor, DT_CENTER, DT_NOPREFIX,
-    DT_SINGLELINE, DT_VCENTER, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
+    EndPaint, FillRect, SelectObject, SetBkMode, SetTextColor, SetWindowRgn, UpdateWindow,
+    DT_CENTER, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, HBRUSH, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;

@@ -301,7 +301,8 @@ jobs:
             test_ui_controls \
             test_ui_phase4 \
             test_timer \
-            test_phase2v3_3_show_toast_set_text "
+            test_phase2v3_3_show_toast_set_text \
+            test_issue_351_media_playback "
 
           rm -rf "$LOGS_DIR"
           mkdir -p "$LOGS_DIR"

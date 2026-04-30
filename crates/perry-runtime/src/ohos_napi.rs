@@ -358,19 +358,9 @@ unsafe extern "C" fn invoke_callback1(
 /// Helper: build a JS string property from a Rust `String` and attach it
 /// to `obj` under `key` (NUL-terminated). Caller must ensure `key` ends
 /// in a `\0` byte.
-unsafe fn napi_set_string_prop(
-    env: *mut NapiEnv,
-    obj: *mut NapiValue,
-    key: &[u8],
-    value: &str,
-) {
+unsafe fn napi_set_string_prop(env: *mut NapiEnv, obj: *mut NapiValue, key: &[u8], value: &str) {
     let mut v: *mut NapiValue = ptr::null_mut();
-    let _ = napi_create_string_utf8(
-        env,
-        value.as_ptr() as *const c_char,
-        value.len(),
-        &mut v,
-    );
+    let _ = napi_create_string_utf8(env, value.as_ptr() as *const c_char, value.len(), &mut v);
     let _ = napi_set_named_property(env, obj, key.as_ptr() as *const c_char, v);
 }
 
@@ -452,9 +442,7 @@ unsafe extern "C" fn drain_media_control(
         MediaCommand::SetVolume { handle, volume } => {
             ("setVolume", handle, Some(b"volume\0"), Some(volume))
         }
-        MediaCommand::SetRate { handle, rate } => {
-            ("setRate", handle, Some(b"rate\0"), Some(rate))
-        }
+        MediaCommand::SetRate { handle, rate } => ("setRate", handle, Some(b"rate\0"), Some(rate)),
     };
     napi_set_string_prop(env, obj, b"op\0", op);
     napi_set_number_prop(env, obj, b"handle\0", handle as f64);

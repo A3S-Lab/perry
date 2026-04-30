@@ -793,23 +793,14 @@ fn ensure_session() -> Option<GlobalRef> {
         }
     };
 
-    let _ = env.call_method(
-        &session,
-        "setActive",
-        "(Z)V",
-        &[JValue::Bool(1)],
-    );
+    let _ = env.call_method(&session, "setActive", "(Z)V", &[JValue::Bool(1)]);
     let _ = env.exception_clear();
 
     // Wire the headphone/media-button callback. The Java helper class
     // PerryMediaSessionCallback extends MediaSessionCompat.Callback and
     // routes onPlay / onPause / onStop / onSeekTo to the native exports
     // below.
-    if let Ok(callback) = env.new_object(
-        "com/perry/app/PerryMediaSessionCallback",
-        "()V",
-        &[],
-    ) {
+    if let Ok(callback) = env.new_object("com/perry/app/PerryMediaSessionCallback", "()V", &[]) {
         let _ = env.call_method(
             &session,
             "setCallback",
@@ -853,14 +844,13 @@ fn decode_artwork<'a>(env: &mut jni::JNIEnv<'a>, url: &str) -> Option<JObject<'a
     if url.starts_with("http://") || url.starts_with("https://") {
         let url_jstr = env.new_string(url).ok()?;
         let url_obj = env
-            .new_object("java/net/URL", "(Ljava/lang/String;)V", &[JValue::Object(&url_jstr.into())])
+            .new_object(
+                "java/net/URL",
+                "(Ljava/lang/String;)V",
+                &[JValue::Object(&url_jstr.into())],
+            )
             .ok()?;
-        let stream = match env.call_method(
-            &url_obj,
-            "openStream",
-            "()Ljava/io/InputStream;",
-            &[],
-        ) {
+        let stream = match env.call_method(&url_obj, "openStream", "()Ljava/io/InputStream;", &[]) {
             Ok(v) => v.l().ok()?,
             Err(_) => {
                 let _ = env.exception_clear();
@@ -881,7 +871,11 @@ fn decode_artwork<'a>(env: &mut jni::JNIEnv<'a>, url: &str) -> Option<JObject<'a
         };
         let _ = env.call_method(&stream, "close", "()V", &[]);
         let _ = env.exception_clear();
-        if bitmap.is_null() { None } else { Some(bitmap) }
+        if bitmap.is_null() {
+            None
+        } else {
+            Some(bitmap)
+        }
     } else {
         let path = url.strip_prefix("file://").unwrap_or(url);
         let path_jstr = env.new_string(path).ok()?;
@@ -897,7 +891,11 @@ fn decode_artwork<'a>(env: &mut jni::JNIEnv<'a>, url: &str) -> Option<JObject<'a
                 return None;
             }
         };
-        if bitmap.is_null() { None } else { Some(bitmap) }
+        if bitmap.is_null() {
+            None
+        } else {
+            Some(bitmap)
+        }
     }
 }
 
@@ -906,7 +904,10 @@ fn decode_artwork<'a>(env: &mut jni::JNIEnv<'a>, url: &str) -> Option<JObject<'a
 /// State constants from PlaybackStateCompat: STOPPED=1, PAUSED=2,
 /// PLAYING=3, BUFFERING=6, ERROR=7. Idle/Ready/Ended map to STOPPED.
 fn push_playback_state(state: MediaState, position_seconds: f64) {
-    let session = match MEDIA_SESSION.get().and_then(|m| m.lock().ok().and_then(|s| s.clone())) {
+    let session = match MEDIA_SESSION
+        .get()
+        .and_then(|m| m.lock().ok().and_then(|s| s.clone()))
+    {
         Some(s) => s,
         None => return,
     };

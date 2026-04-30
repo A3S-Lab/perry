@@ -31,10 +31,10 @@
 
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex;
 
-use crate::closure::{ClosureHeader, js_closure_call1, js_closure_call2};
+use crate::closure::{js_closure_call1, js_closure_call2, ClosureHeader};
 use crate::value::{POINTER_MASK, TAG_UNDEFINED};
 
 const POINTER_TAG_BITS: u64 = 0x7FFD_0000_0000_0000;
@@ -211,7 +211,8 @@ fn decode_string_header(ptr: i64) -> String {
             return String::new();
         }
         let blen = (*header).byte_len as usize;
-        let data_ptr = (header as *const u8).add(std::mem::size_of::<crate::string::StringHeader>());
+        let data_ptr =
+            (header as *const u8).add(std::mem::size_of::<crate::string::StringHeader>());
         let bytes = std::slice::from_raw_parts(data_ptr, blen);
         String::from_utf8_lossy(bytes).into_owned()
     }
@@ -312,7 +313,11 @@ pub extern "C" fn perry_media_is_playing(handle: f64) -> f64 {
             MediaState::Playing
         )
     });
-    if playing { 1.0 } else { 0.0 }
+    if playing {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 #[no_mangle]
@@ -482,7 +487,11 @@ fn unbox_closure(closure_d: f64) -> Option<*const ClosureHeader> {
         return None;
     }
     let raw = (bits & POINTER_MASK) as *const ClosureHeader;
-    if raw.is_null() { None } else { Some(raw) }
+    if raw.is_null() {
+        None
+    } else {
+        Some(raw)
+    }
 }
 
 fn fire_state_callback(closure_d: f64, state: MediaState) {
