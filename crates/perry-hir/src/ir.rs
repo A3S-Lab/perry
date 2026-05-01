@@ -111,6 +111,10 @@ pub const NATIVE_MODULES: &[&str] = &[
     // Lives in perry-stdlib (background reader thread + drain queue),
     // so it requires_stdlib (not in RUNTIME_ONLY_MODULES).
     "readline",
+    // tty (#347 Phase 3) — `tty.isatty(fd)`. Lives in perry-runtime, not
+    // stdlib (just a libc::isatty call), so it's also in
+    // RUNTIME_ONLY_MODULES below.
+    "tty",
     // Closes #360 item #2: ink does both `import process from 'node:process'`
     // (default import) and `import { cwd } from 'node:process'` (named import
     // of process.cwd) across 8 build files. Without this entry, both shapes
@@ -180,6 +184,8 @@ const RUNTIME_ONLY_MODULES: &[&str] = &[
     "perry/i18n",
     "perry/thread",
     "perry/media",
+    // tty (#347 Phase 3) — isatty + columns/rows live in perry-runtime.
+    "tty",
 ];
 
 /// Check if a native module import requires linking perry-stdlib.
@@ -1122,6 +1128,28 @@ pub enum Expr {
         event: Box<Expr>,
         handler: Box<Expr>,
     },
+    // process.stdout.on('resize', handler) -> stdout (#347 Phase 3)
+    // Registers a SIGWINCH handler that fires when the terminal is
+    // resized. Other events fall through to the generic dispatch.
+    ProcessStdoutOn {
+        event: Box<Expr>,
+        handler: Box<Expr>,
+    },
+    // process.stdin.isTTY / process.stdout.isTTY / process.stderr.isTTY
+    // (#347 Phase 3) — boolean property reflecting whether the fd is a
+    // terminal. Each evaluates to libc::isatty(fd) on Unix /
+    // GetFileType(STD_*_HANDLE) == FILE_TYPE_CHAR on Windows.
+    ProcessStdinIsTTY,
+    ProcessStdoutIsTTY,
+    ProcessStderrIsTTY,
+    // process.stdout.columns / .rows (#347 Phase 3) — terminal width
+    // and height in cells, evaluated fresh on every read via
+    // TIOCGWINSZ on Unix / GetConsoleScreenBufferInfo on Windows.
+    // Returns `undefined` when stdout isn't a TTY.
+    ProcessStdoutColumns,
+    ProcessStdoutRows,
+    // tty.isatty(fd) -> boolean (#347 Phase 3)
+    TtyIsAtty(Box<Expr>),
 
     // File system operations
     FsReadFileSync(Box<Expr>), // fs.readFileSync(path) -> string

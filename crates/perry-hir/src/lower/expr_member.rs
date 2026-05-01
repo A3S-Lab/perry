@@ -18,6 +18,31 @@ use crate::ir::Expr;
 use super::{lower_expr, LoweringContext};
 
 pub(super) fn lower_member(ctx: &mut LoweringContext, member: &ast::MemberExpr) -> Result<Expr> {
+    // process.std{in,out,err}.{isTTY,columns,rows} — direct extern-call
+    // shapes recognized BEFORE the regular process.X arm below, since the
+    // double-Member shape (Member(Member(process, stream), prop)) doesn't
+    // match the simple `process.X` Ident-then-prop dispatch. (#347 Phase 3.)
+    if let ast::Expr::Member(inner_member) = member.obj.as_ref() {
+        if let ast::Expr::Ident(root_ident) = inner_member.obj.as_ref() {
+            if root_ident.sym.as_ref() == "process" {
+                if let (ast::MemberProp::Ident(stream_ident), ast::MemberProp::Ident(prop_ident)) =
+                    (&inner_member.prop, &member.prop)
+                {
+                    let stream = stream_ident.sym.as_ref();
+                    let prop = prop_ident.sym.as_ref();
+                    match (stream, prop) {
+                        ("stdin", "isTTY") => return Ok(Expr::ProcessStdinIsTTY),
+                        ("stdout", "isTTY") => return Ok(Expr::ProcessStdoutIsTTY),
+                        ("stderr", "isTTY") => return Ok(Expr::ProcessStderrIsTTY),
+                        ("stdout", "columns") => return Ok(Expr::ProcessStdoutColumns),
+                        ("stdout", "rows") => return Ok(Expr::ProcessStdoutRows),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     // Check if this is process.* property access
     if let ast::Expr::Ident(obj_ident) = member.obj.as_ref() {
         if obj_ident.sym.as_ref() == "process" {

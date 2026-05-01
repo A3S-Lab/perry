@@ -1631,6 +1631,9 @@ pub extern "C" fn js_readline_set_raw_mode() -> i64 {
 pub extern "C" fn js_readline_stdin_on() -> i64 {
     0
 }
+// Phase 3 stubs are NOT here — js_tty_* / js_process_*_isatty /
+// js_process_stdout_columns/rows/on live in perry-runtime/src/tty.rs
+// which is always linked, so no Android stub is needed.
 #[no_mangle]
 pub extern "C" fn js_worker_threads_get_worker_data() -> i64 {
     0

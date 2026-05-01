@@ -82,6 +82,11 @@ pub mod static_plugins;
 #[cfg(not(feature = "stdlib"))]
 pub mod stdlib_stubs;
 pub mod thread;
+/// TTY support (#347 Phase 3): tty.isatty, process.std{in,out,err}.isTTY,
+/// process.stdout.columns/.rows, SIGWINCH 'resize' event handler. Lives
+/// in runtime (not stdlib) because it's a thin libc wrapper with no
+/// async-runtime dependency. The pump drain is hooked separately.
+pub mod tty;
 /// Cross-platform showToast / setText handler registry (Phase 2 v3.3).
 /// Always compiled — provides `perry_arkts_*` stubs on non-harmonyos
 /// builds so the codegen at lower_call/native.rs links cleanly without
@@ -152,6 +157,12 @@ mod stdlib_pump {
     /// is not linked (no-op in that case).
     #[no_mangle]
     pub extern "C" fn js_run_stdlib_pump() {
+        // Drain the tty resize-pending flag (#347 Phase 3). Lives in
+        // perry-runtime, not stdlib, so it runs even when stdlib isn't
+        // linked — a TUI program that uses process.stdout.on('resize')
+        // without importing any stdlib module still sees its callback
+        // fire on SIGWINCH.
+        crate::tty::js_tty_resize_drain();
         let f = STDLIB_PUMP_FN.load(Ordering::Acquire);
         if !f.is_null() {
             unsafe {
