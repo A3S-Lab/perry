@@ -4084,6 +4084,24 @@ pub(super) fn lower_perry_ui_table_call(
     // Spacer, Divider, ImageFile, ImageSymbol, ProgressView, NavStack,
     // ZStack, etc.) accept the same React-style ergonomics that Button
     // already has, with no per-widget code edits.
+    // Issue #389: `appSetTimer` accepts both `(intervalMs, callback)`
+    // (the user-facing 2-arg form per the type stub) and
+    // `(app, intervalMs, callback)` (the historical 3-arg form). The
+    // dispatch table declares 3 args (`Widget, F64, Closure`); the
+    // platform runtime helpers all ignore `_app_handle`. When the
+    // user supplies only 2 args, prepend a synthetic 0 Widget so the
+    // call still matches the 3-arg ABI without changing the runtime
+    // signatures across 8 platform crates.
+    let synthesised_args: Vec<Expr>;
+    let args: &[Expr] = if sig.method == "appSetTimer" && args.len() == 2 && sig.args.len() == 3 {
+        synthesised_args = std::iter::once(Expr::Integer(0))
+            .chain(args.iter().cloned())
+            .collect();
+        &synthesised_args[..]
+    } else {
+        args
+    };
+
     let inline_style_arg: Option<&Expr> =
         if args.len() == sig.args.len() + 1 && matches!(sig.ret, UiReturnKind::Widget) {
             Some(&args[sig.args.len()])

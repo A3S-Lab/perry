@@ -821,6 +821,18 @@ export function onActivate(callback: () => void): void;
 // Timer
 // ---------------------------------------------------------------------------
 
+/**
+ * Schedule a recurring callback on the UI main thread (#389).
+ *
+ * Two forms:
+ *  - `appSetTimer(intervalMs, callback)` — preferred, runs the callback on
+ *    the platform's UI thread (NSTimer / Handler / etc.)
+ *  - `appSetTimer(app, intervalMs, callback)` — historical 3-arg form. The
+ *    `app` arg is ignored at runtime (the platform-specific implementation
+ *    schedules against the running app instance, not the handle). Kept as
+ *    an overload so older code that passed an app handle still typechecks.
+ */
+export function appSetTimer(intervalMs: number, callback: () => void): void;
 export function appSetTimer(app: Widget, intervalMs: number, callback: () => void): void;
 
 // ---------------------------------------------------------------------------

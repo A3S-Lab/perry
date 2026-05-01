@@ -1139,6 +1139,13 @@ pub const PERRY_UI_TABLE: &[MethodRow] = &[
         ret: ReturnKind::Void,
     },
     // ---- App extras ----
+    // Issue #389: signature is `(Widget, intervalMs, callback)`. The
+    // codegen accepts both the 2-arg user form
+    // `appSetTimer(intervalMs, callback)` and the historical 3-arg
+    // `appSetTimer(app, intervalMs, callback)` — see
+    // `lower_perry_ui_table_call`'s `appSetTimer` arity adapter. The
+    // platform runtime helpers ignore `_app_handle` already, so the
+    // codegen synthesises a 0 widget handle for the 2-arg form.
     MethodRow {
         method: "appSetTimer",
         runtime: "perry_ui_app_set_timer",
