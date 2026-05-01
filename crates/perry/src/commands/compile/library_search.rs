@@ -583,54 +583,37 @@ pub(super) fn collect_library_candidates(name: &str, target: Option<&str>) -> Ve
                     .join(name);
                 candidates.push(source_target);
 
-                // For iOS targets, check the exe directory for libs with _ios naming:
-                // - Libs already named with _ios (e.g. libperry_ui_ios.a) → direct lookup
-                // - Libs using _ios suffix convention (e.g. libperry_runtime.a stored as
-                //   libperry_runtime_ios.a next to the binary)
-                if matches!(
-                    target,
+                // For Apple / HarmonyOS cross-compile targets, check the exe
+                // directory for libs with the platform-suffix naming convention:
+                // - Libs already named with the suffix (e.g. libperry_ui_ios.a) → direct
+                // - Other libs (e.g. libperry_runtime.a stored as libperry_runtime_ios.a)
+                //
+                // Closes #394: also probe `<prefix>/lib/<suffixed-name>` so a
+                // Homebrew-installed bottle (binary at `<prefix>/bin/perry`,
+                // libs at `<prefix>/lib/`) resolves cross-compile libs the
+                // same way the host-build branch already does. Pre-fix the
+                // bottle could ship `libperry_ui_ios.a` next to the macOS
+                // libs but `--target ios-simulator` couldn't find it.
+                let suffix = match target {
                     Some("ios")
-                        | Some("ios-simulator")
-                        | Some("ios-widget")
-                        | Some("ios-widget-simulator")
-                ) {
-                    if name.contains("_ios") {
-                        candidates.push(dir.join(name));
+                    | Some("ios-simulator")
+                    | Some("ios-widget")
+                    | Some("ios-widget-simulator") => Some("_ios"),
+                    Some("visionos") | Some("visionos-simulator") => Some("_visionos"),
+                    Some("watchos") | Some("watchos-simulator") => Some("_watchos"),
+                    Some("tvos") | Some("tvos-simulator") => Some("_tvos"),
+                    Some("harmonyos") | Some("harmonyos-simulator") => Some("_harmonyos"),
+                    _ => None,
+                };
+                if let Some(suffix) = suffix {
+                    let suffixed = if name.contains(suffix) {
+                        name.to_string()
                     } else {
-                        let ios_name = name.replace(".a", "_ios.a");
-                        candidates.push(dir.join(&ios_name));
-                    }
-                }
-                if matches!(target, Some("visionos") | Some("visionos-simulator")) {
-                    if name.contains("_visionos") {
-                        candidates.push(dir.join(name));
-                    } else {
-                        let visionos_name = name.replace(".a", "_visionos.a");
-                        candidates.push(dir.join(&visionos_name));
-                    }
-                }
-                if matches!(target, Some("watchos") | Some("watchos-simulator")) {
-                    if name.contains("_watchos") {
-                        candidates.push(dir.join(name));
-                    } else {
-                        let watchos_name = name.replace(".a", "_watchos.a");
-                        candidates.push(dir.join(&watchos_name));
-                    }
-                }
-                if matches!(target, Some("tvos") | Some("tvos-simulator")) {
-                    if name.contains("_tvos") {
-                        candidates.push(dir.join(name));
-                    } else {
-                        let tvos_name = name.replace(".a", "_tvos.a");
-                        candidates.push(dir.join(&tvos_name));
-                    }
-                }
-                if matches!(target, Some("harmonyos") | Some("harmonyos-simulator")) {
-                    if name.contains("_harmonyos") {
-                        candidates.push(dir.join(name));
-                    } else {
-                        let harmonyos_name = name.replace(".a", "_harmonyos.a");
-                        candidates.push(dir.join(&harmonyos_name));
+                        name.replace(".a", &format!("{}.a", suffix))
+                    };
+                    candidates.push(dir.join(&suffixed));
+                    if let Some(prefix) = dir.parent() {
+                        candidates.push(prefix.join("lib").join(&suffixed));
                     }
                 }
             }

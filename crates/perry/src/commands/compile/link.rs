@@ -1538,6 +1538,17 @@ pub(super) fn build_and_run_link(
                     );
                 }
 
+                // For HarmonyOS, point cargo at the OHOS SDK's clang + sysroot
+                // so cc-rs and rustc's linker invocation actually use the
+                // cross-toolchain instead of falling back to the host `cc`.
+                if is_harmonyos {
+                    if let Some(sdk) = super::library_search::find_harmonyos_sdk() {
+                        for (k, v) in super::library_search::harmonyos_cross_env(&sdk, target) {
+                            cargo_cmd.env(k, v);
+                        }
+                    }
+                }
+
                 let cargo_status = cargo_cmd.status()?;
                 if !cargo_status.success() {
                     return Err(anyhow!(
