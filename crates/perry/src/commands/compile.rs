@@ -3946,6 +3946,26 @@ pub fn run_with_parse_cache(
                         println!("Wrote ArkTS shim: {}/ets/", output_dir.display());
                     }
                     let sdk = find_harmonyos_sdk();
+                    // Locate the user's `assets/` folder so harmonyos_hap can
+                    // copy it into the HAP's `resources/rawfile/`. Walk up
+                    // from the entry file's directory looking for `assets/`
+                    // — handles the common shape `<root>/src/app.ts` +
+                    // `<root>/assets/icon.png` and the simpler in-root case.
+                    let assets_dir = {
+                        let mut probe = project_root.clone();
+                        let mut found: Option<PathBuf> = None;
+                        for _ in 0..4 {
+                            let candidate = probe.join("assets");
+                            if candidate.is_dir() {
+                                found = Some(candidate);
+                                break;
+                            }
+                            if !probe.pop() {
+                                break;
+                            }
+                        }
+                        found
+                    };
                     let hap_args = crate::commands::harmonyos_hap::HapBuildArgs {
                         so_path: &exe_path,
                         ets_dir: &output_dir.join("ets"),
@@ -3961,6 +3981,7 @@ pub fn run_with_parse_cache(
                         cert_chain: args.harmonyos_cert.as_deref(),
                         profile: args.harmonyos_profile.as_deref(),
                         key_alias: args.harmonyos_key_alias.as_deref(),
+                        assets_dir: assets_dir.as_deref(),
                     };
                     match crate::commands::harmonyos_hap::build_hap(&hap_args) {
                         Ok(res) => {

@@ -86,6 +86,14 @@ pub struct HapBuildArgs<'a> {
     pub cert_chain: Option<&'a Path>,
     pub profile: Option<&'a Path>,
     pub key_alias: Option<&'a str>,
+
+    /// Project's `assets/` directory. When `Some`, every file inside is
+    /// copied into the HAP's `resources/rawfile/` so user code can
+    /// reference images via `$rawfile('name.png')` from ArkUI. The
+    /// codegen-arkts emitter translates `assets/X.png` paths in
+    /// `Image()` / `ImageFile()` calls into the `$rawfile()` form.
+    /// `None` skips the copy.
+    pub assets_dir: Option<&'a Path>,
 }
 
 pub struct HapBuildResult {
@@ -117,6 +125,9 @@ pub fn build_hap(args: &HapBuildArgs) -> Result<HapBuildResult> {
 
     write_configs(&staging, args.stem, &bundle_name)?;
     write_resources(&staging, args.stem)?;
+    if let Some(assets) = args.assets_dir {
+        copy_assets_to_rawfile(&staging, assets)?;
+    }
     copy_so(&staging, args.so_path)?;
     copy_ets(&staging, args.ets_dir)?;
 
@@ -378,6 +389,74 @@ fn write_resources(staging: &Path, stem: &str) -> Result<()> {
     // Omitted here to keep the surface small.
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn copy_assets_to_rawfile_handles_nested_dirs() {
+        let tmp = std::env::temp_dir().join(format!("perry_hap_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let assets = tmp.join("assets");
+        fs::create_dir_all(assets.join("icons")).unwrap();
+        fs::write(assets.join("icon.png"), b"\x89PNG-test").unwrap();
+        fs::write(assets.join("icons/sub.png"), b"\x89PNG-sub").unwrap();
+        let staging = tmp.join("staging");
+        fs::create_dir_all(&staging).unwrap();
+        copy_assets_to_rawfile(&staging, &assets).unwrap();
+        assert!(staging.join("resources/rawfile/icon.png").exists());
+        assert!(staging.join("resources/rawfile/icons/sub.png").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn copy_assets_to_rawfile_skips_when_dir_missing() {
+        let tmp = std::env::temp_dir().join(format!("perry_hap_test_skip_{}", std::process::id()));
+        let staging = tmp.join("staging");
+        fs::create_dir_all(&staging).unwrap();
+        copy_assets_to_rawfile(&staging, &tmp.join("does-not-exist")).unwrap();
+        // No panic; rawfile dir not created.
+        assert!(!staging.join("resources/rawfile").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+}
+
+/// Copy the user's `assets/` folder into `resources/rawfile/` so ArkUI's
+/// `$rawfile('name.png')` accessor can find images at runtime.
+/// codegen-arkts translates `Image('assets/X.png')` calls into
+/// `Image($rawfile('X.png'))` to match this layout. Files are flattened
+/// — subdirectories under `assets/` are preserved (e.g. `assets/foo/bar.png`
+/// becomes `resources/rawfile/foo/bar.png` and is referenced as
+/// `$rawfile('foo/bar.png')`).
+fn copy_assets_to_rawfile(staging: &Path, assets: &Path) -> Result<()> {
+    if !assets.is_dir() {
+        return Ok(());
+    }
+    let dest_root = staging.join("resources").join("rawfile");
+    fs::create_dir_all(&dest_root)?;
+    fn walk(src_root: &Path, dest_root: &Path, src: &Path) -> Result<()> {
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let p = entry.path();
+            let rel = p.strip_prefix(src_root).unwrap_or(&p);
+            let dest = dest_root.join(rel);
+            if p.is_dir() {
+                fs::create_dir_all(&dest)?;
+                walk(src_root, dest_root, &p)?;
+            } else {
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(&p, &dest)?;
+            }
+        }
+        Ok(())
+    }
+    walk(assets, &dest_root, assets)
 }
 
 fn copy_so(staging: &Path, so_path: &Path) -> Result<()> {

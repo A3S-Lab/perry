@@ -650,10 +650,14 @@ fn collect_mutations_in_expr(
         }
         "setPadding" | "widgetSetEdgeInsets" => {
             // Args: (widget, top, right, bottom, left)
-            let top = numeric_arg(&args[1..], 0).unwrap_or(0.0);
-            let right = numeric_arg(&args[1..], 1).unwrap_or(0.0);
-            let bottom = numeric_arg(&args[1..], 2).unwrap_or(0.0);
-            let left = numeric_arg(&args[1..], 3).unwrap_or(0.0);
+            // Resolve through bindings so Mango's `setPadding(box, isIOS
+            // ? 52 : 12, mobile ? 16 : 24, ...)` ternary-and-binding
+            // chain resolves to literal numbers; default to 0 only if
+            // the leaf truly isn't a number (function call etc).
+            let top = numeric_arg_resolved(&args[1..], 0, bindings).unwrap_or(0.0);
+            let right = numeric_arg_resolved(&args[1..], 1, bindings).unwrap_or(0.0);
+            let bottom = numeric_arg_resolved(&args[1..], 2, bindings).unwrap_or(0.0);
+            let left = numeric_arg_resolved(&args[1..], 3, bindings).unwrap_or(0.0);
             push_mut(
                 Mutation::Modifier(format!(
                     ".padding({{ top: {}, right: {}, bottom: {}, left: {} }})",
@@ -667,7 +671,7 @@ fn collect_mutations_in_expr(
             );
         }
         "setCornerRadius" => {
-            let n = numeric_arg(&args[1..], 0).unwrap_or(0.0);
+            let n = numeric_arg_resolved(&args[1..], 0, bindings).unwrap_or(0.0);
             push_mut(
                 Mutation::Modifier(format!(".borderRadius({})", fmt_num(n))),
                 out,
@@ -800,7 +804,13 @@ fn collect_mutations_in_expr(
             push_mut(Mutation::Modifier(".height('100%')".to_string()), out, cond);
         }
         "widgetSetWidth" => {
-            let n = numeric_arg(&args[1..], 0).unwrap_or(0.0);
+            // Skip-on-unresolved: emitting `.width(0)` zeros the widget.
+            // Mango's pattern: `widgetSetWidth(logo, mobile ? 40 : 44)`
+            // — needs binding-resolution + ternary-fold (handled by
+            // numeric_arg_resolved).
+            let Some(n) = numeric_arg_resolved(&args[1..], 0, bindings) else {
+                return;
+            };
             push_mut(
                 Mutation::Modifier(format!(".width({})", fmt_num(n))),
                 out,
@@ -808,7 +818,9 @@ fn collect_mutations_in_expr(
             );
         }
         "widgetSetHeight" => {
-            let n = numeric_arg(&args[1..], 0).unwrap_or(0.0);
+            let Some(n) = numeric_arg_resolved(&args[1..], 0, bindings) else {
+                return;
+            };
             push_mut(
                 Mutation::Modifier(format!(".height({})", fmt_num(n))),
                 out,
@@ -824,7 +836,7 @@ fn collect_mutations_in_expr(
             // 0..N → ArkUI FlexAlign enum buckets. The mapping mirrors
             // perry-ui-* native (Start/Center/End/SpaceBetween/SpaceAround/
             // SpaceEvenly).
-            let n = numeric_arg(&args[1..], 0).unwrap_or(0.0) as i64;
+            let n = numeric_arg_resolved(&args[1..], 0, bindings).unwrap_or(0.0) as i64;
             let v = match n {
                 0 => "Start",
                 1 => "Center",
@@ -841,7 +853,7 @@ fn collect_mutations_in_expr(
             );
         }
         "stackSetAlignment" => {
-            let n = numeric_arg(&args[1..], 0).unwrap_or(0.0) as i64;
+            let n = numeric_arg_resolved(&args[1..], 0, bindings).unwrap_or(0.0) as i64;
             // Issue #413 — ArkUI's cross-axis enum is axis-dependent:
             // Column (= VStack) takes `HorizontalAlign.X`,
             // Row (= HStack) takes `VerticalAlign.X`. Emitting the
@@ -1720,7 +1732,7 @@ fn emit_widget(
                 "Slider" => emit_slider(args, callbacks),
                 "Spacer" => "Blank()".to_string(),
                 "Divider" => "Divider()".to_string(),
-                "Image" | "ImageFile" => emit_image(args),
+                "Image" | "ImageFile" => emit_image(args, bindings),
                 "ScrollView" => emit_scrollview(
                     args,
                     bindings,
@@ -2944,25 +2956,76 @@ fn emit_slider(args: &[Expr], callbacks: &mut Vec<Expr>) -> String {
 /// Default sizing matches the perry-ui-* native default of "fill width,
 /// 200pt tall"; users can wrap in further sizing via container modifiers
 /// later (Phase 2 v5 will likely accept a `style: { ... }` trailing arg).
-/// Non-string-literal args fall back to a placeholder Text so unsupported
-/// shapes don't break the build.
-fn emit_image(args: &[Expr]) -> String {
-    let Some(Expr::String(src)) = args.first() else {
+///
+/// Resolves the src arg through `bindings` so common patterns work:
+/// - `ImageFile('assets/icon.png')` — direct literal
+/// - `ImageFile(LOGO_PATH)` where `const LOGO_PATH = 'assets/...'`
+/// - `ImageFile(mobile ? 'path-mobile' : 'path-desktop')` — ternary,
+///   evaluates the condition when foldable, otherwise picks the
+///   then-branch (mirrors the `Expr::Conditional` widget heuristic).
+///
+/// Falls back to a placeholder Text only when the chain bottoms out
+/// at a non-string leaf (function call, prop access, etc.).
+fn emit_image(args: &[Expr], bindings: &HashMap<LocalId, Expr>) -> String {
+    let Some(first) = args.first() else {
+        return "Text('[non-literal Image src]').fontSize(16).fontColor('#888888')".to_string();
+    };
+    let Some(src) = resolve_string_arg(first, bindings) else {
         return "Text('[non-literal Image src]').fontSize(16).fontColor('#888888')".to_string();
     };
     // Phase 2 v13 — recognize the `@app.media/<name>` resource path
     // shape and emit ArkUI's `$r('app.media.<name>')` accessor instead
     // of a quoted string literal. Plain URLs / file paths still pass
     // through as quoted strings.
+    //
+    // `assets/X.png` paths (Mango's convention) translate to
+    // `$rawfile('X.png')` — the HAP build (`harmonyos_hap.rs::copy_
+    // assets_to_rawfile`) copies the project's `assets/` directory
+    // verbatim into `resources/rawfile/`, and ArkUI's Image accepts
+    // `$rawfile()` for raw resource references.
     let src_arg = if let Some(name) = src.strip_prefix("@app.media/") {
         // ArkUI's $r() takes a dot-path string, NOT a slash-path.
         format!("$r('app.media.{}')", name)
     } else if let Some(name) = src.strip_prefix("@app.icon/") {
         format!("$r('app.icon.{}')", name)
+    } else if let Some(rest) = src.strip_prefix("assets/") {
+        format!("$rawfile('{}')", rest)
     } else {
-        arkts_string_lit(src)
+        arkts_string_lit(&src)
     };
     format!("Image({}).width('100%').height(200)", src_arg)
+}
+
+/// Walk a string-typed argument through bindings + ternary branches to
+/// find the underlying string literal. Returns None when the chain
+/// bottoms out at a non-string leaf. Same shape as
+/// `numeric_arg_resolved` but for strings.
+fn resolve_string_arg(expr: &Expr, bindings: &HashMap<LocalId, Expr>) -> Option<String> {
+    let mut cur = expr;
+    for _ in 0..16 {
+        match cur {
+            Expr::String(s) => return Some(s.clone()),
+            Expr::LocalGet(id) => {
+                cur = bindings.get(id)?;
+            }
+            Expr::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                // Same heuristic as the widget Conditional emit: if the
+                // condition const-folds, pick the corresponding branch;
+                // otherwise default to the then-branch (the "primary"
+                // case the author wrote first).
+                cur = match evaluate_condition(condition, bindings, &HashMap::new()) {
+                    Some(false) => else_expr,
+                    _ => then_expr,
+                };
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// `ScrollView(children)` → `Scroll() { Column({space: 8}) { ... } }`.
@@ -4221,6 +4284,21 @@ fn numeric_arg_resolved(
             Expr::Integer(n) => return Some(*n as f64),
             Expr::LocalGet(id) => {
                 cur = bindings.get(id)?;
+            }
+            // `cond ? a : b` — same heuristic as the widget Conditional
+            // emitter and resolve_string_arg: const-fold the condition,
+            // pick the resolved branch; default to then-branch when
+            // unresolvable (Mango: `widgetSetWidth(logo, mobile ? 40 :
+            // 44)` resolves through the ternary to the numeric leaf).
+            Expr::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                cur = match evaluate_condition(condition, bindings, &HashMap::new()) {
+                    Some(false) => else_expr,
+                    _ => then_expr,
+                };
             }
             _ => return None,
         }
