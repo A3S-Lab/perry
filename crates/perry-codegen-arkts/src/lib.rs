@@ -1512,18 +1512,55 @@ fn extract_body_field(arg: &mut Expr, classes: &[Class]) -> Option<Expr> {
 /// references is also top-level — works for the common case).
 fn collect_const_bindings(init: &[Stmt]) -> HashMap<LocalId, Expr> {
     let mut map = HashMap::new();
-    for stmt in init {
-        if let Stmt::Let {
-            id,
-            init: Some(expr),
-            mutable: false,
-            ..
-        } = stmt
-        {
-            map.insert(*id, expr.clone());
+    walk_collect_const_bindings(init, &mut map);
+    map
+}
+
+/// Recursive helper for `collect_const_bindings` — walks `Stmt::If` /
+/// `Stmt::Block` bodies so const bindings created in conditional branches
+/// are visible to the harvest. Mango's pattern:
+///
+/// ```ts
+/// if (mobile) {
+///     const connInfoBtn = Button(...);
+///     widgetAddChild(connBody, HStack([Spacer(), connInfoBtn, Spacer()]));
+/// }
+/// ```
+///
+/// — the `widgetAddChild` mutation gets recorded by `collect_mutations`
+/// with its enclosing condition. The inner Button construction needs
+/// `connInfoBtn` to be in `bindings` when the harvest emits the inner
+/// HStack children — otherwise it falls through to `[unrecognized body]`.
+///
+/// Limitation: if two if-branches both `const foo = ...` with different
+/// RHS, the last branch's binding wins. Mango doesn't hit this (each
+/// branch defines unique names) and the alternative — full scoped
+/// resolution — is meaningfully more complex. Acceptable trade-off for
+/// the procedural-construction use case.
+fn walk_collect_const_bindings(stmts: &[Stmt], map: &mut HashMap<LocalId, Expr>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Let {
+                id,
+                init: Some(expr),
+                mutable: false,
+                ..
+            } => {
+                map.insert(*id, expr.clone());
+            }
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                walk_collect_const_bindings(then_branch, map);
+                if let Some(eb) = else_branch {
+                    walk_collect_const_bindings(eb, map);
+                }
+            }
+            _ => {}
         }
     }
-    map
 }
 
 /// Issue #410 — discover `declare const __platform__: number;` style
