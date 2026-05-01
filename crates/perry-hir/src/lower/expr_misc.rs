@@ -196,15 +196,26 @@ pub(super) fn lower_meta_prop(
     // `import.meta.url`) is handled by the Member expression arm.
     match meta_prop.kind {
         ast::MetaPropKind::ImportMeta => {
-            // Return the file:// URL directly for `import.meta.url`.
-            // Since `import.meta` is typically only used via `.url`,
-            // we synthesise a small one-field object so the Member
-            // arm's PropertyGet path resolves it.
+            // Synthesise an object literal carrying the runtime-visible
+            // `import.meta` properties. `.url` is the file:// URL of
+            // the current module (used by `new URL("./foo", import.meta.url)`
+            // patterns). `.main` is Bun's flag for "this module was
+            // executed directly" — Perry currently compiles a single
+            // entry binary and runs every imported module's
+            // top-level code as part of init, so the closest correct
+            // answer is `true`. (A more precise model would thread an
+            // `is_entry_module` flag through `LoweringContext` and
+            // gate `main` on it; in practice library code rarely
+            // gates behavior on `import.meta.main`, while entry
+            // scripts that DO gate `main()` on it — see
+            // `examples/advanced-scheduling/demo.ts`'s
+            // `if (import.meta.main) main()` — silently produced no
+            // output before this fix.)
             let file_url = format!("file://{}", ctx.source_file_path);
-            Ok(Expr::Object(vec![(
-                "url".to_string(),
-                Expr::String(file_url),
-            )]))
+            Ok(Expr::Object(vec![
+                ("url".to_string(), Expr::String(file_url)),
+                ("main".to_string(), Expr::Bool(true)),
+            ]))
         }
         ast::MetaPropKind::NewTarget => {
             // Inside a class constructor, `new.target` evaluates to the

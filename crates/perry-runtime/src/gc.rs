@@ -1774,9 +1774,22 @@ fn drain_trace_worklist_inner(
             // are correctness-safe — extra young objects stay alive
             // for one cycle, swept on the next.
             if minor_only {
+                // Skip tracing only when the object is BOTH tenured AND
+                // physically in old-gen arena. Tenured-in-nursery
+                // objects (`PERRY_GEN_GC_EVACUATE` is opt-in default
+                // OFF) still hold pointers to young-gen children, and
+                // skipping their fields without a write barrier on
+                // every store leaves those children unmarked. ECS
+                // demo-simple regressed when an archetype that had
+                // survived to TENURED still held a `componentData` Map
+                // whose value arrays were young-gen — minor GC skipped
+                // tracing the archetype, the value arrays got swept,
+                // and `pipeline` forEach iterated zero entities.
+                // `pointer_in_old_gen` excludes tenured-in-nursery
+                // exactly, so the AND form is the correct gate.
                 let is_old_arena = crate::arena::pointer_in_old_gen(user_ptr as usize);
                 let is_tenured = (*header).gc_flags & GC_FLAG_TENURED != 0;
-                if is_old_arena || is_tenured {
+                if is_tenured && is_old_arena {
                     continue;
                 }
             }
@@ -2487,6 +2500,28 @@ fn sweep() -> u64 {
         let header = header_ptr as *mut GcHeader;
         unsafe {
             if (*header).gc_flags & GC_FLAG_PINNED != 0 {
+                if block_idx < block_has_live.len() {
+                    block_has_live[block_idx] = true;
+                }
+                (*header).gc_flags &= !GC_FLAG_MARKED;
+                return;
+            }
+            // FORWARDED objects must keep their containing block alive.
+            // `trace_array` short-circuits on FORWARDED (it pushes the
+            // forwarding TARGET onto the worklist instead of marking the
+            // OLD itself), so OLD reaches sweep as MARKED == 0 even
+            // though its first 8 bytes hold a load-bearing forwarding
+            // pointer. If OLD's block ends up with zero MARKED objects,
+            // `arena_reset_empty_blocks` wipes it to offset=0, the
+            // forwarding chain breaks, and `clean_arr_ptr` on any stale
+            // OLD reference returns null. ECS demo-simple's `pipeline`
+            // forEach hits this when `archetypesByComponent`'s value
+            // array was reached via a forwarded chain — the next query
+            // call's Map.get pointed at wiped memory and forEach
+            // iterated zero entities. Treat FORWARDED as live for the
+            // block-keep gate; the OLD payload is just an 8-byte
+            // forwarding pointer, harmless to retain.
+            if (*header).gc_flags & GC_FLAG_FORWARDED != 0 {
                 if block_idx < block_has_live.len() {
                     block_has_live[block_idx] = true;
                 }

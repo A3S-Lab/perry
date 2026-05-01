@@ -1185,51 +1185,36 @@ pub(crate) fn collect_assigned_locals_expr(expr: &Expr, assigned: &mut Vec<Local
 pub(crate) fn uses_this_expr(expr: &Expr) -> bool {
     match expr {
         Expr::This => true,
-        Expr::Binary { left, right, .. }
-        | Expr::Compare { left, right, .. }
-        | Expr::Logical { left, right, .. } => uses_this_expr(left) || uses_this_expr(right),
-        Expr::Unary { operand, .. } => uses_this_expr(operand),
-        Expr::Call { callee, args, .. } => {
-            uses_this_expr(callee) || args.iter().any(uses_this_expr)
+        // Nested arrow / closure: if it itself captures `this`, our
+        // surrounding scope MUST also capture `this` so the nested closure
+        // can inherit it (arrow functions inherit `this` from the enclosing
+        // lexical scope). A closure with captures_this=false has no `this`
+        // dependency and can be skipped.
+        //
+        // (function expressions also lower to Expr::Closure but always have
+        // their own `this` binding; the HIR sets captures_this=false for
+        // them in expr_function.rs:288, so this condition still does the
+        // right thing for both forms.)
+        Expr::Closure { captures_this, .. } => *captures_this,
+        // Every other variant: descend into sub-expressions via the generic
+        // walker so we never silently miss a specialized variant
+        // (ArrayMap/ArrayFilter/ArrayForEach/etc., Math/Object/Map/Set fast
+        // paths, …). Pre-fix this used a hand-rolled match that fell through
+        // to `_ => false` for any variant it didn't enumerate; an arrow body
+        // like `() => this.items.map(cb)` lowers to `Expr::ArrayMap` which
+        // wasn't in the list, so `closure_uses_this` returned false,
+        // `captures_this` stayed false, the closure's `class_stack` came up
+        // empty, and `Expr::This` resolved to the 0.0 sentinel — making
+        // `js_array_map` see a null receiver and return `[]`.
+        _ => {
+            let mut found = false;
+            walk_expr_children(expr, &mut |child| {
+                if !found && uses_this_expr(child) {
+                    found = true;
+                }
+            });
+            found
         }
-        Expr::PropertyGet { object, .. } | Expr::PropertyUpdate { object, .. } => {
-            uses_this_expr(object)
-        }
-        Expr::PropertySet { object, value, .. } => uses_this_expr(object) || uses_this_expr(value),
-        Expr::IndexGet { object, index } => uses_this_expr(object) || uses_this_expr(index),
-        Expr::IndexSet {
-            object,
-            index,
-            value,
-        } => uses_this_expr(object) || uses_this_expr(index) || uses_this_expr(value),
-        Expr::LocalSet(_, value) => uses_this_expr(value),
-        Expr::New { args, .. } => args.iter().any(uses_this_expr),
-        Expr::Array(elements) => elements.iter().any(uses_this_expr),
-        Expr::ArraySpread(elements) => elements.iter().any(|e| match e {
-            ArrayElement::Expr(e) | ArrayElement::Spread(e) => uses_this_expr(e),
-        }),
-        Expr::Object(fields) => fields.iter().any(|(_, e)| uses_this_expr(e)),
-        Expr::ObjectSpread { parts } => parts.iter().any(|(_, e)| uses_this_expr(e)),
-        Expr::Conditional {
-            condition,
-            then_expr,
-            else_expr,
-        } => uses_this_expr(condition) || uses_this_expr(then_expr) || uses_this_expr(else_expr),
-        Expr::Await(inner) => uses_this_expr(inner),
-        Expr::Sequence(exprs) => exprs.iter().any(uses_this_expr),
-        Expr::NativeMethodCall { object, args, .. } => {
-            object.as_ref().map(|o| uses_this_expr(o)).unwrap_or(false)
-                || args.iter().any(uses_this_expr)
-        }
-        Expr::SuperCall(args) | Expr::SuperMethodCall { args, .. } => {
-            args.iter().any(uses_this_expr)
-        }
-        Expr::Closure { .. } => {
-            // Don't recurse into nested closures - they have their own `this` handling
-            false
-        }
-        // Terminal expressions that don't use `this`
-        _ => false,
     }
 }
 

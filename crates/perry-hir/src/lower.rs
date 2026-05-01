@@ -578,6 +578,33 @@ impl LoweringContext {
         }
     }
 
+    /// Pre-seed `class_field_types` (and `class_field_names`) with cross-module
+    /// class info collected from already-lowered dependencies. Lets
+    /// `infer_type_from_expr` resolve `someLocal.field` where `someLocal`'s
+    /// declared type is a class defined in another module. Without this,
+    /// `for (const x of changeset.removes)` (where `changeset:
+    /// ComponentChangeset` from another module, `removes: Set<...>`) silently
+    /// iterates 0 times because the iterable's static type is unknown and the
+    /// SetValues wrap is skipped. See ECS demo-simple repro / #412.
+    ///
+    /// Only inserts entries that aren't already registered locally — the
+    /// current module's own classes always win.
+    pub fn seed_imported_class_fields(
+        &mut self,
+        seeds: &std::collections::HashMap<String, Vec<(String, Type)>>,
+    ) {
+        for (name, fields) in seeds {
+            if !self.class_field_types.iter().any(|(n, _)| n == name) {
+                self.class_field_types
+                    .push((name.clone(), fields.clone()));
+            }
+            if !self.class_field_names.iter().any(|(n, _)| n == name) {
+                let names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                self.class_field_names.push((name.clone(), names));
+            }
+        }
+    }
+
     /// Issue #302: look up the declared type of a single instance field on a
     /// class. Returns `None` if the class isn't registered or the field
     /// name doesn't appear in the class's declared field list.
@@ -1707,8 +1734,29 @@ pub fn lower_module_with_class_id_and_types(
     start_class_id: ClassId,
     resolved_types: Option<std::collections::HashMap<u32, Type>>,
 ) -> Result<(Module, ClassId)> {
+    lower_module_with_class_id_types_and_seed(
+        ast_module,
+        name,
+        source_file_path,
+        start_class_id,
+        resolved_types,
+        None,
+    )
+}
+
+pub fn lower_module_with_class_id_types_and_seed(
+    ast_module: &ast::Module,
+    name: &str,
+    source_file_path: &str,
+    start_class_id: ClassId,
+    resolved_types: Option<std::collections::HashMap<u32, Type>>,
+    imported_class_fields: Option<&std::collections::HashMap<String, Vec<(String, Type)>>>,
+) -> Result<(Module, ClassId)> {
     let mut ctx = LoweringContext::with_class_id_start(source_file_path, start_class_id);
     ctx.resolved_types = resolved_types;
+    if let Some(seed) = imported_class_fields {
+        ctx.seed_imported_class_fields(seed);
+    }
     let mut module = Module::new(name);
 
     // Pre-scan for WeakRef/FinalizationRegistry variable declarations so subsequent
@@ -3416,8 +3464,21 @@ fn lower_module_decl(
             for spec in &import_decl.specifiers {
                 match spec {
                     ast::ImportSpecifier::Named(named) => {
-                        // Skip individual type-only specifiers (import { type Foo, Bar })
-                        if named.is_type_only {
+                        // Skip individual type-only specifiers (`import { type Foo,
+                        // Bar }`) only for native module imports — there's no
+                        // class info to extract from `node:fs`, etc., and the
+                        // runtime can't resolve them anyway. For TypeScript
+                        // module imports, fall through and treat them as regular
+                        // named imports so the source module's class info
+                        // flows into `imported_classes` (for method dispatch on
+                        // a `q: Query` typed local) and `cross_module_class_field_types`
+                        // (for type inference on `someLocal.field` for-of
+                        // iteration). Pre-fix, `import { type Query } from
+                        // "../src"` made `q.forEach(...)` a silent no-op
+                        // because Query was never registered with codegen —
+                        // the spread call on the closure invoked a stub that
+                        // returned undefined. ECS demo-simple repro.
+                        if named.is_type_only && is_native {
                             continue;
                         }
                         let local = named.local.sym.to_string();

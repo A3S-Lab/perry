@@ -312,6 +312,17 @@ pub struct CompilationContext {
     /// entries without re-reading the source in the codegen loop. Mirrors the
     /// djb2 scheme already used by `build_optimized_libs` (see prior art).
     pub module_source_hashes: HashMap<PathBuf, u64>,
+    /// Cross-module class field types collected post-order in
+    /// `collect_modules`. Each parent module's HIR lowering pre-seeds its
+    /// `LoweringContext::class_field_types` from this map so type inference
+    /// can resolve `someLocal.field` where `someLocal`'s declared type is a
+    /// class defined in another module. Without this, `for (const x of
+    /// changeset.removes)` where `changeset: ComponentChangeset` (defined
+    /// elsewhere) silently iterates 0 times because the iterable's static
+    /// type is unknown and the `SetValues`/`MapEntries` wrap is skipped at
+    /// `lower_decl.rs:3737-3747`. See ECS demo-simple repro / #412.
+    pub cross_module_class_field_types:
+        HashMap<String, Vec<(String, perry_types::Type)>>,
     /// Minimum Windows version for `--target windows` builds. One of `"7"`,
     /// `"8"`, `"10"`. `"10"` (default) means "no subsystem version suffix";
     /// `"7"` and `"8"` emit `,5.1` / `,6.02` on the linker `/SUBSYSTEM:` flag
@@ -357,6 +368,7 @@ impl CompilationContext {
             uses_crypto_builtins: false,
             needs_thread: false,
             module_source_hashes: HashMap::new(),
+            cross_module_class_field_types: HashMap::new(),
             min_windows_version: "10".to_string(),
         }
     }
@@ -838,6 +850,67 @@ pub fn run_with_parse_cache(
                 parse_cache.as_deref_mut(),
             )?;
             bundled_extensions.push((entry_path.canonicalize()?, plugin_id.clone()));
+        }
+    }
+
+    // Cross-module class field type propagation pass. Pass 1 (above) lowered
+    // every native module without knowledge of imported classes' field types,
+    // so for-of loops over fields like `someLocal.removes` (where `someLocal:
+    // SomeClassFromAnotherModule`, `removes: Set<...>`) silently iterated 0
+    // times — the iterable's static type was unknown and the SetValues wrap
+    // at `lower_decl.rs:3737-3747` was skipped. Harvest field types from
+    // every just-lowered class, then re-lower the entire module set with
+    // that map seeded into each LoweringContext. The double pass is wasted
+    // work for modules that only consume locally-defined classes, but the
+    // per-module cost is dominated by SWC parsing (cached by `parse_cache`)
+    // not HIR lowering, so the overhead in practice is small. See ECS
+    // demo-simple repro / #412.
+    if ctx.native_modules.len() > 1 {
+        let mut field_map: HashMap<String, Vec<(String, perry_types::Type)>> = HashMap::new();
+        for hir_module in ctx.native_modules.values() {
+            for class in &hir_module.classes {
+                let fields: Vec<(String, perry_types::Type)> = class
+                    .fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.ty.clone()))
+                    .collect();
+                field_map
+                    .entry(class.name.clone())
+                    .or_insert(fields);
+            }
+        }
+        if !field_map.is_empty() {
+            ctx.cross_module_class_field_types = field_map;
+            ctx.native_modules.clear();
+            visited.clear();
+            next_class_id = 1;
+            collect_modules(
+                &args.input,
+                &mut ctx,
+                &mut visited,
+                args.enable_js_runtime,
+                format,
+                args.target.as_deref(),
+                &mut next_class_id,
+                skip_transforms,
+                parse_cache.as_deref_mut(),
+            )?;
+            if let Some(ext_dir) = &args.bundle_extensions {
+                let ext_entries = discover_extension_entries(ext_dir)?;
+                for (entry_path, _plugin_id) in &ext_entries {
+                    collect_modules(
+                        entry_path,
+                        &mut ctx,
+                        &mut visited,
+                        args.enable_js_runtime,
+                        format,
+                        args.target.as_deref(),
+                        &mut next_class_id,
+                        skip_transforms,
+                        parse_cache.as_deref_mut(),
+                    )?;
+                }
+            }
         }
     }
 

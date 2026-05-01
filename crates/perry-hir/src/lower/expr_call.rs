@@ -3696,6 +3696,62 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                 class_typed || (unknown_recv && is_overlapping)
                             }
                             ast::Expr::New(_) => true,
+                            // `this.<method>(...)` inside a class method.
+                            // The receiver is the class instance; treat it
+                            // like a class-typed local. Without this, calls
+                            // with names that overlap an Array method
+                            // (e.g. a user-defined `this.forEach(...)` in
+                            // an ECS Archetype, `this.map(...)` on a Stack)
+                            // got folded into Expr::ArrayForEach /
+                            // Expr::ArrayMap and the compiled binary
+                            // dispatched `js_array_*` on a class handle.
+                            // For non-overlapping names there's nothing to
+                            // hijack, so we don't need to check the
+                            // current_class field list — the array-method
+                            // arms simply don't fire.
+                            ast::Expr::This(_) => true,
+                            // `this.<field>.<method>(...)` — when the field
+                            // is statically typed as a non-Array container
+                            // (Map / Set / a user class), the array-method
+                            // fold would silently rewrite the call to
+                            // `Expr::Array<Method>` and codegen would
+                            // dispatch `js_array_*` on the wrong header.
+                            // Concretely: an ECS Archetype's
+                            // `private componentData: Map<EntityId, any[]>`
+                            // ends up with `this.componentData.forEach(cb)`
+                            // hitting `js_array_forEach`, which reads
+                            // "length" out of a Map header and returns the
+                            // map's `size` field as a fake array length,
+                            // then iterates with bogus index-based reads
+                            // (which is why `forEach` reported keys
+                            // `[0,1,2]` while the real Map keys were
+                            // 1024-range EntityIds).
+                            //
+                            // Resolve the field's type via the class field
+                            // registry (populated by `lower_class_decl`'s
+                            // first pass) and treat anything that isn't
+                            // declared `Array<T>` / `T[]` as a class
+                            // receiver so the fold bails. Unknown / Any
+                            // stays in the prior `false` arm — no info to
+                            // act on, fall through to the existing fast
+                            // path.
+                            ast::Expr::Member(inner) => {
+                                if let (ast::Expr::This(_), ast::MemberProp::Ident(p)) =
+                                    (inner.obj.as_ref(), &inner.prop)
+                                {
+                                    if let Some(cls) = ctx.current_class.clone() {
+                                        match ctx.lookup_class_field_type(&cls, p.sym.as_ref()) {
+                                            Some(Type::Array(_)) | Some(Type::Tuple(_)) => false,
+                                            Some(_) => true,
+                                            None => false,
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
                             _ => false,
                         };
                         match method_name {

@@ -1100,6 +1100,30 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                     blk.call_void("js_map_clear", &[(I64, &m_handle)]);
                     return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
                 }
+                // Map iterator methods (entries / keys / values).
+                // Issue #412: the HIR-level fold at expr_call.rs only
+                // fires for `Expr::Ident` receivers (a plain local).
+                // Receivers like `new Map(...).values()`,
+                // `this.field.values()`, `obj.field.values()` come
+                // through the generic call path and need codegen-time
+                // dispatch — pre-fix they fell off the bottom of the
+                // method-dispatch tower and silently returned
+                // `undefined`. The runtime returns a real Array; we
+                // NaN-box-pointer the result for downstream
+                // `.length` / `forEach` / `Array.from` use.
+                "entries" | "keys" | "values" if args.is_empty() => {
+                    let m_box = lower_expr(ctx, object)?;
+                    let blk = ctx.block();
+                    let m_handle = unbox_to_i64(blk, &m_box);
+                    let runtime_fn = match property.as_str() {
+                        "entries" => "js_map_entries",
+                        "keys" => "js_map_keys",
+                        "values" => "js_map_values",
+                        _ => unreachable!(),
+                    };
+                    let result = blk.call(I64, runtime_fn, &[(I64, &m_handle)]);
+                    return Ok(crate::expr::nanbox_pointer_inline_pub(blk, &result));
+                }
                 _ => {}
             }
         }
@@ -1143,6 +1167,23 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                     let s_handle = unbox_to_i64(blk, &s_box);
                     blk.call_void("js_set_clear", &[(I64, &s_handle)]);
                     return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
+                }
+                // Set iterator methods. Per ECMA-262 §24.2.3.5–7,
+                // `Set.prototype.values`, `.keys`, and `.entries` all
+                // return iterators over the Set's elements (keys ===
+                // values for Sets; entries yields [v, v] pairs).
+                // Perry's `js_set_to_array` returns a real Array of
+                // the Set's elements — sufficient for the common
+                // `Array.from(s.values())` / `for-of s.values()` /
+                // spread shapes. Pre-fix `new Set([1]).values()`
+                // returned `undefined` because the HIR-level fold at
+                // expr_call.rs only fires for `Expr::Ident` receivers.
+                "values" | "keys" if args.is_empty() => {
+                    let s_box = lower_expr(ctx, object)?;
+                    let blk = ctx.block();
+                    let s_handle = unbox_to_i64(blk, &s_box);
+                    let result = blk.call(I64, "js_set_to_array", &[(I64, &s_handle)]);
+                    return Ok(crate::expr::nanbox_pointer_inline_pub(blk, &result));
                 }
                 _ => {}
             }

@@ -93,14 +93,30 @@ impl ArenaBlock {
     /// Try to allocate within this block, respecting alignment
     #[inline]
     fn alloc(&mut self, size: usize, align: usize) -> Option<*mut u8> {
-        // Align offset up
-        let aligned_offset = (self.offset + align - 1) & !(align - 1);
+        // Always preserve at least 8-byte alignment between calls so
+        // the codegen inline bump-allocator fast path
+        // (`crates/perry-codegen/src/lower_call.rs`'s inline-keys
+        // allocator) can safely advance `offset += total_size`
+        // without re-aligning. Pre-fix, an odd-sized string
+        // allocation (`StringHeader=20` + N-byte payload via
+        // `arena_alloc_gc`) left `offset` misaligned; the next
+        // inline `new ClassName()` inherited the misalignment, the
+        // returned user_ptr had low bits set, `arena_walk_objects`
+        // (which iterates at 8-aligned positions) skipped it,
+        // `build_valid_pointer_set` never inserted it, and the GC
+        // mark phase rejected it as "not in valid_ptrs". The
+        // archetype's `componentData` Map went unmarked and got
+        // swept; the freed entries buffer was reused for a new alloc;
+        // the first f64 key drifted to a denormal (~1.086e-311).
+        let pad = align.max(8);
+        let aligned_offset = (self.offset + pad - 1) & !(pad - 1);
         if aligned_offset + size > self.size {
             return None;
         }
 
         let ptr = unsafe { self.data.add(aligned_offset) };
-        self.offset = aligned_offset + size;
+        let bumped = aligned_offset + size;
+        self.offset = (bumped + pad - 1) & !(pad - 1);
         Some(ptr)
     }
 }
@@ -430,7 +446,12 @@ pub fn arena_alloc_longlived(size: usize, align: usize) -> *mut u8 {
 pub fn arena_alloc_gc_longlived(size: usize, align: usize, obj_type: u8) -> *mut u8 {
     use crate::gc::{GcHeader, GC_FLAG_ARENA, GC_HEADER_SIZE};
 
-    let total = GC_HEADER_SIZE + size;
+    // Same alignment-preservation rationale as `arena_alloc_gc`: pad
+    // `total` to a multiple of `max(align, 8)` so the next caller's
+    // bumped offset stays aligned. The codegen inline fast path
+    // assumes this invariant.
+    let pad = align.max(8);
+    let total = (GC_HEADER_SIZE + size + pad - 1) & !(pad - 1);
     let raw = arena_alloc_longlived(total, align);
 
     unsafe {
@@ -468,7 +489,9 @@ pub fn arena_alloc_old(size: usize, align: usize) -> *mut u8 {
 pub fn arena_alloc_gc_old(size: usize, align: usize, obj_type: u8) -> *mut u8 {
     use crate::gc::{GcHeader, GC_FLAG_ARENA, GC_HEADER_SIZE};
 
-    let total = GC_HEADER_SIZE + size;
+    // Same alignment-preservation rationale as `arena_alloc_gc`.
+    let pad = align.max(8);
+    let total = (GC_HEADER_SIZE + size + pad - 1) & !(pad - 1);
     let raw = arena_alloc_old(total, align);
 
     unsafe {
@@ -545,7 +568,27 @@ pub fn arena_alloc_gc(size: usize, align: usize, obj_type: u8) -> *mut u8 {
         return user_ptr;
     }
 
-    let total = GC_HEADER_SIZE + size;
+    // Pad `total` up to a multiple of 8 so the arena's offset stays
+    // 8-aligned after each GC alloc. The codegen inline bump-allocator
+    // fast path in `crates/perry-codegen/src/lower_call.rs` reads the
+    // current offset, adds `total_size`, and stores back without
+    // re-aligning — its "every allocation is a multiple of 8"
+    // invariant is only valid if every `arena_alloc_gc` caller
+    // honors it. Strings (`StringHeader=20` bytes + N-byte payload)
+    // routinely allocate odd sizes, which left the offset misaligned
+    // for the next inline class allocation. Symptoms: `new World()`
+    // returned a misaligned user_ptr; `arena_walk_objects` (which
+    // walks at 8-aligned positions) skipped the World object;
+    // `build_valid_pointer_set` therefore never inserted World;
+    // `try_mark_value` rejected the World pointer found in the
+    // shadow stack; mark phase missed every reachable Map / Array
+    // hanging off World; sweep freed the archetype's componentData
+    // entries buffer; the next allocation reused that slab and the
+    // first componentData key drifted to a denormal (~1.086e-311),
+    // throwing "Component type 1 is not in this archetype" on the
+    // next query.
+    let pad = align.max(8);
+    let total = (GC_HEADER_SIZE + size + pad - 1) & !(pad - 1);
     let raw = arena_alloc(total, align);
 
     unsafe {

@@ -185,13 +185,25 @@ pub(super) fn collect_modules(
         None
     };
 
-    let (mut hir_module, new_next_class_id) = perry_hir::lower_module_with_class_id_and_types(
-        ast_module,
-        &module_name,
-        &source_file_path,
-        *next_class_id,
-        resolved_types,
-    )?;
+    // Pass cross-module class field types so type inference can resolve
+    // `someLocal.field` where the local's declared type is a class defined
+    // in another module (and that module was already lowered earlier in
+    // the walk OR via the post-pass re-lowering kick-off below). Empty on
+    // the first pre-walk; populated for the second authoritative walk.
+    let imported_class_fields = if ctx.cross_module_class_field_types.is_empty() {
+        None
+    } else {
+        Some(&ctx.cross_module_class_field_types)
+    };
+    let (mut hir_module, new_next_class_id) =
+        perry_hir::lower_module_with_class_id_types_and_seed(
+            ast_module,
+            &module_name,
+            &source_file_path,
+            *next_class_id,
+            resolved_types,
+            imported_class_fields,
+        )?;
     *next_class_id = new_next_class_id; // Update the global class_id counter
 
     if !skip_transforms {
