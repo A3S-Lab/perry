@@ -1,6 +1,6 @@
 // demonstrates: JSON.parse + JSON.stringify roundtrip
 // docs: docs/src/stdlib/json.md
-// platforms: macos, linux
+// platforms: macos, linux, windows
 // targets: wasm, web, android
 
 const input = '{"name":"perry","version":3}'

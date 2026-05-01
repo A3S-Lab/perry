@@ -1082,14 +1082,18 @@ fn get_parent_class_id(class_id: u32) -> Option<u32> {
 /// (e.g. `0x00FF_0000_0000` from an `ArrayHeader { length: 0, capacity:
 /// 255 }` read as u64). Real Darwin mimalloc + arena allocations all
 /// land in the 3-5 TB range; anything below 2 TB is certainly bogus on
-/// this platform. The remaining Windows/Linux targets still fit —
-/// their heaps are similarly high-address on 64-bit systems — but we
-/// haven't captured the same corruption pattern there, so if it ever
-/// regresses we'll want platform-specific bounds.
+/// that platform. Linux glibc and Windows mimalloc allocate well below
+/// 2 TB though (often in the GB-to-tens-of-GB range), so the Darwin floor
+/// silently rejects every legitimate object pointer there — issues
+/// #385/#386/#387 traced back to this exact filter on Windows.
 #[inline(always)]
 fn is_valid_obj_ptr(ptr: *const u8) -> bool {
     let addr = ptr as u64;
-    (0x200_0000_0000..0x8000_0000_0000).contains(&addr)
+    #[cfg(any(target_os = "android", target_os = "linux", target_os = "windows"))]
+    const HEAP_MIN: u64 = 0x1000;
+    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+    const HEAP_MIN: u64 = 0x200_0000_0000;
+    (HEAP_MIN..0x8000_0000_0000).contains(&addr)
 }
 
 /// Object header - precedes the fields in memory

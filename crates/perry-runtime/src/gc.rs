@@ -1593,9 +1593,64 @@ fn get_stack_bottom() -> usize {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+// Windows: read TEB.StackBase. Works on every supported Windows version
+// (Windows 7+) without needing GetCurrentThreadStackLimits (Win8+), so it
+// stays correct on the `--min-windows-version=7` build path. The TEB lives
+// at GS:[0] on x86_64 (FS:[0] on x86); StackBase sits at offset 0x08
+// (the highest address — i.e. where the stack starts and grows down from).
+// This is the same pointer kernel32!GetCurrentThreadStackLimits returns as
+// `HighLimit`, just read directly from the TEB to avoid the kernel32 dep.
+//
+// Without this, conservative stack scan early-returns with stack_bottom=0,
+// the GC sees no stack roots, and any heap pointer that lives only in a
+// stack slot during a callback gets swept (issues #385/#386/#387 — the
+// `Array.prototype.map` / `JSON.parse(...).property` / supported_features
+// segfaults all traced back to here).
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 fn get_stack_bottom() -> usize {
-    0 // Stack scanning not supported
+    let stack_base: usize;
+    unsafe {
+        std::arch::asm!(
+            "mov {out}, gs:[0x08]",
+            out = out(reg) stack_base,
+            options(nostack, preserves_flags, readonly),
+        );
+    }
+    stack_base
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86"))]
+fn get_stack_bottom() -> usize {
+    let stack_base: usize;
+    unsafe {
+        std::arch::asm!(
+            "mov {out}, fs:[0x04]",
+            out = out(reg) stack_base,
+            options(nostack, preserves_flags, readonly),
+        );
+    }
+    stack_base
+}
+
+#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+fn get_stack_bottom() -> usize {
+    // ARM64 Windows: TEB pointer is in x18; StackBase at offset 0x08.
+    let stack_base: usize;
+    unsafe {
+        let teb: usize;
+        std::arch::asm!("mov {}, x18", out(reg) teb, options(nostack, preserves_flags, readonly));
+        stack_base = *((teb + 0x08) as *const usize);
+    }
+    stack_base
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "linux",
+    all(target_os = "windows", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")),
+)))]
+fn get_stack_bottom() -> usize {
+    0 // Stack scanning not supported on this OS/arch
 }
 
 /// Mark global roots (module-level variables registered by codegen).

@@ -32,12 +32,15 @@ use std::ptr;
 #[inline(always)]
 fn clean_arr_ptr(arr: *const ArrayHeader) -> *const ArrayHeader {
     // Heap window varies by OS: Darwin mimalloc lands in the 3-5 TB range;
-    // Android scudo + Linux glibc allocate MUCH lower (often < 1 TB). Using
-    // the Darwin-tight 2 TB floor on Android silently null-s every real
-    // array pointer, turning js_array_set_f64 into a no-op.
-    #[cfg(any(target_os = "android", target_os = "linux"))]
+    // Android scudo + Linux glibc allocate MUCH lower (often < 1 TB); Windows
+    // mimalloc lands well under 1 TB (often in the GB-to-tens-of-GB range).
+    // Using the Darwin-tight 2 TB floor on Android / Windows silently null-s
+    // every real array pointer, turning js_array_set_f64 into a no-op and —
+    // at the read side via js_array_map etc. — returning empty arrays for
+    // legitimate inputs (issues #385/#386/#387).
+    #[cfg(any(target_os = "android", target_os = "linux", target_os = "windows"))]
     const HEAP_MIN: u64 = 0x1000; // 4 KB (classic user-space floor)
-    #[cfg(not(any(target_os = "android", target_os = "linux")))]
+    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
     const HEAP_MIN: u64 = 0x200_0000_0000; // 2 TB — above observed corrupt handles on Darwin
     const HEAP_MAX: u64 = 0x8000_0000_0000; // 47-bit userspace cap
     let bits = arr as u64;
@@ -677,9 +680,9 @@ pub extern "C" fn js_array_grow(arr: *mut ArrayHeader, min_capacity: u32) -> *mu
         // check that mirrors clean_arr_ptr's HEAP_MIN to skip pointers
         // that don't have a real GcHeader behind them (e.g. test-mode
         // synthetic pointers, longlived-arena edge cases).
-        #[cfg(any(target_os = "android", target_os = "linux"))]
+        #[cfg(any(target_os = "android", target_os = "linux", target_os = "windows"))]
         const HEAP_MIN: usize = 0x1000;
-        #[cfg(not(any(target_os = "android", target_os = "linux")))]
+        #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
         const HEAP_MIN: usize = 0x200_0000_0000;
         if (arr as usize) >= HEAP_MIN + crate::gc::GC_HEADER_SIZE {
             let old_header =
