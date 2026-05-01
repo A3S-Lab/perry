@@ -141,6 +141,67 @@ pub extern "C" fn js_perry_tui_box_set_height(handle: i64, height: f64) -> f64 {
     f64::from_bits(0x7FFC_0000_0000_0001)
 }
 
+#[no_mangle]
+pub extern "C" fn js_perry_tui_box_set_flex_grow(handle: i64, grow: f64) -> f64 {
+    let g = grow.max(0.0) as u16;
+    with_box_style_mut(handle, |style| style.flex_grow = g);
+    f64::from_bits(0x7FFC_0000_0000_0001)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 widgets — Spacer + ProgressBar.
+// ---------------------------------------------------------------------------
+
+/// `Spacer()` — empty Box with `flex_grow: 1`. In a row layout it
+/// pushes siblings apart; in a column layout it pushes them up/down.
+/// Equivalent to `Box({ flexGrow: 1 })` — provided as its own FFI for
+/// the more discoverable name.
+#[no_mangle]
+pub extern "C" fn js_perry_tui_spacer() -> f64 {
+    let mut s = super::style::BoxStyle::default();
+    s.flex_grow = 1;
+    let h = super::tree::register(Node::Box {
+        children: Vec::new(),
+        fg: Color::Default,
+        bg: Color::Default,
+        style: s,
+    });
+    js_nanbox_pointer(h)
+}
+
+/// `ProgressBar(value, max, width)` — renders `[====    ]`-style filled
+/// bar. value/max → fraction of `width` cells filled with `=`; the
+/// rest are spaces. Brackets are added at both ends so the widget's
+/// total width is `width + 2`. Returns a Text widget handle (the
+/// progress bar IS just a precomputed string in v1; animated /
+/// gradient bars come in Phase 4.5).
+#[no_mangle]
+pub extern "C" fn js_perry_tui_progress_bar(value: f64, max: f64, width: f64) -> f64 {
+    let w = width.max(1.0) as usize;
+    let frac = if max > 0.0 {
+        (value / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let filled = (frac * (w as f64)).round() as usize;
+    let mut s = String::with_capacity(w + 2);
+    s.push('[');
+    for _ in 0..filled {
+        s.push('=');
+    }
+    for _ in filled..w {
+        s.push(' ');
+    }
+    s.push(']');
+    let h = super::tree::register(Node::Text {
+        content: s,
+        fg: Color::Default,
+        bg: Color::Default,
+        style: super::cell::Style::default(),
+    });
+    js_nanbox_pointer(h)
+}
+
 /// Append a child to a Box. Both args are unboxed POINTER handles.
 #[no_mangle]
 pub extern "C" fn js_perry_tui_box_add_child(parent: i64, child: i64) -> f64 {

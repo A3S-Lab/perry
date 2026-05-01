@@ -124,6 +124,7 @@ fn box_style_to_taffy(s: &BoxStyle) -> Style {
         flex_direction: dir,
         justify_content: justify,
         align_items: align,
+        flex_grow: s.flex_grow as f32,
         gap: Size {
             width: length(s.gap as f32),
             height: length(s.gap as f32),

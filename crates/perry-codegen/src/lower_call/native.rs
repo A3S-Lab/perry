@@ -140,6 +140,19 @@ fn apply_box_style(ctx: &mut FnCtx<'_>, parent_slot: &str, style_arg: &Expr) -> 
                     &[(I64, &parent_handle), (DOUBLE, &v)],
                 );
             }
+            "flexGrow" => {
+                let v = lower_expr(ctx, val)?;
+                ctx.pending_declares.push((
+                    "js_perry_tui_box_set_flex_grow".to_string(),
+                    DOUBLE,
+                    vec![I64, DOUBLE],
+                ));
+                ctx.block().call(
+                    DOUBLE,
+                    "js_perry_tui_box_set_flex_grow",
+                    &[(I64, &parent_handle), (DOUBLE, &v)],
+                );
+            }
             _ => {} // Unknown field — silently drop for forward-compat.
         }
     }

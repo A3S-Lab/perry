@@ -7131,6 +7131,34 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         args: &[NA_PTR, NA_F64],
         ret: NR_VOID,
     },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "boxSetFlexGrow",
+        class_filter: None,
+        runtime: "js_perry_tui_box_set_flex_grow",
+        args: &[NA_PTR, NA_F64],
+        ret: NR_VOID,
+    },
+    // perry/tui Phase 4 — Spacer + ProgressBar widgets.
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "Spacer",
+        class_filter: None,
+        runtime: "js_perry_tui_spacer",
+        args: &[],
+        ret: NR_PTR,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "ProgressBar",
+        class_filter: None,
+        runtime: "js_perry_tui_progress_bar",
+        args: &[NA_F64, NA_F64, NA_F64],
+        ret: NR_PTR,
+    },
     // ========== readline (#347 Phase 1) ==========
     // createInterface(opts) returns a Handle (i64, NaN-boxed POINTER).
     // Instance methods take that Handle as the first arg via has_receiver.

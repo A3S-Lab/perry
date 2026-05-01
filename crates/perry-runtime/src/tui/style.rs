@@ -58,6 +58,9 @@ pub struct BoxStyle {
     pub width: Option<u16>,
     /// Explicit height in cells.
     pub height: Option<u16>,
+    /// CSS flex-grow factor (Taffy: u16). 0 = no grow (default);
+    /// `Spacer()` sets this to 1 for "fill remaining space" behavior.
+    pub flex_grow: u16,
 }
 
 /// Parse a flexDirection string into the enum. Unknown strings fall

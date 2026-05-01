@@ -49,6 +49,8 @@ declare module "perry/tui" {
         padding?: number;
         width?: number;
         height?: number;
+        /** CSS flex-grow factor. 0 = no grow (default); 1 = fill remaining space. */
+        flexGrow?: number;
     }
 
     /**
@@ -76,6 +78,21 @@ declare module "perry/tui" {
      * setup before any render.
      */
     export function enter(): void;
+
+    /**
+     * Empty Box with `flexGrow: 1` — pushes siblings apart in a row
+     * layout (and up/down in a column). Equivalent to
+     * `Box({ flexGrow: 1 })` with a more discoverable name.
+     */
+    export function Spacer(): Widget;
+
+    /**
+     * `[====    ]`-style filled bar. `value`/`max` → fraction of
+     * `width` cells filled with `=`; the rest are spaces. Brackets
+     * are added at both ends so the widget's total width is
+     * `width + 2`.
+     */
+    export function ProgressBar(value: number, max: number, width: number): Widget;
 
     /**
      * Allocate a reactive state slot with the given initial value.
