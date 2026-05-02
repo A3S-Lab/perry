@@ -53,9 +53,17 @@ impl Eq for JSValueKey {}
 
 /// Side-table mapping set_ptr -> (JSValueKey -> index_in_elements).
 /// Provides O(1) lookup for `find_value_index` instead of O(n) linear scan.
+///
+/// Both nesting levels use `PtrHasher` (Fibonacci-multiplicative + xorshift
+/// avalanche). Outer key is set heap-pointer; inner is `JSValueKey` whose
+/// `Hash` impl writes either string-content bytes or f64 bits — the
+/// avalanche step handles both cleanly. Same rationale as MAP_INDEX
+/// (commit 39e253cd) — the perry-runtime registries don't need
+/// SipHash's DoS-resistance for keys that never come from external input.
 thread_local! {
-    static SET_INDEX: RefCell<HashMap<usize, HashMap<JSValueKey, u32>>> =
-        RefCell::new(HashMap::new());
+    static SET_INDEX: RefCell<
+        crate::fast_hash::PtrHashMap<usize, crate::fast_hash::PtrHashMap<JSValueKey, u32>>,
+    > = RefCell::new(crate::fast_hash::new_ptr_hash_map());
 }
 
 fn register_set(ptr: *mut SetHeader) {
@@ -252,7 +260,8 @@ pub extern "C" fn js_set_alloc(capacity: u32) -> *mut SetHeader {
 
         // Initialize O(1) lookup index
         SET_INDEX.with(|idx| {
-            idx.borrow_mut().insert(ptr as usize, HashMap::new());
+            idx.borrow_mut()
+                .insert(ptr as usize, crate::fast_hash::new_ptr_hash_map());
         });
 
         ptr
