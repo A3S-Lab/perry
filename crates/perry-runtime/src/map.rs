@@ -7,7 +7,8 @@
 use crate::string::StringHeader;
 use std::alloc::{alloc, realloc, Layout};
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::ptr;
 
 /// Must match value.rs TAG_UNDEFINED
@@ -23,6 +24,56 @@ fn register_map(ptr: *mut MapHeader) {
 
 pub fn is_registered_map(addr: usize) -> bool {
     MAP_REGISTRY.with(|r| r.borrow().contains(&addr))
+}
+
+/// A wrapper around f64 JSValues that implements Hash and Eq using
+/// content-based comparison for strings (matching `jsvalue_eq` semantics).
+/// Mirrors the same JSValueKey pattern used by `set.rs`.
+#[derive(Clone)]
+struct JSValueKey(f64);
+
+impl Hash for JSValueKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let bits = self.0.to_bits();
+        let ptr = extract_string_ptr_from_value(bits);
+        if !ptr.is_null() && (ptr as usize) >= 0x1000 {
+            // String value: hash by content so identical strings with
+            // different pointers/tags produce the same hash.
+            unsafe {
+                let len = (*ptr).byte_len;
+                0xFFFF_FFFFu32.hash(state);
+                len.hash(state);
+                let data = (ptr as *const u8).add(std::mem::size_of::<StringHeader>());
+                let slice = std::slice::from_raw_parts(data, len as usize);
+                slice.hash(state);
+            }
+        } else {
+            bits.hash(state);
+        }
+    }
+}
+
+impl PartialEq for JSValueKey {
+    fn eq(&self, other: &Self) -> bool {
+        jsvalue_eq(self.0, other.0)
+    }
+}
+impl Eq for JSValueKey {}
+
+/// Side-table mapping `map_ptr -> (JSValueKey -> entries-array-index)`.
+/// O(1) `find_key_index` instead of an O(N) linear scan over the
+/// entries buffer. Identical pattern to `set.rs::SET_INDEX`.
+thread_local! {
+    static MAP_INDEX: RefCell<HashMap<usize, HashMap<JSValueKey, u32>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Drop the side-table entry for a map address that's about to be reused
+/// or freed (called from gc::sweep). Safe to call on unregistered addrs.
+pub fn drop_map_index(addr: usize) {
+    MAP_INDEX.with(|idx| {
+        idx.borrow_mut().remove(&addr);
+    });
 }
 
 /// Strip NaN-boxing tags from a map pointer (defensive guard).
@@ -193,11 +244,20 @@ pub extern "C" fn js_map_alloc(capacity: u32) -> *mut MapHeader {
         as *mut MapHeader;
 
     unsafe {
-        // Entries array uses standard alloc (not gc-tracked, just data)
+        // Entries array uses standard alloc (not gc-tracked, just data).
+        // Zero the buffer at allocation: libc hands out raw memory and a
+        // freshly-allocated Map after a sibling was freed often lands on
+        // the same address. find_key_index walks entries[0..size]; if a
+        // realloc-grow leaves stale bytes in the live range a `has()`
+        // check can find a stale key from a prior Map. Witnessed in
+        // ecs-perf-test/repro/foreach-many.ts iter 5: 2500 stale entries
+        // from iter 4's freed buffer made `Map.has(5121)` return true
+        // on a fresh Map that never saw entity 5121.
         let entries = alloc(ent_layout) as *mut f64;
         if entries.is_null() {
             panic!("Failed to allocate map entries");
         }
+        ptr::write_bytes(entries as *mut u8, 0u8, ent_layout.size());
 
         // Initialize header
         (*ptr).size = 0;
@@ -206,6 +266,13 @@ pub extern "C" fn js_map_alloc(capacity: u32) -> *mut MapHeader {
 
         // Register in map registry for runtime type detection
         register_map(ptr);
+
+        // Initialize / reset the O(1) lookup side-table for this address.
+        // gc_malloc may recycle a freed Map's GC slot, so a stale index
+        // entry from the prior occupant must be cleared here.
+        MAP_INDEX.with(|idx| {
+            idx.borrow_mut().insert(ptr as usize, HashMap::new());
+        });
 
         ptr
     }
@@ -221,11 +288,30 @@ pub extern "C" fn js_map_size(map: *const MapHeader) -> u32 {
     unsafe { (*map).size }
 }
 
-/// Find the index of a key in the map, or -1 if not found
+/// Find the index of a key in the map, or -1 if not found.
+/// Uses the O(1) MAP_INDEX side-table; falls back to a linear scan only
+/// when no side-table entry exists (e.g. a Map produced by a path that
+/// bypassed `js_map_alloc`).
 unsafe fn find_key_index(map: *const MapHeader, key: f64) -> i32 {
     let size = (*map).size;
-    let entries = entries_ptr(map);
+    let resolved = MAP_INDEX.with(|idx| {
+        let idx = idx.borrow();
+        if let Some(slot) = idx.get(&(map as usize)) {
+            if let Some(&i) = slot.get(&JSValueKey(key)) {
+                if i < size {
+                    return Some(i as i32);
+                }
+            }
+            return Some(-1i32);
+        }
+        None
+    });
+    if let Some(v) = resolved {
+        return v;
+    }
 
+    // Cold fallback: no side-table entry. Linear scan.
+    let entries = entries_ptr(map);
     for i in 0..size {
         let entry_key = ptr::read(entries.add((i as usize) * 2));
         if jsvalue_eq(entry_key, key) {
@@ -269,26 +355,33 @@ pub extern "C" fn js_map_set(map: *mut MapHeader, key: f64, value: f64) -> *mut 
     }
     let key = normalize_zero(key);
     unsafe {
-        // Check if key already exists
+        // Check if key already exists (O(1) via MAP_INDEX)
         let idx = find_key_index(map, key);
 
         if idx >= 0 {
-            // Update existing value
+            // Update existing value (key position unchanged → no index update)
             let entries = entries_ptr_mut(map);
             ptr::write(entries.add((idx as usize) * 2 + 1), value);
             return map;
         }
 
-        // Key doesn't exist, need to add new entry
+        // Key doesn't exist, append a new entry
         ensure_capacity(map);
         let size = (*map).size;
         let entries = entries_ptr_mut(map);
 
-        // Write key and value
         ptr::write(entries.add((size as usize) * 2), key);
         ptr::write(entries.add((size as usize) * 2 + 1), value);
 
         (*map).size = size + 1;
+
+        // Update O(1) side-table.
+        MAP_INDEX.with(|idx| {
+            let mut idx = idx.borrow_mut();
+            let slot = idx.entry(map as usize).or_insert_with(HashMap::new);
+            slot.insert(JSValueKey(key), size);
+        });
+
         map
     }
 }
@@ -351,15 +444,32 @@ pub extern "C" fn js_map_delete(map: *mut MapHeader, key: f64) -> i32 {
         let size = (*map).size;
         let entries = entries_ptr_mut(map);
 
-        // If not the last element, swap with the last element
+        // Capture the swapped-in key (if any) before writing, so we can
+        // patch its position in the side-table after the swap-and-pop.
+        let mut swapped_key: Option<f64> = None;
         if (idx as u32) < size - 1 {
             let last_key = ptr::read(entries.add(((size - 1) as usize) * 2));
             let last_value = ptr::read(entries.add(((size - 1) as usize) * 2 + 1));
             ptr::write(entries.add((idx as usize) * 2), last_key);
             ptr::write(entries.add((idx as usize) * 2 + 1), last_value);
+            swapped_key = Some(last_key);
         }
 
         (*map).size = size - 1;
+
+        // Update side-table: drop the deleted key; if we swap-popped, patch
+        // the swapped key's stored index to its new position.
+        MAP_INDEX.with(|midx| {
+            let mut midx = midx.borrow_mut();
+            if let Some(slot) = midx.get_mut(&(map as usize)) {
+                slot.remove(&JSValueKey(key));
+                if let Some(sk) = swapped_key {
+                    if let Some(entry) = slot.get_mut(&JSValueKey(sk)) {
+                        *entry = idx as u32;
+                    }
+                }
+            }
+        });
         1
     }
 }
@@ -374,6 +484,12 @@ pub extern "C" fn js_map_clear(map: *mut MapHeader) {
     unsafe {
         (*map).size = 0;
     }
+    MAP_INDEX.with(|idx| {
+        let mut idx = idx.borrow_mut();
+        if let Some(slot) = idx.get_mut(&(map as usize)) {
+            slot.clear();
+        }
+    });
 }
 
 /// Get the entries of a map as an array of [key, value] pairs

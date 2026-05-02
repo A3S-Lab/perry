@@ -2422,6 +2422,8 @@ fn sweep() -> u64 {
                     freed_bytes += total_size as u64;
 
                     // For Maps, also free the separately-allocated entries array
+                    // and drop the lookup side-table entry so the next allocation
+                    // at this GC slot doesn't inherit stale key→index pairs.
                     if (*header).obj_type == GC_TYPE_MAP {
                         let user_ptr = (header as *mut u8).add(GC_HEADER_SIZE);
                         let map = user_ptr as *const crate::map::MapHeader;
@@ -2434,6 +2436,7 @@ fn sweep() -> u64 {
                                 dealloc(entries as *mut u8, ent_layout);
                             }
                         }
+                        crate::map::drop_map_index(user_ptr as usize);
                     }
 
                     let layout = Layout::from_size_align(total_size, 8).unwrap();
