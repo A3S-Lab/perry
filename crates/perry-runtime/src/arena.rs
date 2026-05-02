@@ -151,8 +151,10 @@ impl Drop for Arena {
 
 impl Arena {
     fn new() -> Self {
+        let initial = ArenaBlock::new();
+        ARENA_TOTAL_BYTES.with(|t| t.set(t.get() + initial.size));
         Arena {
-            blocks: vec![ArenaBlock::new()],
+            blocks: vec![initial],
             current: 0,
         }
     }
@@ -208,6 +210,7 @@ impl Arena {
         // semantics stay bounded even on workloads that churn
         // through nursery blocks.
         let fresh = alloc_block(size);
+        let fresh_size = fresh.size;
         let mut tomb_idx: Option<usize> = None;
         for i in 0..self.blocks.len() {
             if self.blocks[i].data.is_null() {
@@ -226,6 +229,7 @@ impl Arena {
             }
         };
         self.current = new_idx;
+        ARENA_TOTAL_BYTES.with(|t| t.set(t.get() + fresh_size));
 
         self.blocks[self.current]
             .alloc(size, align)
@@ -234,6 +238,18 @@ impl Arena {
 }
 
 thread_local! {
+    /// Cached running sum of `block.size` across every arena (general,
+    /// longlived, old-gen). `arena_total_bytes()` previously walked
+    /// every block of every arena summing this on every call — and
+    /// `gc_check_trigger()` calls it on every `gc_malloc`, so for an
+    /// 80-block working set the per-allocation overhead was ~250 ns
+    /// just to recompute a total that almost never changes (only on
+    /// fresh-block alloc and tombstone dealloc). Maintained via deltas
+    /// at the four mutation sites (Arena::new initial block, fresh
+    /// alloc into a tombstone slot or the end, and dealloc inside
+    /// `arena_reset_empty_blocks`).
+    static ARENA_TOTAL_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
     static ARENA: UnsafeCell<Arena> = UnsafeCell::new(Arena::new());
 
     /// Segregated long-lived arena (issue #179). Holds objects that are
@@ -609,30 +625,12 @@ pub extern "C" fn js_arena_alloc(size: u32) -> *mut u8 {
     arena_alloc(size as usize, 8)
 }
 
-/// Get total bytes reserved across all arena blocks (general + longlived).
+/// Get total bytes reserved across all arena blocks (general + longlived
+/// + old-gen). Reads the running sum maintained via deltas at the four
+/// mutation sites — one TLS load instead of an O(blocks) walk on the
+/// gc-trigger hot path.
 pub fn arena_total_bytes() -> usize {
-    let mut total: usize = 0;
-    ARENA.with(|arena| {
-        let arena = unsafe { &*arena.get() };
-        for block in &arena.blocks {
-            total += block.size;
-        }
-    });
-    LONGLIVED_ARENA.with(|arena| {
-        let arena = unsafe { &*arena.get() };
-        for block in &arena.blocks {
-            total += block.size;
-        }
-    });
-    // Phase B: include old-gen blocks. Empty in Phase B; Phase C
-    // populates via promotion.
-    OLD_ARENA.with(|arena| {
-        let arena = unsafe { &*arena.get() };
-        for block in &arena.blocks {
-            total += block.size;
-        }
-    });
-    total
+    ARENA_TOTAL_BYTES.with(|t| t.get())
 }
 
 /// Get bytes currently in use (sum of `block.offset` across blocks).
@@ -1089,6 +1087,7 @@ pub fn arena_reset_empty_blocks(block_has_live: &[bool]) {
                 let layout = Layout::from_size_align(block.size, 16).unwrap();
                 deallocated_ranges.push((block.data as usize, block.size));
                 std::alloc::dealloc(block.data, layout);
+                ARENA_TOTAL_BYTES.with(|t| t.set(t.get().saturating_sub(block.size)));
                 block.data = std::ptr::null_mut();
                 block.size = 0;
                 block.offset = 0;
