@@ -522,6 +522,11 @@ pub fn declare_phase_b_strings(module: &mut LlModule) {
     module.declare_function("js_map_entries", I64, &[I64]);
     module.declare_function("js_map_keys", I64, &[I64]);
     module.declare_function("js_map_values", I64, &[I64]);
+    // Direct entry access for the `for (const [k, v] of map)` fast path
+    // — skips the pair-Array materialization that `js_map_entries`
+    // would do. (Map ptr, entry idx) → key / value.
+    module.declare_function("js_map_entry_key_at", DOUBLE, &[I64, I32]);
+    module.declare_function("js_map_entry_value_at", DOUBLE, &[I64, I32]);
     // Map/Set forEach: (collection_ptr, callback_nanboxed_f64) -> void
     module.declare_function("js_map_foreach", VOID, &[I64, DOUBLE]);
     module.declare_function("js_set_foreach", VOID, &[I64, DOUBLE]);

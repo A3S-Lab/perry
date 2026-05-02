@@ -563,6 +563,44 @@ pub extern "C" fn js_map_clear(map: *mut MapHeader) {
     });
 }
 
+/// Read the key at entry index `idx` of `map`. Used by perry-hir's
+/// `for (const [k, v] of mapExpr)` fast path to avoid materializing
+/// pair Arrays via `js_map_entries`. Returns `TAG_UNDEFINED` for an
+/// out-of-range index or null map; the caller is expected to bound
+/// the loop by `js_map_size`.
+#[no_mangle]
+pub extern "C" fn js_map_entry_key_at(map: *const MapHeader, idx: u32) -> f64 {
+    let map = clean_map_ptr(map);
+    if map.is_null() {
+        return f64::from_bits(TAG_UNDEFINED);
+    }
+    unsafe {
+        let size = (*map).size;
+        if idx >= size {
+            return f64::from_bits(TAG_UNDEFINED);
+        }
+        let entries = entries_ptr(map);
+        ptr::read(entries.add(idx as usize * 2))
+    }
+}
+
+/// Companion to `js_map_entry_key_at` — read the value at entry index `idx`.
+#[no_mangle]
+pub extern "C" fn js_map_entry_value_at(map: *const MapHeader, idx: u32) -> f64 {
+    let map = clean_map_ptr(map);
+    if map.is_null() {
+        return f64::from_bits(TAG_UNDEFINED);
+    }
+    unsafe {
+        let size = (*map).size;
+        if idx >= size {
+            return f64::from_bits(TAG_UNDEFINED);
+        }
+        let entries = entries_ptr(map);
+        ptr::read(entries.add(idx as usize * 2 + 1))
+    }
+}
+
 /// Get the entries of a map as an array of [key, value] pairs
 /// Returns an array where each element is a 2-element array [key, value]
 #[no_mangle]

@@ -5520,6 +5520,25 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             Ok(nanbox_pointer_inline(blk, &result))
         }
 
+        // -------- MapEntryKeyAt / MapEntryValueAt --------
+        // Direct flat-array entry access — used by the
+        // `for (const [k, v] of mapExpr)` fast path so the loop reads
+        // entries straight out of the Map's internal buffer instead of
+        // calling `js_map_entries` (which materializes N+1 small Arrays).
+        Expr::MapEntryKeyAt { map, idx } | Expr::MapEntryValueAt { map, idx } => {
+            let m_box = lower_expr(ctx, map)?;
+            let i_dbl = lower_expr(ctx, idx)?;
+            let blk = ctx.block();
+            let m_handle = unbox_to_i64(blk, &m_box);
+            let i_i32 = blk.fptosi(DOUBLE, &i_dbl, I32);
+            let runtime_fn = match expr {
+                Expr::MapEntryKeyAt { .. } => "js_map_entry_key_at",
+                Expr::MapEntryValueAt { .. } => "js_map_entry_value_at",
+                _ => unreachable!(),
+            };
+            Ok(blk.call(DOUBLE, runtime_fn, &[(I64, &m_handle), (I32, &i_i32)]))
+        }
+
         // -------- Set.values (set → array conversion for iteration) --------
         Expr::SetValues(set) => {
             let s_box = lower_expr(ctx, set)?;

@@ -5555,13 +5555,45 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
             // for (const [k, v] of this.classMap) { ... } per #302.
             let mut map_key_type: Option<Type> = None;
             let mut map_val_type: Option<Type> = None;
+            let is_iterable_map = matches!(
+                &iterable_type,
+                Some(Type::Generic { base, .. }) if base == "Map"
+            );
+            // Fast path: `for (const [k, v] of mapExpr)` with an exact two-element
+            // identifier destructure can iterate the Map's flat entries buffer
+            // directly via `MapEntryKeyAt` / `MapEntryValueAt`, skipping the N+1
+            // small Array allocations that `MapEntries` would do per iteration.
+            // Detected here so we can keep the iterable expression unwrapped
+            // and emit a different binding/bound shape below.
+            let map_kv_fastpath = is_iterable_map
+                && match &for_of_stmt.left {
+                    ast::ForHead::VarDecl(var_decl) => match var_decl.decls.first() {
+                        Some(decl) => match &decl.name {
+                            ast::Pat::Array(arr_pat) => {
+                                arr_pat.elems.len() == 2
+                                    && arr_pat.elems.iter().all(|e| {
+                                        matches!(e, Some(ast::Pat::Ident(_)))
+                                    })
+                            }
+                            _ => false,
+                        },
+                        None => false,
+                    },
+                    _ => false,
+                };
             let arr_expr = match &iterable_type {
                 Some(Type::Generic { base, type_args }) if base == "Map" => {
                     if type_args.len() >= 2 {
                         map_key_type = Some(type_args[0].clone());
                         map_val_type = Some(type_args[1].clone());
                     }
-                    Expr::MapEntries(Box::new(arr_expr))
+                    if map_kv_fastpath {
+                        // Keep the raw map expression — fast path reads flat
+                        // entries via MapEntryKeyAt / MapEntryValueAt below.
+                        arr_expr
+                    } else {
+                        Expr::MapEntries(Box::new(arr_expr))
+                    }
                 }
                 Some(Type::Generic { base, .. }) if base == "Set" => {
                     Expr::SetValues(Box::new(arr_expr))
@@ -5597,10 +5629,19 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
                     _ => Type::Any,
                 }
             };
-            // The __arr holder's type: String for string iteration (so codegen uses
-            // string.length and the str[i] char-access path), Array otherwise.
+            // The __arr holder's type: String for string iteration, Map for
+            // the Map-fast-path so `__m.size` resolves through `is_map_expr`,
+            // Array otherwise.
             let arr_type = if is_string_iter {
                 Type::String
+            } else if map_kv_fastpath {
+                Type::Generic {
+                    base: "Map".to_string(),
+                    type_args: vec![
+                        map_key_type.clone().unwrap_or(Type::Any),
+                        map_val_type.clone().unwrap_or(Type::Any),
+                    ],
+                }
             } else {
                 Type::Array(Box::new(elem_type.clone()))
             };
@@ -5723,43 +5764,79 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
                                 }]
                             }
                             ast::Pat::Array(arr_pat) => {
-                                // Array destructuring: for (const [a, b] of arr)
-                                let mut stmts = vec![Stmt::Let {
-                                    id: item_id,
-                                    name: format!("__item_{}", item_id),
-                                    ty: elem_type.clone(),
-                                    mutable: false,
-                                    init: Some(item_expr),
-                                }];
+                                if map_kv_fastpath && arr_pat.elems.len() == 2 {
+                                    // Map [k, v] fast path: read entries directly
+                                    // out of the Map's flat buffer at the loop
+                                    // index. No `__item` Array materialization.
+                                    let key_ty = map_key_type
+                                        .clone()
+                                        .unwrap_or(Type::Any);
+                                    let val_ty = map_val_type
+                                        .clone()
+                                        .unwrap_or(Type::Any);
+                                    let (k_name, k_id) = var_ids[0].clone();
+                                    let (v_name, v_id) = var_ids[1].clone();
+                                    vec![
+                                        Stmt::Let {
+                                            id: k_id,
+                                            name: k_name,
+                                            ty: key_ty,
+                                            mutable: false,
+                                            init: Some(Expr::MapEntryKeyAt {
+                                                map: Box::new(Expr::LocalGet(arr_id)),
+                                                idx: Box::new(Expr::LocalGet(idx_id)),
+                                            }),
+                                        },
+                                        Stmt::Let {
+                                            id: v_id,
+                                            name: v_name,
+                                            ty: val_ty,
+                                            mutable: false,
+                                            init: Some(Expr::MapEntryValueAt {
+                                                map: Box::new(Expr::LocalGet(arr_id)),
+                                                idx: Box::new(Expr::LocalGet(idx_id)),
+                                            }),
+                                        },
+                                    ]
+                                } else {
+                                    // Array destructuring: for (const [a, b] of arr)
+                                    let mut stmts = vec![Stmt::Let {
+                                        id: item_id,
+                                        name: format!("__item_{}", item_id),
+                                        ty: elem_type.clone(),
+                                        mutable: false,
+                                        init: Some(item_expr),
+                                    }];
 
-                                // Extract each element using pre-defined IDs
-                                let mut var_idx = 0;
-                                for (idx, elem) in arr_pat.elems.iter().enumerate() {
-                                    if let Some(elem_pat) = elem {
-                                        if let ast::Pat::Ident(_) = elem_pat {
-                                            let (name, id) = var_ids[var_idx].clone();
-                                            var_idx += 1;
-                                            // For Map destructuring, use the Tuple element type
-                                            let var_type = if let Type::Tuple(ref types) = elem_type
-                                            {
-                                                types.get(idx).cloned().unwrap_or(Type::Any)
-                                            } else {
-                                                Type::Any
-                                            };
-                                            stmts.push(Stmt::Let {
-                                                id,
-                                                name,
-                                                ty: var_type,
-                                                mutable: false,
-                                                init: Some(Expr::IndexGet {
-                                                    object: Box::new(Expr::LocalGet(item_id)),
-                                                    index: Box::new(Expr::Number(idx as f64)),
-                                                }),
-                                            });
+                                    // Extract each element using pre-defined IDs
+                                    let mut var_idx = 0;
+                                    for (idx, elem) in arr_pat.elems.iter().enumerate() {
+                                        if let Some(elem_pat) = elem {
+                                            if let ast::Pat::Ident(_) = elem_pat {
+                                                let (name, id) = var_ids[var_idx].clone();
+                                                var_idx += 1;
+                                                // For Map destructuring, use the Tuple element type
+                                                let var_type = if let Type::Tuple(ref types) = elem_type
+                                                {
+                                                    types.get(idx).cloned().unwrap_or(Type::Any)
+                                                } else {
+                                                    Type::Any
+                                                };
+                                                stmts.push(Stmt::Let {
+                                                    id,
+                                                    name,
+                                                    ty: var_type,
+                                                    mutable: false,
+                                                    init: Some(Expr::IndexGet {
+                                                        object: Box::new(Expr::LocalGet(item_id)),
+                                                        index: Box::new(Expr::Number(idx as f64)),
+                                                    }),
+                                                });
+                                            }
                                         }
                                     }
+                                    stmts
                                 }
-                                stmts
                             }
                             ast::Pat::Object(obj_pat) => {
                                 // Object destructuring: for (const { a, b } of arr)
@@ -5877,6 +5954,20 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
                 loop_body.insert(i, stmt);
             }
 
+            // Loop bound. Fast path reads `__m.size` (lowered by codegen
+            // to `js_map_size`); regular path uses `__arr.length` against
+            // the materialized iterable.
+            let bound_expr = if map_kv_fastpath {
+                Expr::PropertyGet {
+                    object: Box::new(Expr::LocalGet(arr_id)),
+                    property: "size".to_string(),
+                }
+            } else {
+                Expr::PropertyGet {
+                    object: Box::new(Expr::LocalGet(arr_id)),
+                    property: "length".to_string(),
+                }
+            };
             // Create the for loop:
             // for (let __i = 0; __i < __arr.length; __i++) { ... }
             module.init.push(Stmt::For {
@@ -5890,10 +5981,7 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
                 condition: Some(Expr::Compare {
                     op: CompareOp::Lt,
                     left: Box::new(Expr::LocalGet(idx_id)),
-                    right: Box::new(Expr::PropertyGet {
-                        object: Box::new(Expr::LocalGet(arr_id)),
-                        property: "length".to_string(),
-                    }),
+                    right: Box::new(bound_expr),
                 }),
                 update: Some(Expr::Update {
                     id: idx_id,

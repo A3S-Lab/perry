@@ -3734,11 +3734,40 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 _ => None,
             };
 
+            // Fast path: `for (const [k, v] of mapExpr)` reads flat entries
+            // directly via `MapEntryKeyAt` / `MapEntryValueAt` — no pair-Array
+            // materialization. Mirrors the same detection in `lower::lower_stmt`.
+            let is_iterable_map = matches!(
+                &iterable_type,
+                Some(Type::Generic { base, .. }) if base == "Map"
+            );
+            let map_kv_fastpath = is_iterable_map
+                && match &for_of_stmt.left {
+                    ast::ForHead::VarDecl(var_decl) => match var_decl.decls.first() {
+                        Some(decl) => match &decl.name {
+                            ast::Pat::Array(arr_pat) => {
+                                arr_pat.elems.len() == 2
+                                    && arr_pat.elems.iter().all(|e| {
+                                        matches!(e, Some(ast::Pat::Ident(_)))
+                                    })
+                            }
+                            _ => false,
+                        },
+                        None => false,
+                    },
+                    _ => false,
+                };
             // If the iterable is a Map or Set, wrap in MapEntries / SetValues
             // to materialize it as an array for the index-based loop.
+            // Fast-path Map+[k,v] iterables stay unwrapped — the loop reads
+            // entries directly via runtime helpers below.
             let arr_expr = match &iterable_type {
                 Some(Type::Generic { base, .. }) if base == "Map" => {
-                    Expr::MapEntries(Box::new(arr_expr))
+                    if map_kv_fastpath {
+                        arr_expr
+                    } else {
+                        Expr::MapEntries(Box::new(arr_expr))
+                    }
                 }
                 Some(Type::Generic { base, .. }) if base == "Set" => {
                     Expr::SetValues(Box::new(arr_expr))
@@ -3774,8 +3803,23 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 }
                 _ => None,
             };
+            // For the Map fast path the holder must be typed Map so
+            // `__m.size` resolves through `is_map_expr` to `js_map_size`.
             let holder_type = if is_string_iter {
                 Type::String
+            } else if map_kv_fastpath {
+                if let Some(Type::Generic { base, type_args }) = iterable_type.clone() {
+                    if base == "Map" && type_args.len() >= 2 {
+                        Type::Generic {
+                            base: "Map".to_string(),
+                            type_args,
+                        }
+                    } else {
+                        Type::Any
+                    }
+                } else {
+                    Type::Any
+                }
             } else if let Some(ref elem) = inferred_elem_type {
                 Type::Array(Box::new(elem.clone()))
             } else {
@@ -3897,33 +3941,60 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                                 }]
                             }
                             ast::Pat::Array(arr_pat) => {
-                                let mut stmts = vec![Stmt::Let {
-                                    id: item_id,
-                                    name: format!("__item_{}", item_id),
-                                    ty: Type::Any,
-                                    mutable: false,
-                                    init: Some(item_expr),
-                                }];
-                                let mut var_idx = 0;
-                                for (idx, elem) in arr_pat.elems.iter().enumerate() {
-                                    if let Some(elem_pat) = elem {
-                                        if let ast::Pat::Ident(_) = elem_pat {
-                                            let (name, id) = var_ids[var_idx].clone();
-                                            var_idx += 1;
-                                            stmts.push(Stmt::Let {
-                                                id,
-                                                name,
-                                                ty: Type::Any,
-                                                mutable: false,
-                                                init: Some(Expr::IndexGet {
-                                                    object: Box::new(Expr::LocalGet(item_id)),
-                                                    index: Box::new(Expr::Number(idx as f64)),
-                                                }),
-                                            });
+                                if map_kv_fastpath && arr_pat.elems.len() == 2 {
+                                    let (k_name, k_id) = var_ids[0].clone();
+                                    let (v_name, v_id) = var_ids[1].clone();
+                                    vec![
+                                        Stmt::Let {
+                                            id: k_id,
+                                            name: k_name,
+                                            ty: Type::Any,
+                                            mutable: false,
+                                            init: Some(Expr::MapEntryKeyAt {
+                                                map: Box::new(Expr::LocalGet(arr_id)),
+                                                idx: Box::new(Expr::LocalGet(idx_id)),
+                                            }),
+                                        },
+                                        Stmt::Let {
+                                            id: v_id,
+                                            name: v_name,
+                                            ty: Type::Any,
+                                            mutable: false,
+                                            init: Some(Expr::MapEntryValueAt {
+                                                map: Box::new(Expr::LocalGet(arr_id)),
+                                                idx: Box::new(Expr::LocalGet(idx_id)),
+                                            }),
+                                        },
+                                    ]
+                                } else {
+                                    let mut stmts = vec![Stmt::Let {
+                                        id: item_id,
+                                        name: format!("__item_{}", item_id),
+                                        ty: Type::Any,
+                                        mutable: false,
+                                        init: Some(item_expr),
+                                    }];
+                                    let mut var_idx = 0;
+                                    for (idx, elem) in arr_pat.elems.iter().enumerate() {
+                                        if let Some(elem_pat) = elem {
+                                            if let ast::Pat::Ident(_) = elem_pat {
+                                                let (name, id) = var_ids[var_idx].clone();
+                                                var_idx += 1;
+                                                stmts.push(Stmt::Let {
+                                                    id,
+                                                    name,
+                                                    ty: Type::Any,
+                                                    mutable: false,
+                                                    init: Some(Expr::IndexGet {
+                                                        object: Box::new(Expr::LocalGet(item_id)),
+                                                        index: Box::new(Expr::Number(idx as f64)),
+                                                    }),
+                                                });
+                                            }
                                         }
                                     }
+                                    stmts
                                 }
-                                stmts
                             }
                             ast::Pat::Object(obj_pat) => {
                                 let mut stmts = vec![Stmt::Let {
@@ -4038,6 +4109,19 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 loop_body.insert(i, stmt);
             }
 
+            // Loop bound: fast path uses `__m.size` (codegen-recognized,
+            // lowered to js_map_size), regular path uses .length.
+            let bound_expr = if map_kv_fastpath {
+                Expr::PropertyGet {
+                    object: Box::new(Expr::LocalGet(arr_id)),
+                    property: "size".to_string(),
+                }
+            } else {
+                Expr::PropertyGet {
+                    object: Box::new(Expr::LocalGet(arr_id)),
+                    property: "length".to_string(),
+                }
+            };
             // Create the for loop
             result.push(Stmt::For {
                 init: Some(Box::new(Stmt::Let {
@@ -4050,10 +4134,7 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 condition: Some(Expr::Compare {
                     op: CompareOp::Lt,
                     left: Box::new(Expr::LocalGet(idx_id)),
-                    right: Box::new(Expr::PropertyGet {
-                        object: Box::new(Expr::LocalGet(arr_id)),
-                        property: "length".to_string(),
-                    }),
+                    right: Box::new(bound_expr),
                 }),
                 update: Some(Expr::Update {
                     id: idx_id,

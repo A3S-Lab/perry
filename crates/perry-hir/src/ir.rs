@@ -1695,6 +1695,19 @@ pub enum Expr {
     MapEntries(Box<Expr>),      // map.entries() -> Array<[key, value]>
     MapKeys(Box<Expr>),         // map.keys() -> Array<key>
     MapValues(Box<Expr>),       // map.values() -> Array<value>
+    /// `js_map_entry_key_at(map, idx)` — read the key at flat entry
+    /// index `idx`. Used by the `for (const [k, v] of mapExpr)` fast
+    /// path so the loop reads entries directly without allocating a
+    /// pair Array per iteration. Caller bounds the loop with `MapSize`.
+    MapEntryKeyAt {
+        map: Box<Expr>,
+        idx: Box<Expr>,
+    },
+    /// Companion to `MapEntryKeyAt` — read the value at `idx`.
+    MapEntryValueAt {
+        map: Box<Expr>,
+        idx: Box<Expr>,
+    },
 
     // Set operations
     SetNew,                     // new Set() -> empty set
