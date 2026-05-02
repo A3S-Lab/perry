@@ -3741,14 +3741,21 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                 &iterable_type,
                 Some(Type::Generic { base, .. }) if base == "Map"
             );
+            // Map fast path also fires for the single-binding shapes
+            //   for (const [k] of map)        — only key
+            //   for (const [, v] of map)      — only value
+            // Each non-empty slot must be a plain Ident; nested patterns
+            // / object patterns / defaults fall through to the materialized
+            // MapEntries path so destructuring stays correct.
             let map_kv_fastpath = is_iterable_map
                 && match &for_of_stmt.left {
                     ast::ForHead::VarDecl(var_decl) => match var_decl.decls.first() {
                         Some(decl) => match &decl.name {
                             ast::Pat::Array(arr_pat) => {
-                                arr_pat.elems.len() == 2
+                                let len = arr_pat.elems.len();
+                                (len == 1 || len == 2)
                                     && arr_pat.elems.iter().all(|e| {
-                                        matches!(e, Some(ast::Pat::Ident(_)))
+                                        e.is_none() || matches!(e, Some(ast::Pat::Ident(_)))
                                     })
                             }
                             _ => false,
@@ -3983,31 +3990,37 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                                 }]
                             }
                             ast::Pat::Array(arr_pat) => {
-                                if map_kv_fastpath && arr_pat.elems.len() == 2 {
-                                    let (k_name, k_id) = var_ids[0].clone();
-                                    let (v_name, v_id) = var_ids[1].clone();
-                                    vec![
-                                        Stmt::Let {
-                                            id: k_id,
-                                            name: k_name,
-                                            ty: Type::Any,
-                                            mutable: false,
-                                            init: Some(Expr::MapEntryKeyAt {
+                                if map_kv_fastpath {
+                                    // Map [k, v] / [k] / [, v] fast path: read
+                                    // each requested entry slot directly. No
+                                    // `__item` Array materialization. Skipped
+                                    // slots emit no binding.
+                                    let mut stmts: Vec<Stmt> = Vec::new();
+                                    let mut var_idx = 0;
+                                    for (slot, elem) in arr_pat.elems.iter().enumerate() {
+                                        let Some(ast::Pat::Ident(_)) = elem else { continue };
+                                        let (name, id) = var_ids[var_idx].clone();
+                                        var_idx += 1;
+                                        let init = if slot == 0 {
+                                            Expr::MapEntryKeyAt {
                                                 map: Box::new(Expr::LocalGet(arr_id)),
                                                 idx: Box::new(Expr::LocalGet(idx_id)),
-                                            }),
-                                        },
-                                        Stmt::Let {
-                                            id: v_id,
-                                            name: v_name,
-                                            ty: Type::Any,
-                                            mutable: false,
-                                            init: Some(Expr::MapEntryValueAt {
+                                            }
+                                        } else {
+                                            Expr::MapEntryValueAt {
                                                 map: Box::new(Expr::LocalGet(arr_id)),
                                                 idx: Box::new(Expr::LocalGet(idx_id)),
-                                            }),
-                                        },
-                                    ]
+                                            }
+                                        };
+                                        stmts.push(Stmt::Let {
+                                            id,
+                                            name,
+                                            ty: Type::Any,
+                                            mutable: false,
+                                            init: Some(init),
+                                        });
+                                    }
+                                    stmts
                                 } else {
                                     let mut stmts = vec![Stmt::Let {
                                         id: item_id,

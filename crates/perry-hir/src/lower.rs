@@ -5565,14 +5565,22 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
             // small Array allocations that `MapEntries` would do per iteration.
             // Detected here so we can keep the iterable expression unwrapped
             // and emit a different binding/bound shape below.
+            // Map fast path also fires for the single-binding shapes
+            //   for (const [k] of map)        — only key
+            //   for (const [, v] of map)      — only value
+            // Each non-empty slot must be a plain Ident (no nested patterns).
+            // Anything else falls through to the MapEntries materialization
+            // path so destructuring semantics for objects / nested arrays
+            // / defaults stay correct.
             let map_kv_fastpath = is_iterable_map
                 && match &for_of_stmt.left {
                     ast::ForHead::VarDecl(var_decl) => match var_decl.decls.first() {
                         Some(decl) => match &decl.name {
                             ast::Pat::Array(arr_pat) => {
-                                arr_pat.elems.len() == 2
+                                let len = arr_pat.elems.len();
+                                (len == 1 || len == 2)
                                     && arr_pat.elems.iter().all(|e| {
-                                        matches!(e, Some(ast::Pat::Ident(_)))
+                                        e.is_none() || matches!(e, Some(ast::Pat::Ident(_)))
                                     })
                             }
                             _ => false,
@@ -5800,40 +5808,50 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
                                 }]
                             }
                             ast::Pat::Array(arr_pat) => {
-                                if map_kv_fastpath && arr_pat.elems.len() == 2 {
-                                    // Map [k, v] fast path: read entries directly
-                                    // out of the Map's flat buffer at the loop
-                                    // index. No `__item` Array materialization.
+                                if map_kv_fastpath {
+                                    // Map [k, v] / [k] / [, v] fast path: read
+                                    // each requested entry slot directly from
+                                    // the Map's flat buffer at the loop index.
+                                    // No `__item` Array materialization. Skipped
+                                    // slots ([,v] etc.) emit no binding.
                                     let key_ty = map_key_type
                                         .clone()
                                         .unwrap_or(Type::Any);
                                     let val_ty = map_val_type
                                         .clone()
                                         .unwrap_or(Type::Any);
-                                    let (k_name, k_id) = var_ids[0].clone();
-                                    let (v_name, v_id) = var_ids[1].clone();
-                                    vec![
-                                        Stmt::Let {
-                                            id: k_id,
-                                            name: k_name,
-                                            ty: key_ty,
+                                    let mut stmts: Vec<Stmt> = Vec::new();
+                                    let mut var_idx = 0;
+                                    for (slot, elem) in arr_pat.elems.iter().enumerate() {
+                                        let Some(ast::Pat::Ident(_)) = elem else { continue };
+                                        let (name, id) = var_ids[var_idx].clone();
+                                        var_idx += 1;
+                                        let (ty, init) = if slot == 0 {
+                                            (
+                                                key_ty.clone(),
+                                                Expr::MapEntryKeyAt {
+                                                    map: Box::new(Expr::LocalGet(arr_id)),
+                                                    idx: Box::new(Expr::LocalGet(idx_id)),
+                                                },
+                                            )
+                                        } else {
+                                            (
+                                                val_ty.clone(),
+                                                Expr::MapEntryValueAt {
+                                                    map: Box::new(Expr::LocalGet(arr_id)),
+                                                    idx: Box::new(Expr::LocalGet(idx_id)),
+                                                },
+                                            )
+                                        };
+                                        stmts.push(Stmt::Let {
+                                            id,
+                                            name,
+                                            ty,
                                             mutable: false,
-                                            init: Some(Expr::MapEntryKeyAt {
-                                                map: Box::new(Expr::LocalGet(arr_id)),
-                                                idx: Box::new(Expr::LocalGet(idx_id)),
-                                            }),
-                                        },
-                                        Stmt::Let {
-                                            id: v_id,
-                                            name: v_name,
-                                            ty: val_ty,
-                                            mutable: false,
-                                            init: Some(Expr::MapEntryValueAt {
-                                                map: Box::new(Expr::LocalGet(arr_id)),
-                                                idx: Box::new(Expr::LocalGet(idx_id)),
-                                            }),
-                                        },
-                                    ]
+                                            init: Some(init),
+                                        });
+                                    }
+                                    stmts
                                 } else {
                                     // Array destructuring: for (const [a, b] of arr)
                                     let mut stmts = vec![Stmt::Let {
