@@ -1164,7 +1164,13 @@ pub(crate) fn lower_native_method_call(
         // Lower every argument first so closures and string literals get
         // collected, then lower the receiver once. js_array_push_f64 may
         // realloc on each call, so we thread the returned pointer through
-        // and write the final pointer back to the receiver.
+        // and write the final pointer back to the receiver — but ONLY
+        // if it actually changed. The runtime returns the same pointer
+        // when capacity was sufficient (no grow); the writeback is a
+        // no-op in that case but still costs a `js_object_set_field_by_name`
+        // call (~50-100 cycles) per push. With amortized doubling, real
+        // reallocs are O(log N) of the total pushes — guarding the
+        // writeback elides the overhead on the 99.9% no-realloc path.
         let mut lowered: Vec<String> = Vec::with_capacity(args.len());
         for a in args {
             lowered.push(lower_expr(ctx, a)?);
@@ -1172,6 +1178,7 @@ pub(crate) fn lower_native_method_call(
         let arr_box = lower_expr(ctx, recv)?;
         let blk = ctx.block();
         let mut arr_handle = unbox_to_i64(blk, &arr_box);
+        let orig_handle = arr_handle.clone();
         for v in &lowered {
             let blk = ctx.block();
             arr_handle = blk.call(I64, "js_array_push_f64", &[(I64, &arr_handle), (DOUBLE, v)]);
@@ -1179,44 +1186,58 @@ pub(crate) fn lower_native_method_call(
         let blk = ctx.block();
         let new_handle = arr_handle;
         let new_box = nanbox_pointer_inline(blk, &new_handle);
-        // Write the (possibly-realloc'd) pointer back to the receiver.
-        // Two cases:
-        //   1. recv = LocalGet(id) → store back to the local's slot
+        // Compare the (possibly-realloc'd) pointer against the original
+        // and only run the writeback when it actually differs. Setup
+        // wb / merge basic blocks so the write-back path is cold.
+        // Match arms decide the writeback shape:
+        //   1. recv = LocalGet(id)  → store back to the local's slot
         //   2. recv = PropertyGet { obj, prop } → set obj.prop = new_box
-        // Anything else: skip the write-back (the array may dangle on
-        // realloc, but we don't crash at codegen).
-        match recv {
-            Expr::LocalGet(id) => {
-                if let Some(slot) = ctx.locals.get(id).cloned() {
-                    ctx.block().store(DOUBLE, &new_box, &slot);
-                } else if let Some(global_name) = ctx.module_globals.get(id).cloned() {
-                    let g_ref = format!("@{}", global_name);
-                    ctx.block().store(DOUBLE, &new_box, &g_ref);
+        //   3. anything else → no writeback (array may dangle on realloc,
+        //      but we don't crash at codegen — same trade-off as before).
+        let needs_writeback = matches!(recv, Expr::LocalGet(_) | Expr::PropertyGet { .. });
+        if needs_writeback {
+            let blk = ctx.block();
+            let changed = blk.icmp_ne(I64, &new_handle, &orig_handle);
+            let wb_idx = ctx.new_block("arr.push.wb");
+            let merge_idx = ctx.new_block("arr.push.merge");
+            let wb_label = ctx.block_label(wb_idx);
+            let merge_label = ctx.block_label(merge_idx);
+            ctx.block().cond_br(&changed, &wb_label, &merge_label);
+
+            ctx.current_block = wb_idx;
+            match recv {
+                Expr::LocalGet(id) => {
+                    if let Some(slot) = ctx.locals.get(id).cloned() {
+                        ctx.block().store(DOUBLE, &new_box, &slot);
+                    } else if let Some(global_name) = ctx.module_globals.get(id).cloned() {
+                        let g_ref = format!("@{}", global_name);
+                        ctx.block().store(DOUBLE, &new_box, &g_ref);
+                    }
                 }
+                Expr::PropertyGet {
+                    object: obj_expr,
+                    property,
+                } => {
+                    let obj_box = lower_expr(ctx, obj_expr)?;
+                    let key_idx = ctx.strings.intern(property);
+                    let key_handle_global =
+                        format!("@{}", ctx.strings.entry(key_idx).handle_global);
+                    let blk = ctx.block();
+                    let obj_bits = blk.bitcast_double_to_i64(&obj_box);
+                    let obj_handle = blk.and(I64, &obj_bits, POINTER_MASK_I64);
+                    let key_box = blk.load(DOUBLE, &key_handle_global);
+                    let key_bits = blk.bitcast_double_to_i64(&key_box);
+                    let key_raw = blk.and(I64, &key_bits, POINTER_MASK_I64);
+                    blk.call_void(
+                        "js_object_set_field_by_name",
+                        &[(I64, &obj_handle), (I64, &key_raw), (DOUBLE, &new_box)],
+                    );
+                }
+                _ => unreachable!(),
             }
-            Expr::PropertyGet {
-                object: obj_expr,
-                property,
-            } => {
-                let obj_box = lower_expr(ctx, obj_expr)?;
-                let key_idx = ctx.strings.intern(property);
-                let key_handle_global = format!("@{}", ctx.strings.entry(key_idx).handle_global);
-                let blk = ctx.block();
-                let obj_bits = blk.bitcast_double_to_i64(&obj_box);
-                let obj_handle = blk.and(I64, &obj_bits, POINTER_MASK_I64);
-                let key_box = blk.load(DOUBLE, &key_handle_global);
-                let key_bits = blk.bitcast_double_to_i64(&key_box);
-                let key_raw = blk.and(I64, &key_bits, POINTER_MASK_I64);
-                blk.call_void(
-                    "js_object_set_field_by_name",
-                    &[(I64, &obj_handle), (I64, &key_raw), (DOUBLE, &new_box)],
-                );
-            }
-            _ => {
-                // No write-back — the receiver is some computed value.
-                // The array may dangle on realloc, but the immediate
-                // call sees the right pointer.
-            }
+            ctx.block().br(&merge_label);
+
+            ctx.current_block = merge_idx;
         }
         // push returns the new length in JS spec; for now we return
         // the new boxed pointer (statement context discards it).
