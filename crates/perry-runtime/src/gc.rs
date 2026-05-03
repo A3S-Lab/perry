@@ -2657,6 +2657,23 @@ fn sweep_with_age_bump(do_age_bump: bool) -> u64 {
             // cleared so the MARKED check stays meaningful.
             let age_bump_this = do_age_bump && block_idx < general_n;
             let flags = (*header).gc_flags;
+            // Fast path: `flags == 0` means the object is dead (MARKED=0)
+            // AND has no special bits (PINNED/FORWARDED/HAS_SURVIVED/
+            // TENURED). Fresh allocations from the current cycle that
+            // never got marked land here — in perf-comprehensive's hot
+            // forEach / commandBuffer loops that's the dominant case.
+            // Skipping the four flag-bit branches and the age-bump
+            // bookkeeping for this common case shaves a measurable amount
+            // off the 1.6 M-object-per-cycle sweep walk.
+            if flags == 0 {
+                let total_size = (*header).size as usize;
+                freed_bytes += total_size as u64;
+                if overflow_active && (*header).obj_type == GC_TYPE_OBJECT {
+                    let user_ptr = (header as *mut u8).add(GC_HEADER_SIZE);
+                    crate::object::clear_overflow_for_ptr(user_ptr as usize);
+                }
+                return;
+            }
             if flags & GC_FLAG_PINNED != 0 {
                 if block_idx < block_has_live.len() {
                     block_has_live[block_idx] = true;
