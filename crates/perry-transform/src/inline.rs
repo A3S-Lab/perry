@@ -164,12 +164,50 @@ pub fn inline_functions(
         }
         let already_present: HashSet<String> =
             module.classes.iter().map(|c| c.name.clone()).collect();
+        // Anon-shape ctor params + body Lets are minted by the SOURCE
+        // module's `fresh_local`, so the cloned class carries those
+        // source-module ids verbatim into the destination. Those ids
+        // can collide with destination ids that participate in the
+        // destination's `module_boxed_vars` (closures over a mutated
+        // local elsewhere in the destination), and the codegen for the
+        // ctor body's `LocalGet(param.id)` then routes through
+        // `js_box_get` on a slot that holds a plain value — not a
+        // box pointer — silently producing NaN for that field. Symptom:
+        // `[PERRY WARN] js_box_get: invalid box pointer` once per call
+        // site (limited by the warn counter), with the affected
+        // anon-shape literal field reading back as NaN at runtime.
+        // Bench3 (perf-comprehensive) printed `Sum X = 0` because every
+        // archetype's `componentTypes=[null]` post-corruption.
+        // Remap each imported anon-class's ctor params + body Let ids
+        // to fresh destination ids above the destination's max — that
+        // way they can't intersect with whatever boxed_vars are
+        // computed later for this module.
+        let mut next_fresh_id = find_max_local_id_in_module(module) + 1;
         for name in &needed {
             if already_present.contains(name) {
                 continue;
             }
             if let Some(src_cls) = extra_anon_classes.get(name) {
-                module.classes.push(src_cls.clone());
+                let mut cloned = src_cls.clone();
+                if let Some(ctor) = &mut cloned.constructor {
+                    let mut remap: HashMap<LocalId, Expr> = HashMap::new();
+                    for p in ctor.params.iter_mut() {
+                        let new_id = next_fresh_id;
+                        next_fresh_id += 1;
+                        remap.insert(p.id, Expr::LocalGet(new_id));
+                        p.id = new_id;
+                    }
+                    let body_local_ids = collect_body_local_ids(&ctor.body);
+                    for old_id in body_local_ids {
+                        remap.entry(old_id).or_insert_with(|| {
+                            let new_id = next_fresh_id;
+                            next_fresh_id += 1;
+                            Expr::LocalGet(new_id)
+                        });
+                    }
+                    substitute_locals_in_stmts(&mut ctor.body, &remap, &mut next_fresh_id);
+                }
+                module.classes.push(cloned);
             }
         }
     }
