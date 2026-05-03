@@ -2287,6 +2287,42 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             Ok(nanbox_pointer_inline(blk, &arr_handle))
         }
 
+        // Buffer / Uint8Array `.length` — INLINE for locals with a
+        // pre-computed `buffer_data_slots` entry. Length lives 8 bytes
+        // before the data start (BufferHeader). The slot is populated
+        // by `Stmt::Let` for `const x = Buffer.alloc(N)` / `new
+        // Uint8Array(N)` whose binding doesn't escape — same locals
+        // that get the GEP-based fast path in `Expr::Uint8ArrayGet`.
+        // Marked `!invariant.load` so LICM can hoist the read out of
+        // tight inner loops like image_conv's FNV-1a hash:
+        //
+        //   for (let i = 0; i < dst.length; i++)
+        //
+        // Without this, `dst.length` falls through to the GC-type
+        // gate below — Buffer/Uint8Array have no GC header (they're
+        // `std::alloc`'d), so `gc_type` reads garbage, `has_length`
+        // is false, and every iteration calls `js_value_length_f64`
+        // (function call into the side-table registry). v0.5.83's
+        // `is_array || is_string` guard intentionally routes Buffers
+        // through that slow path for safety, but the buffer-data-slot
+        // path proves the receiver shape at compile time.
+        Expr::PropertyGet { object, property }
+            if property == "length"
+                && matches!(object.as_ref(), Expr::LocalGet(id)
+                    if ctx.buffer_data_slots.contains_key(id)) =>
+        {
+            let arr_id = match object.as_ref() {
+                Expr::LocalGet(id) => *id,
+                _ => unreachable!(),
+            };
+            let (ptr_slot, _scope) = ctx.buffer_data_slots.get(&arr_id).cloned().unwrap();
+            let blk = ctx.block();
+            let data_ptr = blk.load(PTR, &ptr_slot);
+            let header_ptr = blk.gep(I8, &data_ptr, &[(I32, "-8")]);
+            let len_i32 = blk.load_invariant(I32, &header_ptr);
+            return Ok(blk.sitofp(I32, &len_i32, DOUBLE));
+        }
+
         // `arr.length` / `str.length` — INLINE. Both ArrayHeader and
         // StringHeader start with `length: u32` (`crates/perry-runtime/src
         // /array.rs` and `string.rs`). Same pattern: unbox pointer, load
