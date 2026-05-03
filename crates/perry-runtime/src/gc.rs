@@ -1275,43 +1275,61 @@ fn gc_collect_inner() -> u64 {
 
 /// A sorted-`Vec`-backed set of valid user-space heap pointers,
 /// used to validate candidate addresses found during the conservative
-/// stack scan. Builds in O(n) push + O(n log n) sort, then answers
-/// `contains` via O(log n) binary search.
+/// stack scan.
 ///
-/// Profiling showed that `HashSet<usize>` with 700k entries was the
-/// dominant GC cost in `object_create` — even after pre-sizing, the
-/// 700k inserts were ~10-15ms per collection because of repeated
-/// hash computation + cache misses on the hash bucket array.
-/// Sorted-Vec is ~3x faster on this workload (~5ms build) and the
-/// O(log n) lookup is fast enough that the few thousand stack-scan
-/// candidate validations per GC barely move the total.
+/// Two-region layout: arena pointers and malloc pointers are stored
+/// in *separate* sorted Vecs. The address-sorted arena walker emits
+/// `arena_sorted` already in ascending order with no merge required,
+/// so finalize only sorts the small `malloc_sorted` tail (typically a
+/// few thousand entries) instead of running driftsort's K-way merge
+/// across all 1.6 M arena pointers + the malloc tail. The merge phase
+/// of the previous single-Vec implementation cost ~80 ms per GC cycle
+/// on perf-comprehensive (1.65 M element memcpy through main memory);
+/// keeping the regions separate eliminates it entirely.
+///
+/// `contains` does two binary searches instead of one (~15 ns extra
+/// per call), but contains is only called a few times per traced
+/// pointer field — bench profile shows < 500k calls per cycle, so
+/// the per-call overhead is dwarfed by the merge savings.
+///
+/// Profiling background: `HashSet<usize>` with 700 k entries was the
+/// dominant GC cost in `object_create` — even after pre-sizing the
+/// 700 k inserts were ~10-15 ms per collection because of repeated
+/// hash computation + cache misses on the bucket array. Sorted-Vec
+/// is ~3× faster on this workload at build time and the O(log n)
+/// lookup is fast enough that the few thousand stack-scan candidate
+/// validations per GC barely move the total.
 pub(crate) struct ValidPointerSet {
-    sorted: Vec<usize>,
+    arena_sorted: Vec<usize>,
+    malloc_sorted: Vec<usize>,
 }
 
 impl ValidPointerSet {
-    fn new(capacity: usize) -> Self {
+    fn new(arena_capacity: usize, malloc_capacity: usize) -> Self {
         Self {
-            sorted: Vec::with_capacity(capacity),
+            arena_sorted: Vec::with_capacity(arena_capacity),
+            malloc_sorted: Vec::with_capacity(malloc_capacity),
         }
     }
-    fn insert(&mut self, ptr: usize) {
-        self.sorted.push(ptr);
+    /// Caller must guarantee that pushes happen in ascending address
+    /// order — `build_valid_pointer_set` does so via
+    /// `arena_walk_objects_addr_sorted`.
+    fn push_arena(&mut self, ptr: usize) {
+        self.arena_sorted.push(ptr);
+    }
+    fn push_malloc(&mut self, ptr: usize) {
+        self.malloc_sorted.push(ptr);
     }
     fn finalize(&mut self) {
-        // `arena_walk_objects` emits one strictly-ascending pointer run
-        // per arena block (each user_ptr = block.data + offset, and
-        // offset only increases). Across blocks the order is arbitrary,
-        // and the trailing malloc-objects span is in insertion order.
-        // Rust's stable `sort()` (driftsort) detects long natural runs
-        // and merges them in O(N log K) where K is the number of runs;
-        // `sort_unstable()` (pdqsort) was tripping its quicksort/heapsort
-        // worst-case detector on this exact input shape, accounting for
-        // ~22 % of total runtime in ECS perf-comprehensive's GC.
-        self.sorted.sort();
+        // arena_sorted is built pre-sorted by the address-sorted walk;
+        // only the malloc tail (insertion-order) needs sorting. It's
+        // typically a few thousand entries — fast even with
+        // sort_unstable's pdqsort.
+        self.malloc_sorted.sort_unstable();
     }
     pub(crate) fn contains(&self, ptr: &usize) -> bool {
-        self.sorted.binary_search(ptr).is_ok()
+        self.arena_sorted.binary_search(ptr).is_ok()
+            || self.malloc_sorted.binary_search(ptr).is_ok()
     }
 
     /// Issue #73: interior-pointer lookup. Given a scanned word, find
@@ -1319,30 +1337,24 @@ impl ValidPointerSet {
     /// pointer. This matters for runtime functions that derive
     /// `elements_ptr = arr + 8` or `data = buf + 8` and hold only the
     /// interior pointer while calling into user code. The conservative
-    /// scan would otherwise see `arr + 8`, miss it (it's not in
-    /// `sorted` which only has `arr`), and let the GC sweep the
-    /// backing object mid-iteration. Binary-searches for the largest
-    /// user pointer `<= query`, then consults that object's GcHeader
-    /// size to decide whether `query` lies within `[start, start+size)`.
+    /// scan would otherwise see `arr + 8`, miss it (it's not at an
+    /// object start), and let the GC sweep the backing object mid-
+    /// iteration. With two regions we find the largest entry `<= query`
+    /// in each, pick the larger of the two candidates, then validate
+    /// via the GcHeader's size field.
     pub(crate) fn enclosing_object(&self, ptr: usize) -> Option<usize> {
-        if self.sorted.is_empty() {
-            return None;
-        }
-        // Find insertion point: `idx` is the first entry > ptr; the
-        // candidate enclosing start is at idx-1.
-        let idx = self.sorted.partition_point(|&p| p <= ptr);
-        if idx == 0 {
-            return None;
-        }
-        let candidate = self.sorted[idx - 1];
-        // User pointer. The GcHeader lives at candidate - GC_HEADER_SIZE
-        // and holds the total allocation size (including the 8-byte
-        // header). `candidate` is valid-heap by construction, so
-        // candidate - 8 is safe to read.
+        let arena_cand = Self::find_floor(&self.arena_sorted, ptr);
+        let malloc_cand = Self::find_floor(&self.malloc_sorted, ptr);
+        let candidate = match (arena_cand, malloc_cand) {
+            (None, None) => return None,
+            (Some(a), None) => a,
+            (None, Some(m)) => m,
+            // The closest <= ptr is the larger of the two candidates.
+            (Some(a), Some(m)) => a.max(m),
+        };
         unsafe {
             let header = (candidate as *const u8).sub(GC_HEADER_SIZE) as *const GcHeader;
             let total = (*header).size as usize;
-            // Object payload spans [candidate, candidate + total - GC_HEADER_SIZE).
             let payload_end = candidate + total.saturating_sub(GC_HEADER_SIZE);
             if ptr >= candidate && ptr < payload_end {
                 Some(candidate)
@@ -1350,6 +1362,17 @@ impl ValidPointerSet {
                 None
             }
         }
+    }
+
+    fn find_floor(sorted: &[usize], ptr: usize) -> Option<usize> {
+        if sorted.is_empty() {
+            return None;
+        }
+        let idx = sorted.partition_point(|&p| p <= ptr);
+        if idx == 0 {
+            return None;
+        }
+        Some(sorted[idx - 1])
     }
 }
 
@@ -1360,28 +1383,26 @@ fn build_valid_pointer_set() -> ValidPointerSet {
     // 48 bytes is a conservative under-estimate (smaller than the
     // typical 96-byte class instance) so the Vec doesn't realloc.
     let arena_estimate = crate::arena::arena_total_bytes() / 48;
-    let mut set = ValidPointerSet::new(malloc_count + arena_estimate + 64);
+    let mut set = ValidPointerSet::new(arena_estimate + 64, malloc_count + 64);
 
     // Arena objects: walk arena blocks in ascending data-pointer
-    // order so the inserted user_ptrs form one fully-sorted run
-    // (within each block, offsets only increase, so block-by-block
-    // ascending-address yields globally ascending user pointers).
-    // The final `sort()` then only has to in-place insertion-sort the
-    // small unsorted malloc tail and merge with the big sorted prefix
-    // — driftsort detects this as one long run + a tiny one and
-    // collapses to ~O(N) instead of O(N log K).
+    // order so the pushed user_ptrs land in `arena_sorted` already
+    // sorted (within each block, offsets only increase, so
+    // block-by-block ascending-address yields globally ascending user
+    // pointers). No merge needed in finalize for this region.
     crate::arena::arena_walk_objects_addr_sorted(|header_ptr| {
         let user_ptr = unsafe { (header_ptr as *mut u8).add(GC_HEADER_SIZE) };
-        set.insert(user_ptr as usize);
+        set.push_arena(user_ptr as usize);
     });
 
-    // Malloc objects (insertion order, NOT sorted — driftsort handles
-    // the small unsorted tail in the finalize step below).
+    // Malloc objects (insertion order, NOT sorted — finalize sorts the
+    // small malloc-only Vec separately so the 1.6 M arena run never
+    // gets touched by driftsort's merge phase).
     MALLOC_STATE.with(|s| {
         let s = s.borrow();
         for &header in s.objects.iter() {
             let user_ptr = unsafe { (header as *mut u8).add(GC_HEADER_SIZE) };
-            set.insert(user_ptr as usize);
+            set.push_malloc(user_ptr as usize);
         }
     });
 
