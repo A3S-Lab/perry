@@ -455,18 +455,22 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                 Some(perry_hir::Expr::Integer(n)) => i32::try_from(*n).is_ok(),
                 _ => true, // non-Integer init: writes will always go via i32-coercing paths
             };
-            // Issue #140: only emit the parallel i32 shadow slot when this local
-            // actually participates in an array/buffer index expression. Pure
-            // accumulators (`sum = sum + 1` between `Date.now()` calls) would
-            // otherwise get a dead i32/sitofp mirror that blocks LLVM's
-            // vectorizer — combined with the #74 `asm sideeffect` loop barrier
-            // the fadd reduction can't be SIMD-widened. Real loop counters that
-            // match `classify_for_length_hoist` in `lower_for` still pick up
-            // their i32 slot via the loop-specific allocation path a few hundred
-            // lines below, so `for (let i=0; i<arr.length; i++) arr[i]=v` keeps
-            // its fast-path even when this gate skips the Let site.
+            // Issue #140 follow-up: the v0.5.164 fix kept pure accumulators
+            // off the i32 shadow path by gating on `index_used_locals`, but
+            // the same commit also refined `body_needs_asm_barrier` so the
+            // SIMD-blocking `asm sideeffect` no longer fires for accumulator
+            // loops. The barrier-refinement alone is enough to restore the
+            // SIMD reduction (verified on loop_overhead / math_intensive /
+            // accumulate after dropping the gate). The remaining gate, on the
+            // other hand, *removes* the i32 shadow from integer locals that
+            // flow into indices only transitively (`xx → idx`,
+            // `row + xx → idx`), forcing inner-loop arithmetic back into f64
+            // with `fcvtzs` per access — measured 3–4× slowdown on
+            // image_convolution. Drop the gate; `integer_locals` (which
+            // iterates to a fixed point on int-stable writes) and the
+            // `module_globals` / `boxed_vars` exclusions already keep the
+            // right locals off the shadow path.
             let needs_i32_slot = ctx.integer_locals.contains(id)
-                && ctx.index_used_locals.contains(id)
                 && *mutable
                 && init_in_i32_range
                 && !ctx.boxed_vars.contains(id)
@@ -961,9 +965,11 @@ fn lower_for(
     let i32_local_bound_slot: Option<String> =
         if let Some((counter_id, bound_id, _op)) = local_bound_classification {
             // Allocate a parallel i32 slot for the counter if not already
-            // present.  The Let-site may have skipped it when the counter
-            // wasn't in `index_used_locals`; providing it here enables both
-            // `icmp slt i32` in the condition and `add i32 1` in Update.
+            // present.  Counters that fall outside `integer_locals`
+            // (e.g. `for (let i = 0; i < arr.length; i++)` where `i` is
+            // captured by a closure or escapes) skip the Let-site
+            // allocation; providing one here enables both `icmp slt i32`
+            // in the condition and `add i32 1` in Update.
             let fresh = if !ctx.i32_counter_slots.contains_key(&counter_id) {
                 if let Some(counter_slot) = ctx.locals.get(&counter_id).cloned() {
                     let i32_slot = ctx.func.alloca_entry(I32);
