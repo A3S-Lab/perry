@@ -97,15 +97,12 @@ declare -a COMPILE_FAILURES=()
 # Create output directories
 mkdir -p "$OUTPUT_DIR/node" "$OUTPUT_DIR/perry" "$REPORT_DIR"
 
-# Tests to skip (async tests that hang, random-dependent tests, etc.)
+# Tests to skip (random-dependent tests, etc.)
 SKIP_TESTS=(
-    # Async tests (need event loop)
-    "test_async"
-    "test_async2"
-    "test_async3"
-    "test_async4"
-    "test_async5"
-    "test_async_chain"
+    # test_async / _async2 / _async3 / _async4 / _async5 / _async_chain were
+    # un-skipped in v0.5.509 — fixed by the v0.5.508 ABI fix on
+    # js_object_set_field (the synthesized async-iter object's closure
+    # fields had been storing 0 due to the same bug as #448 / #451).
     "test_timer"
     # Tests with inherently non-deterministic output
     "test_date"      # timestamps differ
