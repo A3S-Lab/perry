@@ -1,1 +1,16 @@
-{}
+{
+  "test_edge_closures": {
+    "category": "codegen-bug",
+    "summary": "LLVM IR @perry_global_* name collision: duplicate global emitted under the same numeric suffix.",
+    "first_observed": "v0.5.503",
+    "issue": 456,
+    "notes": "Pre-existing on at least v0.5.502/503. Tracked in #456."
+  },
+  "test_gap_generators": {
+    "category": "feature-gap",
+    "summary": "Generator function with explicit `return value` — gen.next() value drifts from node after iteration completes.",
+    "first_observed": "v0.5.503",
+    "issue": 457,
+    "notes": "Pre-existing — improved 7/27 -> 23/27 lines correct by v0.5.508 ABI fix but genWithReturn still drifts. Tracked in #457."
+  }
+}

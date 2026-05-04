@@ -265,12 +265,7 @@ unsafe extern "C" fn drain_visibility_update(
     let mut obj: *mut NapiValue = ptr::null_mut();
     let _ = napi_create_object(env, &mut obj);
     let _ = napi_set_named_property(env, obj, b"id\0".as_ptr() as *const c_char, id_napi);
-    let _ = napi_set_named_property(
-        env,
-        obj,
-        b"hidden\0".as_ptr() as *const c_char,
-        hidden_napi,
-    );
+    let _ = napi_set_named_property(env, obj, b"hidden\0".as_ptr() as *const c_char, hidden_napi);
     obj
 }
 

@@ -3849,17 +3849,13 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // is created per-call but always with the same `this` (the
             // World) and same captures (`this._changeset`).
             let body_mutates_capture = !mutable_captures.is_empty()
-                && auto_captures
-                    .iter()
-                    .any(|id| mutable_captures.contains(id));
+                && auto_captures.iter().any(|id| mutable_captures.contains(id));
             // Boxed captures store a fresh box pointer per closure
             // creation site, so their bits differ between calls even
             // when the box's logical value is the same. That breaks
             // the cache — every call would miss. Skip the captured
             // singleton path when any capture is boxed.
-            let captures_any_boxed = auto_captures
-                .iter()
-                .any(|id| ctx.boxed_vars.contains(id));
+            let captures_any_boxed = auto_captures.iter().any(|id| ctx.boxed_vars.contains(id));
             let no_capture_singleton = total_caps == 0;
             let captured_singleton =
                 !no_capture_singleton && !body_mutates_capture && !captures_any_boxed;
@@ -5794,7 +5790,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let blk = ctx.block();
             let s_handle = unbox_to_i64(blk, &s_box);
             let i_i32 = blk.fptosi(DOUBLE, &i_dbl, I32);
-            Ok(blk.call(DOUBLE, "js_set_value_at", &[(I64, &s_handle), (I32, &i_i32)]))
+            Ok(blk.call(
+                DOUBLE,
+                "js_set_value_at",
+                &[(I64, &s_handle), (I32, &i_i32)],
+            ))
         }
 
         // -------- Set.values (set → array conversion for iteration) --------
@@ -11101,9 +11101,7 @@ pub(crate) fn try_match_channel_reduction(
                         all_match = false;
                         break;
                     }
-                    if format!("{:?}", prev_base.as_ref())
-                        != format!("{:?}", this_base.as_ref())
-                    {
+                    if format!("{:?}", prev_base.as_ref()) != format!("{:?}", this_base.as_ref()) {
                         all_match = false;
                         break;
                     }
@@ -11170,10 +11168,7 @@ pub(crate) fn try_match_channel_reduction(
 /// the same as the scalar Uint8ArrayGet path and gives up the win.
 /// Caller (in `lower_stmts`) checks this and falls back to scalar
 /// lowering when absent.
-pub(crate) fn lower_channel_reduction(
-    ctx: &mut FnCtx<'_>,
-    r: &ChannelReduction,
-) -> Result<()> {
+pub(crate) fn lower_channel_reduction(ctx: &mut FnCtx<'_>, r: &ChannelReduction) -> Result<()> {
     let Some((ptr_slot, scope_idx)) = ctx.buffer_data_slots.get(&r.array_id).cloned() else {
         return Err(anyhow!(
             "lower_channel_reduction: array {} has no buffer_data_slot — caller should have skipped",
@@ -11281,16 +11276,12 @@ pub(crate) fn lower_channel_reduction(
     // would do anyway, just packed into a single vector value.
     let mut acc_vec = "<i32 0, i32 0, i32 0, i32 0>".to_string();
     for (lane, &acc_id) in r.acc_ids.iter().enumerate() {
-        let i32_slot = ctx
-            .i32_counter_slots
-            .get(&acc_id)
-            .cloned()
-            .ok_or_else(|| {
-                anyhow!(
-                    "channel reduction acc {} missing i32 slot — should be in integer_locals",
-                    acc_id
-                )
-            })?;
+        let i32_slot = ctx.i32_counter_slots.get(&acc_id).cloned().ok_or_else(|| {
+            anyhow!(
+                "channel reduction acc {} missing i32 slot — should be in integer_locals",
+                acc_id
+            )
+        })?;
         let blk = ctx.block();
         let acc_val = blk.load(I32, &i32_slot);
         let new_vec = blk.fresh_reg();

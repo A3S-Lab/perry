@@ -232,7 +232,8 @@ pub fn arkts_callbacks_root_scanner(mark: &mut dyn FnMut(f64)) {
 static PENDING_TOASTS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 static PENDING_TEXT_UPDATES: Mutex<VecDeque<(String, String)>> = Mutex::new(VecDeque::new());
 static PENDING_VISIBILITY_UPDATES: Mutex<VecDeque<(String, bool)>> = Mutex::new(VecDeque::new());
-static PENDING_CONTENT_VIEW_UPDATES: Mutex<VecDeque<(String, String)>> = Mutex::new(VecDeque::new());
+static PENDING_CONTENT_VIEW_UPDATES: Mutex<VecDeque<(String, String)>> =
+    Mutex::new(VecDeque::new());
 
 /// Decode a NaN-boxed JS value to a Rust String via the StringHeader
 /// payload-after-header layout. Used by both showToast and setText for

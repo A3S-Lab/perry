@@ -321,8 +321,7 @@ pub struct CompilationContext {
     /// elsewhere) silently iterates 0 times because the iterable's static
     /// type is unknown and the `SetValues`/`MapEntries` wrap is skipped at
     /// `lower_decl.rs:3737-3747`. See ECS demo-simple repro / #412.
-    pub cross_module_class_field_types:
-        HashMap<String, Vec<(String, perry_types::Type)>>,
+    pub cross_module_class_field_types: HashMap<String, Vec<(String, perry_types::Type)>>,
     /// Minimum Windows version for `--target windows` builds. One of `"7"`,
     /// `"8"`, `"10"`. `"10"` (default) means "no subsystem version suffix";
     /// `"7"` and `"8"` emit `,5.1` / `,6.02` on the linker `/SUBSYSTEM:` flag
@@ -907,9 +906,7 @@ pub fn run_with_parse_cache(
                     .iter()
                     .map(|f| (f.name.clone(), f.ty.clone()))
                     .collect();
-                field_map
-                    .entry(class.name.clone())
-                    .or_insert(fields);
+                field_map.entry(class.name.clone()).or_insert(fields);
             }
         }
         if !field_map.is_empty() {

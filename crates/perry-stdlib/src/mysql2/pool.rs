@@ -706,13 +706,11 @@ mod tests {
 
     #[test]
     fn extract_params_returns_empty_for_undefined_and_null() {
-        let undef = unsafe {
-            extract_params_from_jsvalue(JSValue::from_bits(0x7FFC_0000_0000_0001))
-        };
+        let undef =
+            unsafe { extract_params_from_jsvalue(JSValue::from_bits(0x7FFC_0000_0000_0001)) };
         assert!(undef.is_empty(), "TAG_UNDEFINED must yield no params");
-        let null = unsafe {
-            extract_params_from_jsvalue(JSValue::from_bits(0x7FFC_0000_0000_0002))
-        };
+        let null =
+            unsafe { extract_params_from_jsvalue(JSValue::from_bits(0x7FFC_0000_0000_0002)) };
         assert!(null.is_empty(), "TAG_NULL must yield no params");
     }
 

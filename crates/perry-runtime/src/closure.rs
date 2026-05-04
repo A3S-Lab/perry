@@ -31,8 +31,6 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
-
-
 /// Magic value stored in ClosureHeader._reserved to identify closures at runtime.
 /// Used by js_value_typeof to return "function" instead of "object" for closures.
 pub const CLOSURE_MAGIC: u32 = 0x434C_4F53; // "CLOS" in ASCII
@@ -111,8 +109,7 @@ pub extern "C" fn js_closure_alloc(func_ptr: *const u8, capture_count: u32) -> *
 pub extern "C" fn js_closure_alloc_singleton(func_ptr: *const u8) -> *mut ClosureHeader {
     // Fast path: already cached. Drop the borrow before any potential
     // alloc so gc_malloc can re-enter SINGLETON_CLOSURES if it ever needs to.
-    if let Some(cached) =
-        SINGLETON_CLOSURES.with(|s| s.borrow().get(&(func_ptr as usize)).copied())
+    if let Some(cached) = SINGLETON_CLOSURES.with(|s| s.borrow().get(&(func_ptr as usize)).copied())
     {
         return cached;
     }
@@ -184,21 +181,16 @@ pub extern "C" fn js_closure_alloc_with_captures_singleton(
     let allocated = js_closure_alloc(func_ptr, capture_count);
     if n > 0 && !captures_ptr.is_null() {
         unsafe {
-            let dest = (allocated as *mut u8)
-                .add(std::mem::size_of::<ClosureHeader>())
-                as *mut u64;
+            let dest = (allocated as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut u64;
             std::ptr::copy_nonoverlapping(captures_ptr, dest, n);
         }
     }
     SINGLETON_CAPTURED_CLOSURES.with(|s| {
-        s.borrow_mut().insert(
-            func_ptr as usize,
-            (captures_slice.to_vec(), allocated),
-        );
+        s.borrow_mut()
+            .insert(func_ptr as usize, (captures_slice.to_vec(), allocated));
     });
     allocated
 }
-
 
 /// Get the function pointer from a closure
 #[no_mangle]
@@ -1736,7 +1728,11 @@ pub unsafe extern "C" fn js_closure_call_apply_with_spread(
         return f64::from_bits(crate::value::TAG_UNDEFINED);
     }
 
-    let reg_n = if regular_count < 0 { 0 } else { regular_count as usize };
+    let reg_n = if regular_count < 0 {
+        0
+    } else {
+        regular_count as usize
+    };
 
     let arr = spread_arr_handle as *const ArrayHeader;
     let (spread_n, spread_data): (usize, *const f64) = if arr.is_null() {
@@ -1757,11 +1753,7 @@ pub unsafe extern "C" fn js_closure_call_apply_with_spread(
             std::ptr::copy_nonoverlapping(regular_args, stack_buf.as_mut_ptr(), reg_n);
         }
         if !spread_data.is_null() && spread_n > 0 {
-            std::ptr::copy_nonoverlapping(
-                spread_data,
-                stack_buf.as_mut_ptr().add(reg_n),
-                spread_n,
-            );
+            std::ptr::copy_nonoverlapping(spread_data, stack_buf.as_mut_ptr().add(reg_n), spread_n);
         }
         stack_buf.as_ptr()
     } else {
@@ -1770,11 +1762,7 @@ pub unsafe extern "C" fn js_closure_call_apply_with_spread(
             std::ptr::copy_nonoverlapping(regular_args, heap_buf.as_mut_ptr(), reg_n);
         }
         if !spread_data.is_null() && spread_n > 0 {
-            std::ptr::copy_nonoverlapping(
-                spread_data,
-                heap_buf.as_mut_ptr().add(reg_n),
-                spread_n,
-            );
+            std::ptr::copy_nonoverlapping(spread_data, heap_buf.as_mut_ptr().add(reg_n), spread_n);
         }
         heap_buf.as_ptr()
     };

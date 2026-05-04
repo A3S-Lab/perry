@@ -3984,9 +3984,7 @@ pub unsafe extern "C" fn js_native_call_method(
                     vtable_ic_lookup(class_id, method_name_ptr as usize)
                 {
                     let this_i64 = jsval.as_pointer::<u8>() as i64;
-                    return call_vtable_method(
-                        func_ptr, this_i64, args_ptr, args_len, param_count,
-                    );
+                    return call_vtable_method(func_ptr, this_i64, args_ptr, args_len, param_count);
                 }
                 if let Ok(registry) = CLASS_VTABLE_REGISTRY.read() {
                     if let Some(ref reg) = *registry {
@@ -4166,9 +4164,7 @@ pub unsafe extern "C" fn js_native_call_method(
                     vtable_ic_lookup(class_id, method_name_ptr as usize)
                 {
                     let this_i64 = raw_bits as i64;
-                    return call_vtable_method(
-                        func_ptr, this_i64, args_ptr, args_len, param_count,
-                    );
+                    return call_vtable_method(func_ptr, this_i64, args_ptr, args_len, param_count);
                 }
                 if let Ok(registry) = CLASS_VTABLE_REGISTRY.read() {
                     if let Some(ref reg) = *registry {

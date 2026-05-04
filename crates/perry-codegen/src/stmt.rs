@@ -47,11 +47,9 @@ pub(crate) fn lower_stmts(ctx: &mut FnCtx<'_>, stmts: &[Stmt]) -> Result<()> {
         // still a 10 ms win (817c4b56) so we keep it as the default
         // fallback for non-unrolled functions.
         if !ctx.was_unrolled {
-            if let Some(reduction) = crate::expr::try_match_channel_reduction(
-                stmts,
-                i,
-                ctx.integer_locals,
-            ) {
+            if let Some(reduction) =
+                crate::expr::try_match_channel_reduction(stmts, i, ctx.integer_locals)
+            {
                 if ctx.buffer_data_slots.contains_key(&reduction.array_id) {
                     crate::expr::lower_channel_reduction(ctx, &reduction)?;
                     i += reduction.acc_ids.len();
@@ -538,8 +536,8 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
             // recovers the FNV-1a `h` accumulator and similar
             // explicit-i32-coerce shapes without reintroducing #435's
             // accumulator overflow).
-            let i32_safe_local = ctx.index_used_locals.contains(id)
-                || ctx.strictly_i32_bounded_locals.contains(id);
+            let i32_safe_local =
+                ctx.index_used_locals.contains(id) || ctx.strictly_i32_bounded_locals.contains(id);
             let needs_i32_slot = ctx.integer_locals.contains(id)
                 && i32_safe_local
                 && init_in_i32_range
@@ -578,9 +576,7 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                 // avoids the `fadd → fmul → fptosi` round-trip that
                 // image_convolution's `let row = yy * W` would otherwise
                 // emit when both operands have i32 slots.
-                let used_i32_init = if let Some(i32_slot) =
-                    ctx.i32_counter_slots.get(id).cloned()
-                {
+                let used_i32_init = if let Some(i32_slot) = ctx.i32_counter_slots.get(id).cloned() {
                     let i32_slots = ctx.i32_counter_slots.clone();
                     let flat_ca = ctx.flat_const_arrays.clone();
                     let ara = ctx.array_row_aliases.clone();
@@ -1583,9 +1579,17 @@ fn expr_preserves_array_length(e: &perry_hir::Expr, arr_id: u32, bounded_idx_id:
         // example, ~24M iterations through `fcmp olt double` instead of
         // `icmp slt i32`.
         Expr::Uint8ArrayGet { array, index } => walk(array) && walk(index),
-        Expr::Uint8ArraySet { array, index, value } => walk(array) && walk(index) && walk(value),
+        Expr::Uint8ArraySet {
+            array,
+            index,
+            value,
+        } => walk(array) && walk(index) && walk(value),
         Expr::BufferIndexGet { buffer, index } => walk(buffer) && walk(index),
-        Expr::BufferIndexSet { buffer, index, value } => walk(buffer) && walk(index) && walk(value),
+        Expr::BufferIndexSet {
+            buffer,
+            index,
+            value,
+        } => walk(buffer) && walk(index) && walk(value),
         // Pure arithmetic intrinsics — `Math.imul(a, b)` lowers to
         // `Expr::MathImul`, `Math.abs/sqrt/pow/floor/ceil/round` etc. all
         // bottom out as numeric ops with no side effects on the bounded

@@ -451,7 +451,9 @@ pub(super) fn collect_modules(
             perry_hir::Export::Named { .. } => None,
         };
         if let Some(src) = source {
-            if let Some((resolved_path, kind)) = cached_resolve_import(src.as_str(), &canonical, ctx) {
+            if let Some((resolved_path, kind)) =
+                cached_resolve_import(src.as_str(), &canonical, ctx)
+            {
                 match kind {
                     ModuleKind::NativeCompiled => {
                         collect_modules(
@@ -501,10 +503,8 @@ pub(super) fn collect_modules(
     // and BEFORE `transform_generators` (which consumes the generator
     // shape it produces). Issue #256.
     if !skip_transforms {
-        let mut extra_methods: std::collections::HashMap<
-            (String, String),
-            MethodCandidate,
-        > = std::collections::HashMap::new();
+        let mut extra_methods: std::collections::HashMap<(String, String), MethodCandidate> =
+            std::collections::HashMap::new();
         if std::env::var("PERRY_INLINE_DEBUG").is_ok() {
             eprintln!(
                 "[INLINE-DRIVER] processing {}: prior modules={:?}",
@@ -536,10 +536,8 @@ pub(super) fn collect_modules(
         // the receiver match bails at the first PropertyGet and the call
         // stays a runtime dispatch. Built from every prior module's
         // class.fields where the type is `Named(...)`.
-        let mut extra_class_fields: std::collections::HashMap<
-            (String, String),
-            String,
-        > = std::collections::HashMap::new();
+        let mut extra_class_fields: std::collections::HashMap<(String, String), String> =
+            std::collections::HashMap::new();
         for prior_module in ctx.native_modules.values() {
             for class in &prior_module.classes {
                 for f in &class.fields {

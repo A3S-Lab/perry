@@ -124,7 +124,10 @@ pub fn inline_functions(
                         walk_stmt_exprs(s, f);
                     }
                 }
-                Stmt::Switch { discriminant, cases } => {
+                Stmt::Switch {
+                    discriminant,
+                    cases,
+                } => {
                     f(discriminant);
                     for c in cases {
                         if let Some(t) = &c.test {
@@ -287,10 +290,7 @@ pub fn inline_functions(
     for class in &module.classes {
         for f in &class.fields {
             if let Type::Named(field_class) = &f.ty {
-                class_field_types.insert(
-                    (class.name.clone(), f.name.clone()),
-                    field_class.clone(),
-                );
+                class_field_types.insert((class.name.clone(), f.name.clone()), field_class.clone());
             }
         }
     }
@@ -695,11 +695,13 @@ pub fn is_cross_module_safe(body: &[Stmt]) -> bool {
                     && update.as_ref().is_none_or(check_expr)
                     && body.iter().all(check_stmt)
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch {
+                discriminant,
+                cases,
+            } => {
                 check_expr(discriminant)
                     && cases.iter().all(|c| {
-                        c.test.as_ref().is_none_or(check_expr)
-                            && c.body.iter().all(check_stmt)
+                        c.test.as_ref().is_none_or(check_expr) && c.body.iter().all(check_stmt)
                     })
             }
             Stmt::Try {
@@ -708,9 +710,7 @@ pub fn is_cross_module_safe(body: &[Stmt]) -> bool {
                 finally,
             } => {
                 body.iter().all(check_stmt)
-                    && catch
-                        .as_ref()
-                        .is_none_or(|c| c.body.iter().all(check_stmt))
+                    && catch.as_ref().is_none_or(|c| c.body.iter().all(check_stmt))
                     && finally.as_ref().is_none_or(|f| f.iter().all(check_stmt))
             }
             Stmt::Labeled { body, .. } => check_stmt(body.as_ref()),
@@ -742,9 +742,7 @@ pub fn gather_cross_module_anon_classes(module: &Module) -> HashMap<String, Clas
     out
 }
 
-pub fn gather_cross_module_methods(
-    module: &Module,
-) -> HashMap<(String, String), MethodCandidate> {
+pub fn gather_cross_module_methods(module: &Module) -> HashMap<(String, String), MethodCandidate> {
     let mut out: HashMap<(String, String), MethodCandidate> = HashMap::new();
     for class in &module.classes {
         if class.native_extends.is_some() {
@@ -880,9 +878,7 @@ fn is_cross_module_safe_with_externs(body: &[Stmt], extern_names: &mut Vec<Strin
     }
     fn check_stmt(s: &Stmt, extern_names: &mut Vec<String>) -> bool {
         match s {
-            Stmt::Let { init, .. } => init
-                .as_ref()
-                .is_none_or(|e| check_expr(e, extern_names)),
+            Stmt::Let { init, .. } => init.as_ref().is_none_or(|e| check_expr(e, extern_names)),
             Stmt::Expr(e) | Stmt::Throw(e) | Stmt::Return(Some(e)) => check_expr(e, extern_names),
             Stmt::Return(None) | Stmt::Break | Stmt::Continue => true,
             Stmt::LabeledBreak(_) | Stmt::LabeledContinue(_) => true,
@@ -914,7 +910,10 @@ fn is_cross_module_safe_with_externs(body: &[Stmt], extern_names: &mut Vec<Strin
                     && update.as_ref().is_none_or(|e| check_expr(e, extern_names))
                     && body.iter().all(|s| check_stmt(s, extern_names))
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch {
+                discriminant,
+                cases,
+            } => {
                 check_expr(discriminant, extern_names)
                     && cases.iter().all(|c| {
                         c.test.as_ref().is_none_or(|e| check_expr(e, extern_names))
@@ -1462,12 +1461,8 @@ fn resolve_receiver_class(
             // look up the field on that class. Field-walking chains like
             // `world.commandBuffer.set(...)` benefit — without this the
             // inliner's receiver match bails at the first non-LocalGet.
-            let (inner_class, _) = resolve_receiver_class(
-                object,
-                local_types,
-                enclosing_class,
-                class_field_types,
-            )?;
+            let (inner_class, _) =
+                resolve_receiver_class(object, local_types, enclosing_class, class_field_types)?;
             class_field_types
                 .get(&(inner_class, property.clone()))
                 .cloned()
@@ -1735,7 +1730,11 @@ fn inline_calls_in_stmts(
                 // `Let { id: let_id, init: Some(e) }`.
                 let (let_id, let_name, let_ty, let_mutable) = match &stmts[i] {
                     Stmt::Let {
-                        id, name, ty, mutable, ..
+                        id,
+                        name,
+                        ty,
+                        mutable,
+                        ..
                     } => (*id, name.clone(), ty.clone(), *mutable),
                     _ => unreachable!(),
                 };
@@ -1758,10 +1757,8 @@ fn inline_calls_in_stmts(
                             .iter()
                             .take(inlined_stmts.len().saturating_sub(1))
                             .any(stmt_contains_return);
-                        let trailing_is_return = matches!(
-                            inlined_stmts.last(),
-                            Some(Stmt::Return(Some(_)))
-                        );
+                        let trailing_is_return =
+                            matches!(inlined_stmts.last(), Some(Stmt::Return(Some(_))));
                         if !has_nested_return && trailing_is_return {
                             // Collapse: convert the trailing Return into the
                             // original Let-binding.
@@ -1808,7 +1805,9 @@ fn inline_calls_in_stmts(
                 if !handled {
                     // Fall back to nested-arg hoisting (existing behavior).
                     let hoisted = match &mut stmts[i] {
-                        Stmt::Let { init: Some(expr), .. } => inline_calls_in_expr(
+                        Stmt::Let {
+                            init: Some(expr), ..
+                        } => inline_calls_in_expr(
                             expr,
                             func_candidates,
                             method_candidates,
@@ -2056,7 +2055,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2065,7 +2064,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2076,7 +2075,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2091,7 +2090,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2100,7 +2099,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2109,7 +2108,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2120,7 +2119,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             for arg in args {
@@ -2130,7 +2129,7 @@ fn inline_calls_in_expr(
                     method_candidates,
                     local_types,
                     next_local_id,
-                enclosing_class,
+                    enclosing_class,
                     class_field_types,
                 ));
             }
@@ -2143,7 +2142,7 @@ fn inline_calls_in_expr(
                     method_candidates,
                     local_types,
                     next_local_id,
-                enclosing_class,
+                    enclosing_class,
                     class_field_types,
                 ));
             }
@@ -2156,7 +2155,7 @@ fn inline_calls_in_expr(
                     method_candidates,
                     local_types,
                     next_local_id,
-                enclosing_class,
+                    enclosing_class,
                     class_field_types,
                 ));
             }
@@ -2169,7 +2168,7 @@ fn inline_calls_in_expr(
                     method_candidates,
                     local_types,
                     next_local_id,
-                enclosing_class,
+                    enclosing_class,
                     class_field_types,
                 ));
             }
@@ -2184,7 +2183,7 @@ fn inline_calls_in_expr(
                             method_candidates,
                             local_types,
                             next_local_id,
-                        enclosing_class,
+                            enclosing_class,
                             class_field_types,
                         ));
                     }
@@ -2198,7 +2197,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             for arg in args {
@@ -2210,7 +2209,7 @@ fn inline_calls_in_expr(
                             method_candidates,
                             local_types,
                             next_local_id,
-                        enclosing_class,
+                            enclosing_class,
                             class_field_types,
                         ));
                     }
@@ -2224,7 +2223,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2233,7 +2232,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2248,7 +2247,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2257,7 +2256,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2266,7 +2265,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2277,7 +2276,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2288,7 +2287,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2297,7 +2296,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2308,7 +2307,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2320,7 +2319,7 @@ fn inline_calls_in_expr(
                     method_candidates,
                     local_types,
                     next_local_id,
-                enclosing_class,
+                    enclosing_class,
                     class_field_types,
                 ));
             }
@@ -2331,7 +2330,7 @@ fn inline_calls_in_expr(
                     method_candidates,
                     local_types,
                     next_local_id,
-                enclosing_class,
+                    enclosing_class,
                     class_field_types,
                 ));
             }
@@ -2345,7 +2344,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2354,7 +2353,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2369,7 +2368,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2378,7 +2377,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
             hoisted.extend(inline_calls_in_expr(
@@ -2387,7 +2386,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2398,7 +2397,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2409,7 +2408,7 @@ fn inline_calls_in_expr(
                 method_candidates,
                 local_types,
                 next_local_id,
-            enclosing_class,
+                enclosing_class,
                 class_field_types,
             ));
         }
@@ -2625,8 +2624,7 @@ fn try_inline_simple_call(
                 {
                     // Check for single return statement
                     if method_candidate.func.body.len() == 1 {
-                        if let Stmt::Return(Some(return_expr)) = &method_candidate.func.body[0]
-                        {
+                        if let Stmt::Return(Some(return_expr)) = &method_candidate.func.body[0] {
                             let mut param_map: HashMap<LocalId, Expr> = HashMap::new();
 
                             // Map 'this' parameter to the receiver object (only
@@ -2642,8 +2640,7 @@ fn try_inline_simple_call(
 
                             // Map parameters to arguments
                             // Note: Method params don't include 'this' - they use Expr::This instead
-                            for (param, arg) in
-                                method_candidate.func.params.iter().zip(args.iter())
+                            for (param, arg) in method_candidate.func.params.iter().zip(args.iter())
                             {
                                 param_map.insert(param.id, arg.clone());
                             }
@@ -2870,12 +2867,7 @@ fn try_inline_call(
                     // and the `if (filter === undefined) filter = {}`
                     // prologue then writes to whatever destination local
                     // happens to share that id).
-                    for param in method_candidate
-                        .func
-                        .params
-                        .iter()
-                        .skip(args.len())
-                    {
+                    for param in method_candidate.func.params.iter().skip(args.len()) {
                         let local_id = *next_local_id;
                         *next_local_id += 1;
                         setup_stmts.push(Stmt::Let {

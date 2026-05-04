@@ -4023,7 +4023,9 @@ pub(crate) fn lower_body_stmt(ctx: &mut LoweringContext, stmt: &ast::Stmt) -> Re
                                     let mut stmts: Vec<Stmt> = Vec::new();
                                     let mut var_idx = 0;
                                     for (slot, elem) in arr_pat.elems.iter().enumerate() {
-                                        let Some(ast::Pat::Ident(_)) = elem else { continue };
+                                        let Some(ast::Pat::Ident(_)) = elem else {
+                                            continue;
+                                        };
                                         let (name, id) = var_ids[var_idx].clone();
                                         var_idx += 1;
                                         let init = if slot == 0 {

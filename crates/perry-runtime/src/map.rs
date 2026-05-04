@@ -560,9 +560,7 @@ pub extern "C" fn js_map_delete(map: *mut MapHeader, key: f64) -> i32 {
         // and if we swap-popped, patch the swapped key's stored index.
         let key_bits = key.to_bits();
         let swapped_bits = swapped_key.map(|f| f.to_bits());
-        if is_safe_numeric_key(key_bits)
-            || swapped_bits.map(is_safe_numeric_key).unwrap_or(false)
-        {
+        if is_safe_numeric_key(key_bits) || swapped_bits.map(is_safe_numeric_key).unwrap_or(false) {
             MAP_INDEX.with(|midx| {
                 let mut midx = midx.borrow_mut();
                 if let Some(slot) = midx.get_mut(&(map as usize)) {

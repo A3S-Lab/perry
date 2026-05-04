@@ -601,8 +601,7 @@ impl LoweringContext {
     ) {
         for (name, fields) in seeds {
             if !self.class_field_types.iter().any(|(n, _)| n == name) {
-                self.class_field_types
-                    .push((name.clone(), fields.clone()));
+                self.class_field_types.push((name.clone(), fields.clone()));
             }
             if !self.class_field_names.iter().any(|(n, _)| n == name) {
                 let names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
@@ -5885,16 +5884,14 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
                                     // the Map's flat buffer at the loop index.
                                     // No `__item` Array materialization. Skipped
                                     // slots ([,v] etc.) emit no binding.
-                                    let key_ty = map_key_type
-                                        .clone()
-                                        .unwrap_or(Type::Any);
-                                    let val_ty = map_val_type
-                                        .clone()
-                                        .unwrap_or(Type::Any);
+                                    let key_ty = map_key_type.clone().unwrap_or(Type::Any);
+                                    let val_ty = map_val_type.clone().unwrap_or(Type::Any);
                                     let mut stmts: Vec<Stmt> = Vec::new();
                                     let mut var_idx = 0;
                                     for (slot, elem) in arr_pat.elems.iter().enumerate() {
-                                        let Some(ast::Pat::Ident(_)) = elem else { continue };
+                                        let Some(ast::Pat::Ident(_)) = elem else {
+                                            continue;
+                                        };
                                         let (name, id) = var_ids[var_idx].clone();
                                         var_idx += 1;
                                         let (ty, init) = if slot == 0 {
@@ -5941,12 +5938,12 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
                                                 let (name, id) = var_ids[var_idx].clone();
                                                 var_idx += 1;
                                                 // For Map destructuring, use the Tuple element type
-                                                let var_type = if let Type::Tuple(ref types) = elem_type
-                                                {
-                                                    types.get(idx).cloned().unwrap_or(Type::Any)
-                                                } else {
-                                                    Type::Any
-                                                };
+                                                let var_type =
+                                                    if let Type::Tuple(ref types) = elem_type {
+                                                        types.get(idx).cloned().unwrap_or(Type::Any)
+                                                    } else {
+                                                        Type::Any
+                                                    };
                                                 stmts.push(Stmt::Let {
                                                     id,
                                                     name,

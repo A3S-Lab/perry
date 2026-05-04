@@ -77,10 +77,8 @@ pub(super) fn apply_inline_style(
                     VOID,
                     vec![I64, I64],
                 ));
-                ctx.block().call_void(
-                    "perry_ui_widget_set_tooltip",
-                    &[(I64, handle), (I64, &s)],
-                );
+                ctx.block()
+                    .call_void("perry_ui_widget_set_tooltip", &[(I64, handle), (I64, &s)]);
             }
             "hidden" => {
                 let v = lower_expr(ctx, val)?;
@@ -91,10 +89,8 @@ pub(super) fn apply_inline_style(
                     VOID,
                     vec![I64, I64],
                 ));
-                ctx.block().call_void(
-                    "perry_ui_set_widget_hidden",
-                    &[(I64, handle), (I64, &bits)],
-                );
+                ctx.block()
+                    .call_void("perry_ui_set_widget_hidden", &[(I64, handle), (I64, &bits)]);
             }
             "enabled" => {
                 let v = lower_expr(ctx, val)?;

@@ -359,9 +359,9 @@ fn stmt_is_unrollable(stmt: &Stmt, iv_id: LocalId, loop_depth: u32) -> bool {
                 && then_branch
                     .iter()
                     .all(|s| stmt_is_unrollable(s, iv_id, loop_depth))
-                && else_branch.as_ref().is_none_or(|eb| {
-                    eb.iter().all(|s| stmt_is_unrollable(s, iv_id, loop_depth))
-                })
+                && else_branch
+                    .as_ref()
+                    .is_none_or(|eb| eb.iter().all(|s| stmt_is_unrollable(s, iv_id, loop_depth)))
         }
         Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
             // Inner loop: bumps depth so break/continue inside become safe.
@@ -381,14 +381,15 @@ fn stmt_is_unrollable(stmt: &Stmt, iv_id: LocalId, loop_depth: u32) -> bool {
                 && condition
                     .as_ref()
                     .is_none_or(|e| expr_is_unrollable(e, iv_id))
-                && update
-                    .as_ref()
-                    .is_none_or(|e| expr_is_unrollable(e, iv_id))
+                && update.as_ref().is_none_or(|e| expr_is_unrollable(e, iv_id))
                 && body
                     .iter()
                     .all(|s| stmt_is_unrollable(s, iv_id, loop_depth + 1))
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch {
+            discriminant,
+            cases,
+        } => {
             // Switch case bodies have `break` that targets the switch (not
             // the enclosing for). Counted as depth + 1 to allow them.
             expr_is_unrollable(discriminant, iv_id)
@@ -427,10 +428,7 @@ fn expr_is_unrollable(e: &Expr, iv_id: LocalId) -> bool {
             // (free `break` outside a loop is a JS syntax error), so we
             // start at loop_depth=1 to suppress the always-true Break/
             // Continue rejection.
-            if !body
-                .iter()
-                .all(|s| stmt_is_unrollable(s, iv_id, 1))
-            {
+            if !body.iter().all(|s| stmt_is_unrollable(s, iv_id, 1)) {
                 return false;
             }
             return true;
@@ -503,7 +501,10 @@ fn substitute_localget_with_int_in_stmt(stmt: &mut Stmt, iv_id: LocalId, value: 
                 substitute_localget_with_int_in_stmt(s, iv_id, value);
             }
         }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Switch {
+            discriminant,
+            cases,
+        } => {
             substitute_localget_with_int(discriminant, iv_id, value);
             for c in cases {
                 if let Some(t) = &mut c.test {
@@ -800,16 +801,20 @@ mod tests {
                         } => {
                             // left = (acc + ky); right = kx
                             match right.as_ref() {
-                                Expr::Integer(n) => assert_eq!(*n, expected_kx,
+                                Expr::Integer(n) => assert_eq!(
+                                    *n, expected_kx,
                                     "kx mismatch at ({}, {}): got {}, want {}",
-                                    ky_n, kx_n, n, expected_kx),
+                                    ky_n, kx_n, n, expected_kx
+                                ),
                                 other => panic!("expected kx Integer, got {:?}", other),
                             }
                             match left.as_ref() {
                                 Expr::Binary { right: ky_e, .. } => match ky_e.as_ref() {
-                                    Expr::Integer(n) => assert_eq!(*n, expected_ky,
+                                    Expr::Integer(n) => assert_eq!(
+                                        *n, expected_ky,
                                         "ky mismatch at ({}, {}): got {}, want {}",
-                                        ky_n, kx_n, n, expected_ky),
+                                        ky_n, kx_n, n, expected_ky
+                                    ),
                                     other => panic!("expected ky Integer, got {:?}", other),
                                 },
                                 other => panic!("expected (acc+ky) Binary, got {:?}", other),

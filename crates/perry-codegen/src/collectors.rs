@@ -1674,7 +1674,13 @@ pub(crate) fn collect_integer_locals(
     // generation back into double.
     loop {
         let before = candidates.len();
-        collect_extra_integer_let_ids(stmts, &mut candidates, flat_const_ids, &flat_row_alias_ids, clamp_fn_ids);
+        collect_extra_integer_let_ids(
+            stmts,
+            &mut candidates,
+            flat_const_ids,
+            &flat_row_alias_ids,
+            clamp_fn_ids,
+        );
         if candidates.len() == before {
             break;
         }
@@ -1724,7 +1730,11 @@ fn collect_extra_integer_let_ids(
     use perry_hir::Stmt;
     for s in stmts {
         match s {
-            Stmt::Let { id, init: Some(init), .. } => {
+            Stmt::Let {
+                id,
+                init: Some(init),
+                ..
+            } => {
                 // Same `>>> 0` exclusion as the syntactic seed in
                 // `collect_integer_let_ids`: u32 values can't round-trip
                 // through an i32 slot.
@@ -1741,37 +1751,105 @@ fn collect_extra_integer_let_ids(
                     out.insert(*id);
                 }
             }
-            Stmt::If { then_branch, else_branch, .. } => {
-                collect_extra_integer_let_ids(then_branch, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_extra_integer_let_ids(
+                    then_branch,
+                    out,
+                    flat_const_ids,
+                    flat_row_alias_ids,
+                    clamp_fn_ids,
+                );
                 if let Some(eb) = else_branch {
-                    collect_extra_integer_let_ids(eb, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+                    collect_extra_integer_let_ids(
+                        eb,
+                        out,
+                        flat_const_ids,
+                        flat_row_alias_ids,
+                        clamp_fn_ids,
+                    );
                 }
             }
             Stmt::For { init, body, .. } => {
                 if let Some(init_stmt) = init {
-                    collect_extra_integer_let_ids(std::slice::from_ref(init_stmt), out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+                    collect_extra_integer_let_ids(
+                        std::slice::from_ref(init_stmt),
+                        out,
+                        flat_const_ids,
+                        flat_row_alias_ids,
+                        clamp_fn_ids,
+                    );
                 }
-                collect_extra_integer_let_ids(body, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+                collect_extra_integer_let_ids(
+                    body,
+                    out,
+                    flat_const_ids,
+                    flat_row_alias_ids,
+                    clamp_fn_ids,
+                );
             }
             Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
-                collect_extra_integer_let_ids(body, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+                collect_extra_integer_let_ids(
+                    body,
+                    out,
+                    flat_const_ids,
+                    flat_row_alias_ids,
+                    clamp_fn_ids,
+                );
             }
-            Stmt::Try { body, catch, finally } => {
-                collect_extra_integer_let_ids(body, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+            Stmt::Try {
+                body,
+                catch,
+                finally,
+            } => {
+                collect_extra_integer_let_ids(
+                    body,
+                    out,
+                    flat_const_ids,
+                    flat_row_alias_ids,
+                    clamp_fn_ids,
+                );
                 if let Some(c) = catch {
-                    collect_extra_integer_let_ids(&c.body, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+                    collect_extra_integer_let_ids(
+                        &c.body,
+                        out,
+                        flat_const_ids,
+                        flat_row_alias_ids,
+                        clamp_fn_ids,
+                    );
                 }
                 if let Some(f) = finally {
-                    collect_extra_integer_let_ids(f, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+                    collect_extra_integer_let_ids(
+                        f,
+                        out,
+                        flat_const_ids,
+                        flat_row_alias_ids,
+                        clamp_fn_ids,
+                    );
                 }
             }
             Stmt::Switch { cases, .. } => {
                 for c in cases {
-                    collect_extra_integer_let_ids(&c.body, out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+                    collect_extra_integer_let_ids(
+                        &c.body,
+                        out,
+                        flat_const_ids,
+                        flat_row_alias_ids,
+                        clamp_fn_ids,
+                    );
                 }
             }
             Stmt::Labeled { body, .. } => {
-                collect_extra_integer_let_ids(std::slice::from_ref(body.as_ref()), out, flat_const_ids, flat_row_alias_ids, clamp_fn_ids);
+                collect_extra_integer_let_ids(
+                    std::slice::from_ref(body.as_ref()),
+                    out,
+                    flat_const_ids,
+                    flat_row_alias_ids,
+                    clamp_fn_ids,
+                );
             }
             _ => {}
         }
@@ -3443,11 +3521,7 @@ fn returns_int_expr(e: &Expr) -> bool {
         // an i32 slot.
         Expr::Binary { op, .. } => matches!(
             op,
-            BinaryOp::BitAnd
-                | BinaryOp::BitOr
-                | BinaryOp::BitXor
-                | BinaryOp::Shl
-                | BinaryOp::Shr
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
         ),
         Expr::MathImul(_, _) => true,
         _ => false,
