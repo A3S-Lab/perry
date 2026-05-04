@@ -566,9 +566,27 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     // Vec we just built — the Vec lives for the remainder of compile_module).
     // Also build a map from class name → source module prefix so method
     // dispatch generates the correct cross-module symbol name.
+    //
+    // Skip imports that collide by name with a LOCAL class (#431). The
+    // local class shadows the import in `class_table` (the
+    // `class_table.entry().or_insert()` loop below preserves the local
+    // entry), so this map must not point a local-class lookup at an
+    // import's source prefix — doing so makes `compile_method` mangle
+    // the LOCAL methods under the IMPORTED module's prefix while the
+    // dispatch-table builder (line ~3614) still references them under
+    // the local prefix, leaving `@perry_method_<local>__<C>__<m>`
+    // undefined at link time. This is the cross-module sibling of
+    // #336's intra-module collision; #336 disambiguated the
+    // `@perry_class_keys_*` global, but the method-body prefix needs
+    // the same fix for cross-module name reuse (Effect's `Class` /
+    // `Refinement` / `Composite` / `ParseError` /
+    // `PropertySignatureTransformation` / `DroppingStrategy` cases).
     let mut imported_class_prefix: HashMap<String, String> = HashMap::new();
     for ic in &opts.imported_classes {
         let effective_name = ic.local_alias.as_deref().unwrap_or(&ic.name);
+        if hir.classes.iter().any(|c| c.name == *effective_name) {
+            continue;
+        }
         imported_class_prefix.insert(effective_name.to_string(), ic.source_prefix.clone());
     }
     for stub in &imported_class_stubs {
