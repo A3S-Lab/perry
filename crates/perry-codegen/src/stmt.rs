@@ -501,21 +501,27 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                 Some(perry_hir::Expr::Integer(n)) => i32::try_from(*n).is_ok(),
                 _ => true, // non-Integer init: writes will always go via i32-coercing paths
             };
-            // Issue #140 follow-up: the v0.5.164 fix kept pure accumulators
-            // off the i32 shadow path by gating on `index_used_locals`, but
-            // the same commit also refined `body_needs_asm_barrier` so the
-            // SIMD-blocking `asm sideeffect` no longer fires for accumulator
-            // loops. The barrier-refinement alone is enough to restore the
-            // SIMD reduction (verified on loop_overhead / math_intensive /
-            // accumulate after dropping the gate). The remaining gate, on the
-            // other hand, *removes* the i32 shadow from integer locals that
-            // flow into indices only transitively (`xx → idx`,
-            // `row + xx → idx`), forcing inner-loop arithmetic back into f64
-            // with `fcvtzs` per access — measured 3–4× slowdown on
-            // image_convolution. Drop the gate; `integer_locals` (which
-            // iterates to a fixed point on int-stable writes) and the
-            // `module_globals` / `boxed_vars` exclusions already keep the
-            // right locals off the shadow path.
+            // Issue #140 follow-up + #435 fix: gate the Let-site i32
+            // shadow on `index_used_locals` (with transitive closure —
+            // see `collect_index_used_locals` in collectors.rs).  The
+            // original v0.5.164 gate dropped the shadow for image-
+            // convolution's transitively-index-used locals (`xx → idx
+            // → array[idx]`) because the analysis was direct-only; the
+            // comment said dropping the gate was "fine" because
+            // `is_int32_producing_expr` would keep the right locals
+            // off the shadow path.  That claim was wrong:
+            // `is_int32_producing_expr` accepts `Add | Sub | Mul`
+            // over int-stable operands, so pure accumulators like
+            // `let sum = 0; for (...) sum = sum + compute(i)` (the
+            // canonical 14_closure shape) ended up with an i32 shadow
+            // whose reads truncated 64-bit sums to 32-bit signed
+            // integers — silent-correctness bug, exit 0, no
+            // diagnostics.  The gate-with-transitive-closure restores
+            // both invariants: image_conv's chain stays on the i32
+            // path (xx is transitively index-used through idx), and
+            // accumulators that never reach an array index stay off
+            // it.
+            //
             // Drop the `*mutable` gate: immutable integer-stable Lets
             // also benefit from an i32 shadow when they participate in
             // an integer-arithmetic chain (`const row = yy * W;` then
@@ -525,11 +531,9 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
             // exceeds INT32_MAX — but that's a u32 (`>>> 0`), and
             // `>>> 0` is intentionally not seeded into integer_locals
             // (see collect_integer_let_ids), so SEED never ends up
-            // in this code path. Integer-stable immutable Lets that
-            // DO get seeded (Integer literal / clamp call /
-            // is_int32_producing_expr Add/Sub/Mul over int candidates)
-            // can't legitimately overflow i32 in any reachable workload.
+            // in this code path.
             let needs_i32_slot = ctx.integer_locals.contains(id)
+                && ctx.index_used_locals.contains(id)
                 && init_in_i32_range
                 && !ctx.boxed_vars.contains(id)
                 && !ctx.module_globals.contains_key(id)
