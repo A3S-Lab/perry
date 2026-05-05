@@ -19,7 +19,15 @@ pub fn module_to_features(module: &str) -> &'static [&'static str] {
     let normalized = module.strip_prefix("node:").unwrap_or(module);
     match normalized {
         // ── HTTP server (Hyper) ───────────────────────────────────────
-        "fastify" => &["http-server"],
+        // `http-server` umbrella retained for backwards-compat;
+        // per-binding gate is `bundled-fastify` (v0.5.572) so the
+        // well-known flip can route to perry-ext-fastify.
+        "fastify" => &["bundled-fastify"],
+
+        // ── Web Streams API ──────────────────────────────────────────
+        // Per-binding gate `bundled-streams` (v0.5.572) — the
+        // well-known flip routes `import 'streams'` to perry-ext-streams.
+        "streams" => &["bundled-streams"],
 
         // ── HTTP client (reqwest) ─────────────────────────────────────
         // `http` / `https` join the `http-client` umbrella since they

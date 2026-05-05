@@ -108,9 +108,15 @@ pub mod framework;
 pub use framework::*;
 
 // === Fastify-Compatible Framework ===
-#[cfg(feature = "http-server")]
+// Per-binding gate (v0.5.572): `bundled-fastify` is the only flag
+// that toggles `pub mod fastify`. The well-known flip strips
+// `bundled-fastify` to route to perry-ext-fastify without
+// duplicate-symbol risk. `http-server` callers still get fastify
+// transitively because the umbrella pulls in `bundled-fastify`
+// (declared in this crate's Cargo.toml).
+#[cfg(feature = "bundled-fastify")]
 pub mod fastify;
-#[cfg(feature = "http-server")]
+#[cfg(feature = "bundled-fastify")]
 pub use fastify::*;
 
 // === HTTP Client ===
@@ -130,9 +136,17 @@ pub mod axios;
 pub use axios::*;
 
 // === Web Streams API (issue #237) ===
-#[cfg(feature = "http-client")]
+// Per-binding gate (v0.5.572): `bundled-streams` is the only flag
+// that toggles `pub mod streams`. The well-known flip strips
+// `bundled-streams` to route to perry-ext-streams without
+// duplicate-symbol risk. `http-client` callers still get streams
+// transitively because the umbrella pulls in `bundled-streams`
+// (declared in this crate's Cargo.toml). Default-on through
+// `default = ["full"]` and through `--features http-client`,
+// matching v0.5.571's behaviour byte-for-byte.
+#[cfg(feature = "bundled-streams")]
 pub mod streams;
-#[cfg(feature = "http-client")]
+#[cfg(feature = "bundled-streams")]
 pub use streams::*;
 
 // === WebSocket ===

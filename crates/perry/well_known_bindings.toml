@@ -238,3 +238,13 @@ tracking = "#466"
 crate = "perry-ext-http"
 lib = "perry_ext_http"
 tracking = "#466"
+
+[bindings.streams]
+crate = "perry-ext-streams"
+lib = "perry_ext_streams"
+tracking = "#466"
+
+[bindings.fastify]
+crate = "perry-ext-fastify"
+lib = "perry_ext_fastify"
+tracking = "#466"

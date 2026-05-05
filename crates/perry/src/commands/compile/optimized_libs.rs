@@ -157,6 +157,8 @@ pub(super) fn build_optimized_libs(
                         | "bundled-ws"
                         | "bundled-net"
                         | "http-client"
+                        | "bundled-streams"
+                        | "bundled-fastify"
                 )
             }) {
                 features.insert("async-runtime");
