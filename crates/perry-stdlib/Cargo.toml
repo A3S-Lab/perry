@@ -136,7 +136,7 @@ md-5 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 hmac = { version = "0.12", optional = true }
 bcrypt = { version = "0.15", optional = true }
-jsonwebtoken = { version = "9.3", optional = true }
+jsonwebtoken = { version = "10.3", optional = true }
 aes = { version = "0.8", optional = true }
 cbc = { version = "0.1", optional = true }
 scrypt = { version = "0.11", optional = true }
@@ -168,7 +168,7 @@ tokio-cron-scheduler = { version = "0.10", optional = true }
 governor = { version = "0.6", optional = true }
 
 # Validation
-validator = { version = "0.18", features = ["derive"], optional = true }
+validator = { version = "0.20", features = ["derive"], optional = true }
 regex = { version = "1.10", optional = true }
 
 # IDs
@@ -176,7 +176,7 @@ uuid = { version = "1.11", features = ["v4", "v1", "v7"], optional = true }
 nanoid = { version = "0.4", optional = true }
 
 # LRU Cache
-lru = "0.12"
+lru = "0.16"
 
 # CLI parsing (Commander)
 clap = { version = "4.4", features = ["derive"] }

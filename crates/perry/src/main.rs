@@ -8,6 +8,7 @@ mod update_checker;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
+use std::io::IsTerminal;
 
 /// Native TypeScript Compiler
 #[derive(Parser, Debug)]
@@ -187,7 +188,7 @@ fn main_inner() -> Result<()> {
     let cli = Cli::parse_from(effective_args);
 
     // Determine if colors should be used
-    let use_color = !cli.no_color && !cli.quiet && atty::is(atty::Stream::Stdout);
+    let use_color = !cli.no_color && !cli.quiet && std::io::stdout().is_terminal();
 
     // Handle no command case
     if cli.command.is_none() {
@@ -282,7 +283,7 @@ fn main_inner() -> Result<()> {
 
     // Print update notice if available (to stderr, non-blocking)
     if !cli.quiet && !is_update_cmd {
-        let use_stderr_color = !cli.no_color && atty::is(atty::Stream::Stderr);
+        let use_stderr_color = !cli.no_color && std::io::stderr().is_terminal();
         let status = if let Some(rx) = bg_check {
             rx.recv_timeout(std::time::Duration::from_millis(100)).ok()
         } else if !update_checker::should_skip_check() {

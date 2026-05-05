@@ -415,17 +415,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "atty"
-version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
-dependencies = [
- "hermit-abi 0.1.19",
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2000,6 +1989,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2648,7 +2643,18 @@ checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash",
+ "foldhash 0.1.5",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
 ]
 
 [[package]]
@@ -2689,15 +2695,6 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermit-abi"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
@@ -2721,7 +2718,7 @@ dependencies = [
  "futures-channel",
  "futures-io",
  "futures-util",
- "idna 1.1.0",
+ "idna",
  "ipnet",
  "once_cell",
  "rand 0.9.4",
@@ -3052,16 +3049,6 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "idna"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "634d9b1461af396cad843f47fdba5597a4f9e6ddd4bfb6ff5d85028c25cb12f6"
-dependencies = [
- "unicode-bidi",
- "unicode-normalization",
-]
-
-[[package]]
-name = "idna"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
@@ -3240,7 +3227,7 @@ version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
- "hermit-abi 0.5.2",
+ "hermit-abi",
  "libc",
  "windows-sys 0.61.2",
 ]
@@ -3343,16 +3330,17 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "9.3.1"
+version = "10.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
 dependencies = [
  "base64",
+ "getrandom 0.2.17",
  "js-sys",
  "pem",
- "ring",
  "serde",
  "serde_json",
+ "signature",
  "simple_asn1",
 ]
 
@@ -3418,7 +3406,7 @@ dependencies = [
  "futures-util",
  "hostname",
  "httpdate",
- "idna 1.1.0",
+ "idna",
  "mime",
  "nom 8.0.0",
  "percent-encoding",
@@ -3539,11 +3527,11 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.12.5"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
+checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
 dependencies = [
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -4433,10 +4421,9 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "perry"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
- "atty",
  "base64",
  "clap",
  "console",
@@ -4486,7 +4473,7 @@ dependencies = [
 
 [[package]]
 name = "perry-codegen"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "log",
@@ -4498,7 +4485,7 @@ dependencies = [
 
 [[package]]
 name = "perry-codegen-arkts"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "perry-hir",
@@ -4507,7 +4494,7 @@ dependencies = [
 
 [[package]]
 name = "perry-codegen-glance"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "perry-hir",
@@ -4515,7 +4502,7 @@ dependencies = [
 
 [[package]]
 name = "perry-codegen-js"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "perry-dispatch",
@@ -4525,7 +4512,7 @@ dependencies = [
 
 [[package]]
 name = "perry-codegen-swiftui"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "perry-hir",
@@ -4534,7 +4521,7 @@ dependencies = [
 
 [[package]]
 name = "perry-codegen-wasm"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "base64",
@@ -4547,7 +4534,7 @@ dependencies = [
 
 [[package]]
 name = "perry-codegen-wear-tiles"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "perry-hir",
@@ -4555,7 +4542,7 @@ dependencies = [
 
 [[package]]
 name = "perry-diagnostics"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "serde",
  "serde_json",
@@ -4563,11 +4550,11 @@ dependencies = [
 
 [[package]]
 name = "perry-dispatch"
-version = "0.5.518"
+version = "0.5.519"
 
 [[package]]
 name = "perry-doc-tests"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "clap",
@@ -4582,7 +4569,7 @@ dependencies = [
 
 [[package]]
 name = "perry-hir"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "perry-diagnostics",
@@ -4595,7 +4582,7 @@ dependencies = [
 
 [[package]]
 name = "perry-jsruntime"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "deno_core",
@@ -4614,7 +4601,7 @@ dependencies = [
 
 [[package]]
 name = "perry-parser"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "perry-diagnostics",
@@ -4626,7 +4613,7 @@ dependencies = [
 
 [[package]]
 name = "perry-runtime"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "base64",
@@ -4649,7 +4636,7 @@ dependencies = [
 
 [[package]]
 name = "perry-stdlib"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4716,7 +4703,7 @@ dependencies = [
 
 [[package]]
 name = "perry-transform"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "perry-hir",
@@ -4726,7 +4713,7 @@ dependencies = [
 
 [[package]]
 name = "perry-types"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "anyhow",
  "thiserror 1.0.69",
@@ -4734,11 +4721,11 @@ dependencies = [
 
 [[package]]
 name = "perry-ui"
-version = "0.5.518"
+version = "0.5.519"
 
 [[package]]
 name = "perry-ui-android"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "itoa",
  "jni",
@@ -4752,7 +4739,7 @@ dependencies = [
 
 [[package]]
 name = "perry-ui-geisterhand"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "rand 0.8.6",
  "serde",
@@ -4762,7 +4749,7 @@ dependencies = [
 
 [[package]]
 name = "perry-ui-gtk4"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "cairo-rs",
  "gstreamer",
@@ -4777,7 +4764,7 @@ dependencies = [
 
 [[package]]
 name = "perry-ui-ios"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "block2",
  "libc",
@@ -4792,7 +4779,7 @@ dependencies = [
 
 [[package]]
 name = "perry-ui-macos"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "block2",
  "libc",
@@ -4810,11 +4797,11 @@ version = "0.1.0"
 
 [[package]]
 name = "perry-ui-testkit"
-version = "0.5.518"
+version = "0.5.519"
 
 [[package]]
 name = "perry-ui-tvos"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "block2",
  "libc",
@@ -4829,7 +4816,7 @@ dependencies = [
 
 [[package]]
 name = "perry-ui-visionos"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "block2",
  "libc",
@@ -4844,7 +4831,7 @@ dependencies = [
 
 [[package]]
 name = "perry-ui-watchos"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "block2",
  "libc",
@@ -4857,7 +4844,7 @@ dependencies = [
 
 [[package]]
 name = "perry-ui-windows"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "libc",
  "perry-runtime",
@@ -4869,7 +4856,7 @@ dependencies = [
 
 [[package]]
 name = "perry-updater"
-version = "0.5.518"
+version = "0.5.519"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -5075,7 +5062,7 @@ checksum = "5d0e4f59085d47d8241c88ead0f274e8a0cb551f3625263c05eb8dd897c34218"
 dependencies = [
  "cfg-if",
  "concurrent-queue",
- "hermit-abi 0.5.2",
+ "hermit-abi",
  "pin-project-lite",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -5149,27 +5136,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-error"
-version = "1.0.4"
+name = "proc-macro-error-attr2"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
+checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
 dependencies = [
- "proc-macro-error-attr",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
- "version_check",
 ]
 
 [[package]]
-name = "proc-macro-error-attr"
-version = "1.0.4"
+name = "proc-macro-error2"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
+checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
 dependencies = [
+ "proc-macro-error-attr2",
  "proc-macro2",
  "quote",
- "version_check",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -7539,7 +7524,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
 dependencies = [
  "form_urlencoded",
- "idna 1.1.0",
+ "idna",
  "percent-encoding",
  "serde",
  "serde_derive",
@@ -7606,11 +7591,11 @@ dependencies = [
 
 [[package]]
 name = "validator"
-version = "0.18.1"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db79c75af171630a3148bd3e6d7c4f42b6a9a014c2945bc5ed0020cbb8d9478e"
+checksum = "43fb22e1a008ece370ce08a3e9e4447a910e92621bb49b85d6e48a45397e7cfa"
 dependencies = [
- "idna 0.5.0",
+ "idna",
  "once_cell",
  "regex",
  "serde",
@@ -7622,13 +7607,13 @@ dependencies = [
 
 [[package]]
 name = "validator_derive"
-version = "0.18.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df0bcf92720c40105ac4b2dda2a4ea3aa717d4d6a862cc217da653a4bd5c6b10"
+checksum = "b7df16e474ef958526d1205f6dda359fdfab79d9aa6d54bafcb92dcd07673dca"
 dependencies = [
  "darling 0.20.11",
  "once_cell",
- "proc-macro-error",
+ "proc-macro-error2",
  "proc-macro2",
  "quote",
  "syn 2.0.117",

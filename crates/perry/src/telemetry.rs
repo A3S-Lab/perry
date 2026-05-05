@@ -5,6 +5,7 @@
 //! on background threads — never slows down the CLI.
 
 use serde::{Deserialize, Serialize};
+use std::io::IsTerminal;
 use std::sync::{Mutex, OnceLock};
 
 use crate::commands::publish::{load_config, save_config};
@@ -42,7 +43,7 @@ fn should_skip_telemetry() -> bool {
 /// Returns true if we should skip the interactive consent prompt
 /// (non-TTY environments can't prompt, but should still send if already consented).
 fn should_skip_consent_prompt() -> bool {
-    !atty::is(atty::Stream::Stderr)
+    !std::io::stderr().is_terminal()
 }
 
 /// Load telemetry config from ~/.perry/config.toml.
@@ -95,7 +96,7 @@ fn generate_client_id() -> String {
 /// Prompt the user for telemetry consent. Returns true if they opt in.
 /// Only prompts on interactive TTY. Non-interactive sessions get false without saving.
 fn prompt_consent() -> bool {
-    if !atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout) {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return false;
     }
 

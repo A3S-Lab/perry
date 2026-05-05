@@ -2823,7 +2823,7 @@ fn pick_from_list(items: &[String], prompt: &str) -> Result<usize> {
     }
 
     // Non-interactive: pick first
-    if !atty::is(atty::Stream::Stdin) {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         eprintln!("Non-interactive terminal, selecting: {}", items[0]);
         return Ok(0);
     }

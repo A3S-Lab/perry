@@ -2885,7 +2885,8 @@ pub(crate) fn save_config(config: &PerryConfig) -> Result<()> {
 }
 
 pub(crate) fn is_interactive() -> bool {
-    atty::is(atty::Stream::Stdin) && atty::is(atty::Stream::Stdout)
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 /// Show a one-time public beta notice for publish/verify commands.
