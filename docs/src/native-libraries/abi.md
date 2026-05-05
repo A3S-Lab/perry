@@ -4,6 +4,11 @@ This page documents the contract between native bindings packages
 (`perryts/mysql2-bindings`, `@perry/iroh`, `perry-ext-dotenv`, …) and
 the Perry runtime they execute inside.
 
+> **New here?** Start with [Native Bindings — Overview](overview.md)
+> for the architectural picture and the
+> [Authoring Guide](authoring-guide.md) for the step-by-step. This page
+> is reference-grade detail.
+
 It is intentionally short. The whole point of the contract is
 *minimum surface area* — every helper added is a forever
 commitment, and Perry's internals (string layout, NaN-boxing tags,

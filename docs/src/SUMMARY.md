@@ -20,8 +20,10 @@
 # npm Packages
 
 - [Porting Packages (experimental)](packages/porting.md)
-- [Writing Native Bindings (perry-ffi)](native-libraries/abi.md)
-- [Native Library Manifest (spec v1)](native-libraries/manifest-v1.md)
+- [Native Bindings — Overview](native-libraries/overview.md)
+  - [Authoring a Native Binding](native-libraries/authoring-guide.md)
+  - [`perry-ffi` ABI Reference](native-libraries/abi.md)
+  - [Manifest Schema (spec v1)](native-libraries/manifest-v1.md)
 
 # Multi-Threading
 

@@ -1,5 +1,10 @@
 # `perry.nativeLibrary` manifest — spec v1
 
+> **New here?** Start with [Native Bindings — Overview](overview.md)
+> for the architectural picture and the
+> [Authoring Guide](authoring-guide.md) for a step-by-step that uses
+> this manifest. This page is reference-grade detail.
+
 This page is the authoritative spec for the `perry.nativeLibrary`
 field a native-bindings package declares in its `package.json`. The
 Perry compiler reads this manifest at resolve time and uses it to:
