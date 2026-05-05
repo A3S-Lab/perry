@@ -35,13 +35,29 @@ struct Cli {
     #[arg(long, global = true)]
     no_color: bool,
 
-    /// Emit the structured manifest of supported stdlib APIs as JSON
-    /// and exit. The same source-of-truth that the unimplemented-API
-    /// check (#463) consults. Documentation generators (#465) and
-    /// editor `.d.ts` emit feed off this output. No subcommand is
-    /// required — `perry --print-api-manifest` works on its own.
-    #[arg(long, global = true)]
-    print_api_manifest: bool,
+    /// Emit the structured manifest of supported stdlib APIs and exit.
+    /// The same source-of-truth that the unimplemented-API check (#463)
+    /// consults. Three formats:
+    /// - `json` (default): structured machine-readable manifest;
+    /// - `markdown`: Markdown reference page for docs (#465);
+    /// - `dts`: TypeScript declaration file for editor squiggles.
+    /// No subcommand is required — `perry --print-api-manifest` and
+    /// `perry --print-api-manifest=markdown` both work on their own.
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        num_args = 0..=1,
+        default_missing_value = "json"
+    )]
+    print_api_manifest: Option<ApiManifestFormat>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum ApiManifestFormat {
+    Json,
+    Markdown,
+    Dts,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -198,17 +214,30 @@ fn main_inner() -> Result<()> {
     // Determine if colors should be used
     let use_color = !cli.no_color && !cli.quiet && std::io::stdout().is_terminal();
 
-    // `--print-api-manifest` short-circuits before any subcommand
-    // dispatch — emits the structured manifest as JSON and exits 0.
-    // Drives docs / .d.ts generation (#465) and lets editor tooling
-    // discover the supported surface without reading Rust source.
-    if cli.print_api_manifest {
-        let entries: Vec<_> = perry_api_manifest::iter_entries().collect();
-        let payload = serde_json::json!({
-            "version": env!("CARGO_PKG_VERSION"),
-            "entries": entries,
-        });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+    // `--print-api-manifest[=<format>]` short-circuits before any
+    // subcommand dispatch — emits the manifest in the requested format
+    // and exits 0. Drives docs / .d.ts generation (#465) and lets
+    // editor tooling discover the supported surface without reading
+    // Rust source. Default format is JSON to preserve compatibility
+    // with the bare-flag form added in v0.5.528.
+    if let Some(format) = cli.print_api_manifest {
+        let version = env!("CARGO_PKG_VERSION");
+        match format {
+            ApiManifestFormat::Json => {
+                let entries: Vec<_> = perry_api_manifest::iter_entries().collect();
+                let payload = serde_json::json!({
+                    "version": version,
+                    "entries": entries,
+                });
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+            ApiManifestFormat::Markdown => {
+                print!("{}", perry_api_manifest::emit_markdown(version));
+            }
+            ApiManifestFormat::Dts => {
+                print!("{}", perry_api_manifest::emit_dts(version));
+            }
+        }
         return Ok(());
     }
 

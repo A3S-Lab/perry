@@ -17,8 +17,10 @@
 
 #![deny(missing_docs)]
 
+mod emit;
 mod entries;
 
+pub use emit::{emit_dts, emit_markdown};
 pub use entries::{API_MANIFEST, NATIVE_MODULES, RUNTIME_ONLY_MODULES};
 
 /// One entry in the manifest. Identifies a single named symbol on a

@@ -70,6 +70,7 @@
 - [Cryptography](stdlib/crypto.md)
 - [Utilities](stdlib/utilities.md)
 - [Other Modules](stdlib/other.md)
+- [API Reference (auto-generated)](api/reference.md)
 
 # Internationalization
 
