@@ -141,3 +141,8 @@ tracking = "#466"
 crate = "perry-ext-cheerio"
 lib = "perry_ext_cheerio"
 tracking = "#466"
+
+[bindings.sharp]
+crate = "perry-ext-sharp"
+lib = "perry_ext_sharp"
+tracking = "#466"

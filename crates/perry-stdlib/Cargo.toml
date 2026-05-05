@@ -105,8 +105,11 @@ compression = ["dep:flate2"]
 # Email (nodemailer)
 email = ["dep:lettre", "async-runtime"]
 
-# Image processing (sharp)
-image = ["dep:image"]
+# Image processing (sharp) — `image` umbrella stays for
+# backwards-compat; v0.5.551's well-known flip toggles
+# `bundled-sharp` instead.
+image = ["bundled-sharp"]
+bundled-sharp = ["dep:image"]
 
 # HTML parsing (cheerio) — `html-parser` umbrella stays for
 # backwards-compat; v0.5.550's well-known flip toggles

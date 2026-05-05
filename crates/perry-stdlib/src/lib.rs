@@ -227,9 +227,9 @@ pub mod nodemailer;
 pub use nodemailer::*;
 
 // === Image Processing ===
-#[cfg(feature = "image")]
+#[cfg(feature = "bundled-sharp")]
 pub mod sharp;
-#[cfg(feature = "image")]
+#[cfg(feature = "bundled-sharp")]
 pub use sharp::*;
 
 // === HTML Parsing ===

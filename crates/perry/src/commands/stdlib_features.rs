@@ -81,7 +81,10 @@ pub fn module_to_features(module: &str) -> &'static [&'static str] {
         "nodemailer" => &["email"],
 
         // ── Image processing (sharp) ──────────────────────────────────
-        "sharp" => &["image"],
+        // `image` umbrella retained for backwards-compat;
+        // per-binding gate is `bundled-sharp` (v0.5.551) so the
+        // well-known flip can route to perry-ext-sharp.
+        "sharp" => &["bundled-sharp"],
 
         // ── HTML parsing (cheerio / scraper) ──────────────────────────
         // `html-parser` umbrella retained for backwards-compat;
