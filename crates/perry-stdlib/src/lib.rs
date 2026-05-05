@@ -226,7 +226,6 @@ pub mod validator;
 pub use validator::*;
 
 // === IDs ===
-#[cfg(feature = "ids")]
 // `bundled-uuid` / `bundled-nanoid` (v0.5.534) replace the old
 // `ids` umbrella so the well-known flip (#466 Phase 4) can toggle
 // each binding independently. The umbrella stays as
