@@ -3,11 +3,10 @@
 //! Uses raw C FFI to libpulse-simple. Link with: -lpulse-simple -lpulse
 //! Falls back gracefully if PulseAudio is not available.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
-use std::vec::Vec;
 use std::fs::File;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 
 // =============================================================================
 // Shared atomic state
@@ -24,9 +23,8 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 
 // Recording state
 static RECORDING: AtomicBool = AtomicBool::new(false);
-static mut RECORDED_SAMPLES: Vec<f32> = Vec::new();
-static mut OUTPUT_FILENAME: [u8; 256] = [0; 256];
-static OUTPUT_FILENAME_SET: AtomicBool = AtomicBool::new(false);
+static RECORDED_SAMPLES: Mutex<Vec<f32>> = Mutex::new(Vec::new());
+static OUTPUT_FILENAME: Mutex<String> = Mutex::new(String::new());
 const SAMPLE_RATE: u32 = 48000;
 
 // =============================================================================
@@ -203,38 +201,35 @@ extern "C" {
 }
 
 pub fn set_output_filename(filename: &str) {
-    unsafe {
-        let bytes = filename.as_bytes();
-        let len = bytes.len().min(255);
-        OUTPUT_FILENAME[..len].copy_from_slice(&bytes[..len]);
-        OUTPUT_FILENAME[len] = 0;
-    }
-    OUTPUT_FILENAME_SET.store(true, Ordering::Relaxed);
+    let mut slot = OUTPUT_FILENAME.lock().unwrap();
+    slot.clear();
+    slot.push_str(filename);
 }
 
 pub fn start_recording() {
+    RECORDED_SAMPLES.lock().unwrap().clear();
     RECORDING.store(true, Ordering::Relaxed);
-    unsafe {
-        RECORDED_SAMPLES.clear();
-    }
 }
 
 pub fn stop_recording() {
     RECORDING.store(false, Ordering::Relaxed);
 
-    if OUTPUT_FILENAME_SET.load(Ordering::Relaxed) {
-        let samples = unsafe { RECORDED_SAMPLES.clone() };
-        if !samples.is_empty() {
-            let filename = unsafe {
-                std::str::from_utf8_unchecked(&OUTPUT_FILENAME)
-                    .trim_matches('\0')
-            };
-            if let Ok(mut file) = File::create(filename) {
-                let _ = write_wav_header(&mut file, samples.len() as u32);
-                let _ = write_wav_samples(&mut file, &samples);
-            }
+    let filename = {
+        let mut slot = OUTPUT_FILENAME.lock().unwrap();
+        if slot.is_empty() {
+            return;
         }
-        OUTPUT_FILENAME_SET.store(false, Ordering::Relaxed);
+        std::mem::take(&mut *slot)
+    };
+
+    let samples = std::mem::take(&mut *RECORDED_SAMPLES.lock().unwrap());
+    if samples.is_empty() {
+        return;
+    }
+
+    if let Ok(mut file) = File::create(&filename) {
+        let _ = write_wav_header(&mut file, samples.len() as u32);
+        let _ = write_wav_samples(&mut file, &samples);
     }
 }
 
@@ -243,7 +238,7 @@ pub fn start() -> i64 {
         return 1;
     }
 
-    if OUTPUT_FILENAME_SET.load(Ordering::Relaxed) {
+    if !OUTPUT_FILENAME.lock().unwrap().is_empty() {
         start_recording();
     }
 
@@ -278,9 +273,15 @@ pub fn start() -> i64 {
         };
 
         if pa.is_null() {
+            eprintln!("[audio] Failed to open PulseAudio stream (error {})", error);
             RUNNING.store(false, Ordering::Relaxed);
             return;
         }
+
+        eprintln!(
+            "[audio] PulseAudio capture started ({}Hz mono)",
+            sample_rate
+        );
 
         let mut filter_state = AWeightState::new();
         let mut ema_db: f64 = 0.0;
@@ -298,6 +299,7 @@ pub fn start() -> i64 {
             };
 
             if ret < 0 {
+                eprintln!("[audio] PulseAudio read error: {}", err);
                 break;
             }
 
@@ -306,9 +308,7 @@ pub fn start() -> i64 {
 
             // Record samples if recording is enabled
             if RECORDING.load(Ordering::Relaxed) {
-                unsafe {
-                    RECORDED_SAMPLES.extend_from_slice(&buf);
-                }
+                RECORDED_SAMPLES.lock().unwrap().extend_from_slice(&buf);
             }
 
             let mut sum_sq = 0.0f64;
@@ -331,7 +331,7 @@ pub fn start() -> i64 {
                 0.0
             };
             let db_clamped = db_raw.max(0.0).min(140.0);
-  
+
             let dt = n as f64 / sample_rate as f64;
             let tau = 0.125;
             let alpha = 1.0 - (-dt / tau).exp();
@@ -350,6 +350,7 @@ pub fn start() -> i64 {
         unsafe {
             pa_simple_free(pa);
         }
+        eprintln!("[audio] PulseAudio capture stopped");
     });
 
     1
