@@ -2171,16 +2171,22 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let blk = ctx.block();
             let idx_bits = blk.bitcast_double_to_i64(&idx_box);
             let top16 = blk.lshr(I64, &idx_bits, "48");
-            let is_str_tag = blk.icmp_eq(I64, &top16, "32767");
+            // STRING_TAG (0x7FFF = 32767): heap StringHeader pointer.
+            let is_str_tag_heap = blk.icmp_eq(I64, &top16, "32767");
             let lower48 = blk.and(I64, &idx_bits, POINTER_MASK_I64);
             let is_valid_ptr = blk.icmp_ugt(I64, &lower48, "4095");
-            let is_str = blk.and(crate::types::I1, &is_str_tag, &is_valid_ptr);
+            let is_str_heap = blk.and(crate::types::I1, &is_str_tag_heap, &is_valid_ptr);
+            // SHORT_STRING_TAG (0x7FF9 = 32761): inline SSO from JSON.parse,
+            // .slice, etc. Lower 48 encode length+bytes, NOT a pointer, so we
+            // can't AND-mask to a StringHeader; route through unbox_str_handle
+            // which materializes SSO to a heap StringHeader (issue #434).
+            let is_str_tag_sso = blk.icmp_eq(I64, &top16, "32761");
+            let is_str = blk.or(crate::types::I1, &is_str_heap, &is_str_tag_sso);
             ctx.block().cond_br(&is_str, &str_lbl, &num_lbl);
             // String key → object field access.
             ctx.current_block = str_idx;
             let blk = ctx.block();
-            let idx_bits2 = blk.bitcast_double_to_i64(&idx_box);
-            let key_handle = blk.and(I64, &idx_bits2, POINTER_MASK_I64);
+            let key_handle = unbox_str_handle(blk, &idx_box);
             let v_str = blk.call(
                 DOUBLE,
                 "js_object_get_field_by_name_f64",
@@ -2766,16 +2772,19 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let blk = ctx.block();
             let idx_bits = blk.bitcast_double_to_i64(&idx_box);
             let top16 = blk.lshr(I64, &idx_bits, "48");
-            let is_str_tag = blk.icmp_eq(I64, &top16, "32767");
+            // STRING_TAG (0x7FFF) heap pointer + SHORT_STRING_TAG (0x7FF9) SSO.
+            // See IndexGet path comment / issue #434 for the SSO rationale.
+            let is_str_tag_heap = blk.icmp_eq(I64, &top16, "32767");
             let lower48 = blk.and(I64, &idx_bits, POINTER_MASK_I64);
             let is_valid_ptr = blk.icmp_ugt(I64, &lower48, "4095");
-            let is_str = blk.and(crate::types::I1, &is_str_tag, &is_valid_ptr);
+            let is_str_heap = blk.and(crate::types::I1, &is_str_tag_heap, &is_valid_ptr);
+            let is_str_tag_sso = blk.icmp_eq(I64, &top16, "32761");
+            let is_str = blk.or(crate::types::I1, &is_str_heap, &is_str_tag_sso);
             ctx.block().cond_br(&is_str, &str_lbl, &num_lbl);
             // String key → object field set.
             ctx.current_block = str_set;
             let blk = ctx.block();
-            let idx_bits2 = blk.bitcast_double_to_i64(&idx_box);
-            let key_handle = blk.and(I64, &idx_bits2, POINTER_MASK_I64);
+            let key_handle = unbox_str_handle(blk, &idx_box);
             ctx.block().call_void(
                 "js_object_set_field_by_name",
                 &[

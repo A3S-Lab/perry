@@ -80,13 +80,23 @@ impl PartialEq for NumericKey {
 impl Eq for NumericKey {}
 
 /// `true` if `bits` is a non-pointer JSValue (number, bool, undefined,
-/// null, INT32, SSO, or any NaN-tagged value that is NOT a heap pointer).
+/// null, INT32, or any NaN-tagged value that is NOT a string/heap pointer).
 /// We index only these in the side-table.
 #[inline]
 fn is_safe_numeric_key(bits: u64) -> bool {
     let upper = bits >> 48;
     // STRING_TAG (0x7FFF), POINTER_TAG (0x7FFD), BIGINT_TAG (0x7FFE) are pointers.
     if upper == 0x7FFF || upper == 0x7FFD || upper == 0x7FFE {
+        return false;
+    }
+    // SHORT_STRING_TAG (0x7FF9) inline SSO strings need content-based
+    // comparison against heap STRING_TAG keys (issue #434). Routing them
+    // through the bits-keyed side-table would mask cross-representation
+    // matches: a Map populated with heap-string keys has no side-table
+    // slot, so an SSO lookup would short-circuit to -1 and skip the
+    // linear-scan fallback that calls `jsvalue_eq`. Force SSO keys onto
+    // the linear path so content equality kicks in.
+    if upper == (crate::value::SHORT_STRING_TAG >> 48) {
         return false;
     }
     // Raw pointer (0x0000) with a plausible heap address is also a pointer.
@@ -245,6 +255,8 @@ unsafe fn strings_equal(a: *const StringHeader, b: *const StringHeader) -> bool 
 
 /// Extract a string pointer from a value that might be NaN-boxed with various tags.
 /// Returns the raw pointer if the value looks like it contains a string pointer, or null otherwise.
+/// Does NOT handle SHORT_STRING_TAG (SSO) — those don't carry a heap pointer;
+/// use `string_view_from_bits` for representation-agnostic content access.
 fn extract_string_ptr_from_value(bits: u64) -> *const StringHeader {
     let upper = bits >> 48;
     match upper {
@@ -263,14 +275,51 @@ fn extract_string_ptr_from_value(bits: u64) -> *const StringHeader {
     }
 }
 
-/// Check if a value looks like it contains a string/pointer (STRING_TAG, POINTER_TAG, or raw pointer)
+/// Return a `(ptr, byte_len)` view for any string-like JSValue.
+/// Heap pointers point into the `StringHeader`'s inline data; SSO values
+/// decode into `scratch`. Returns `None` for non-string values.
+///
+/// Issue #434: pre-fix, jsvalue_eq only handled heap-pointer string
+/// representations, so `Map.get(JSON.parse('"hello"'))` missed the
+/// `"hello"` key stored as STRING_TAG.
+fn string_view_from_bits<'a>(
+    bits: u64,
+    scratch: &'a mut [u8; crate::value::SHORT_STRING_MAX_LEN],
+) -> Option<(*const u8, u32)> {
+    let upper = bits >> 48;
+    if upper == (crate::value::SHORT_STRING_TAG >> 48) {
+        let len = ((bits & crate::value::SHORT_STRING_LEN_MASK)
+            >> crate::value::SHORT_STRING_LEN_SHIFT) as usize;
+        let data = bits & crate::value::SHORT_STRING_DATA_MASK;
+        for (i, slot) in scratch.iter_mut().enumerate().take(len) {
+            *slot = ((data >> (i * 8)) & 0xFF) as u8;
+        }
+        return Some((scratch.as_ptr(), len as u32));
+    }
+    let ptr = extract_string_ptr_from_value(bits);
+    if ptr.is_null() || (ptr as usize) < 0x1000 {
+        return None;
+    }
+    unsafe {
+        let len = (*ptr).byte_len;
+        let data = (ptr as *const u8).add(std::mem::size_of::<StringHeader>());
+        Some((data, len))
+    }
+}
+
+/// Check if a value looks like it contains a string (heap STRING_TAG / POINTER_TAG
+/// / raw pointer / inline SHORT_STRING_TAG SSO).
 fn is_string_like(bits: u64) -> bool {
+    let upper = bits >> 48;
+    if upper == (crate::value::SHORT_STRING_TAG >> 48) {
+        return true;
+    }
     !extract_string_ptr_from_value(bits).is_null()
 }
 
 /// Check if two JSValues are equal (for map key comparison)
-/// This handles NaN-boxed values with STRING_TAG (0x7FFF), POINTER_TAG (0x7FFD),
-/// raw pointers (0x0000), and cross-tag combinations (e.g., STRING_TAG vs POINTER_TAG).
+/// Handles STRING_TAG (0x7FFF), POINTER_TAG (0x7FFD), SHORT_STRING_TAG (0x7FF9 SSO),
+/// raw pointers (0x0000), and cross-tag combinations (e.g., STRING_TAG vs SHORT_STRING_TAG).
 fn jsvalue_eq(a: f64, b: f64) -> bool {
     let a_bits = a.to_bits();
     let b_bits = b.to_bits();
@@ -280,16 +329,25 @@ fn jsvalue_eq(a: f64, b: f64) -> bool {
         return true;
     }
 
-    // If both values look like they contain string pointers (any tag combination),
-    // compare by content. This handles:
-    // - STRING_TAG (0x7FFF) vs STRING_TAG (0x7FFF)
-    // - STRING_TAG (0x7FFF) vs POINTER_TAG (0x7FFD)
-    // - POINTER_TAG (0x7FFD) vs POINTER_TAG (0x7FFD)
-    // - Raw pointer (0x0000) vs any of the above
     if is_string_like(a_bits) && is_string_like(b_bits) {
-        let ptr_a = extract_string_ptr_from_value(a_bits);
-        let ptr_b = extract_string_ptr_from_value(b_bits);
-        return unsafe { strings_equal(ptr_a, ptr_b) };
+        let mut a_scratch = [0u8; crate::value::SHORT_STRING_MAX_LEN];
+        let mut b_scratch = [0u8; crate::value::SHORT_STRING_MAX_LEN];
+        if let (Some((a_ptr, a_len)), Some((b_ptr, b_len))) = (
+            string_view_from_bits(a_bits, &mut a_scratch),
+            string_view_from_bits(b_bits, &mut b_scratch),
+        ) {
+            if a_len != b_len {
+                return false;
+            }
+            if a_len == 0 {
+                return true;
+            }
+            unsafe {
+                let a_slice = std::slice::from_raw_parts(a_ptr, a_len as usize);
+                let b_slice = std::slice::from_raw_parts(b_ptr, b_len as usize);
+                return a_slice == b_slice;
+            }
+        }
     }
 
     false
