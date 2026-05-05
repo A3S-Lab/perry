@@ -50,6 +50,7 @@ pub const NATIVE_MODULES: &[&str] = &[
     "mongodb",
     "better-sqlite3",
     "tursodb",
+    "iroh",
     "node-cron",
     "nodemailer",
     "http",
@@ -271,6 +272,11 @@ pub static API_MANIFEST: &[ApiEntry] = &[
     method("tursodb", "close", true, None),
     method("tursodb", "lastInsertRowid", true, None),
     method("tursodb", "isAutocommit", true, None),
+    // iroh (#425). MVP surface — bind / nodeId / close. Full
+    // peer connection / stream API is a followup.
+    method("iroh", "bind", false, None),
+    method("iroh", "nodeId", true, None),
+    method("iroh", "close", true, None),
     method("ws", "Server", false, None),
     method("ws", "WebSocket", false, None),
     method("ws", "on", true, None),

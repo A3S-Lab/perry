@@ -96,3 +96,8 @@ tracking = "#466"
 crate = "perry-ext-tursodb"
 lib = "perry_ext_tursodb"
 tracking = "#424"
+
+[bindings.iroh]
+crate = "perry-ext-iroh"
+lib = "perry_ext_iroh"
+tracking = "#425"

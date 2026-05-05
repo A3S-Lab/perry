@@ -47,6 +47,8 @@ pub fn module_to_features(module: &str) -> &'static [&'static str] {
         // No features to enable; the well-known table picks up
         // tursodb-by-module-name alone and links the ext .a.
         "tursodb" => &[],
+        // iroh (#425): same well-known-only path as tursodb.
+        "iroh" => &[],
         // Redis is detected via the ioredis class name in collect_modules,
         // but if it shows up as an explicit import we still need the feature.
         "ioredis" | "redis" => &["database-redis"],
