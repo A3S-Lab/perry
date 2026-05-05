@@ -263,12 +263,16 @@ pub static API_MANIFEST: &[ApiEntry] = &[
     method("better-sqlite3", "all", true, None),
     method("better-sqlite3", "exec", true, None),
     method("better-sqlite3", "close", true, None),
-    // tursodb (#424). MVP surface — open / exec / execBatch /
-    // close / lastInsertRowid / isAutocommit. prepare / run /
-    // get / all are followups.
+    // tursodb (#424). open / exec / execBatch / close /
+    // lastInsertRowid / isAutocommit shipped in v0.5.543; queryAll /
+    // queryOne shipped in v0.5.553 (close the row-as-object gap by
+    // building shapes inside spawn_blocking and resolving with
+    // POINTER_TAG'd JsValues).
     method("tursodb", "open", false, None),
     method("tursodb", "exec", true, None),
     method("tursodb", "execBatch", true, None),
+    method("tursodb", "queryAll", true, None),
+    method("tursodb", "queryOne", true, None),
     method("tursodb", "close", true, None),
     method("tursodb", "lastInsertRowid", true, None),
     method("tursodb", "isAutocommit", true, None),
