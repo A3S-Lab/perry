@@ -149,22 +149,23 @@ pub mod net;
 pub use net::*;
 
 // === Databases ===
-// pg lives behind `bundled-pg` (v0.5.566) so the well-known flip
-// can route `import 'pg'` to perry-ext-pg. mysql2 still pulls pg
-// in for now (shared sqlx — the path module names overlap); the
-// `database-mysql` arm preserves backwards-compat.
-#[cfg(any(feature = "bundled-pg", feature = "database-mysql"))]
+// pg lives behind `bundled-pg` (v0.5.566); mysql2 lives behind
+// `bundled-mysql2` (v0.5.567). Either feature pulls in sqlx, so
+// the modules' `#[cfg(any(...))]` covers both bundled gates plus
+// the legacy `database-postgres`/`database-mysql` umbrellas (kept
+// for backwards-compat).
+#[cfg(any(feature = "bundled-pg", feature = "bundled-mysql2"))]
 pub mod pg;
-#[cfg(any(feature = "bundled-pg", feature = "database-mysql"))]
+#[cfg(any(feature = "bundled-pg", feature = "bundled-mysql2"))]
 pub use pg::connection::*;
-#[cfg(any(feature = "bundled-pg", feature = "database-mysql"))]
+#[cfg(any(feature = "bundled-pg", feature = "bundled-mysql2"))]
 pub use pg::pool::*;
 
-#[cfg(any(feature = "bundled-pg", feature = "database-mysql"))]
+#[cfg(any(feature = "bundled-pg", feature = "bundled-mysql2"))]
 pub mod mysql2;
-#[cfg(any(feature = "bundled-pg", feature = "database-mysql"))]
+#[cfg(any(feature = "bundled-pg", feature = "bundled-mysql2"))]
 pub use mysql2::connection::*;
-#[cfg(any(feature = "bundled-pg", feature = "database-mysql"))]
+#[cfg(any(feature = "bundled-pg", feature = "bundled-mysql2"))]
 pub use mysql2::pool::*;
 
 #[cfg(feature = "database-sqlite")]

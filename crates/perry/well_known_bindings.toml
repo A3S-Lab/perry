@@ -189,6 +189,16 @@ crate = "perry-ext-pg"
 lib = "perry_ext_pg"
 tracking = "#466"
 
+[bindings.mysql2]
+crate = "perry-ext-mysql2"
+lib = "perry_ext_mysql2"
+tracking = "#466"
+
+[bindings."mysql2/promise"]
+crate = "perry-ext-mysql2"
+lib = "perry_ext_mysql2"
+tracking = "#466"
+
 [bindings.nodemailer]
 crate = "perry-ext-nodemailer"
 lib = "perry_ext_nodemailer"
