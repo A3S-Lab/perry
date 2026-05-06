@@ -6422,6 +6422,71 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 }
             }
 
+            // Method-call shape `recv.method(...args)` on an any-typed receiver
+            // (refs #421, hono blocker): without this arm, the closure-callee
+            // path below evaluates `recv.method` via `js_object_get_field_by_name`
+            // which returns undefined for class-prototype methods on dynamically
+            // typed receivers, and `js_closure_call_apply_with_spread` then
+            // silently no-ops. SmartRouter.match's inner `router.add(...routes[i])`
+            // hit exactly this — the inner router never received the route
+            // entries, so match returned empty `[[],[]]` even though the outer
+            // SmartRouter had the routes in #routes. Bundle every arg (regular
+            // + spread) into a single JS array, then dispatch through the new
+            // `js_native_call_method_apply` runtime helper which materialises
+            // the array into a temp buffer and forwards to `js_native_call_method`.
+            //
+            // Skip the same callee shapes the regular-Call path skips: GlobalGet
+            // (e.g. `console.log` — handled by the spread-bundling arm above),
+            // NativeModuleRef (dedicated codegen elsewhere), and ExternFuncRef
+            // (the previous `FuncRef` arm catches the FuncRef case; ExternFuncRef
+            // here means a top-level imported function reference, not a method).
+            if let Expr::PropertyGet { object, property } = callee.as_ref() {
+                let skip = matches!(
+                    object.as_ref(),
+                    Expr::GlobalGet(_) | Expr::NativeModuleRef(_) | Expr::ExternFuncRef { .. }
+                );
+                if !skip {
+                    let recv_box = lower_expr(ctx, object)?;
+                    // Build a single JS array containing every arg in order.
+                    let mut acc_handle = ctx.block().call(I64, "js_array_alloc", &[(I32, "0")]);
+                    for a in args {
+                        match a {
+                            CallArg::Expr(e) => {
+                                let v = lower_expr(ctx, e)?;
+                                acc_handle = ctx.block().call(
+                                    I64,
+                                    "js_array_push_f64",
+                                    &[(I64, &acc_handle), (DOUBLE, &v)],
+                                );
+                            }
+                            CallArg::Spread(e) => {
+                                let part_box = lower_expr(ctx, e)?;
+                                let part_handle = unbox_to_i64(ctx.block(), &part_box);
+                                acc_handle = ctx.block().call(
+                                    I64,
+                                    "js_array_concat",
+                                    &[(I64, &acc_handle), (I64, &part_handle)],
+                                );
+                            }
+                        }
+                    }
+                    let key_idx = ctx.strings.intern(property);
+                    let entry = ctx.strings.entry(key_idx);
+                    let bytes_global = format!("@{}", entry.bytes_global);
+                    let name_len_str = entry.byte_len.to_string();
+                    return Ok(ctx.block().call(
+                        DOUBLE,
+                        "js_native_call_method_apply",
+                        &[
+                            (DOUBLE, &recv_box),
+                            (PTR, &bytes_global),
+                            (I64, &name_len_str),
+                            (I64, &acc_handle),
+                        ],
+                    ));
+                }
+            }
+
             // Closure callee path: `cb(reg0, reg1, ..., ...spread)` where
             // `cb` is a closure value (not a known FuncRef). We lower the
             // callee to its NaN-boxed value, marshal regular args into a

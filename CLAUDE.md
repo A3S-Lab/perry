@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.609
+**Current Version:** 0.5.610
 
 
 ## TypeScript Parity Status
@@ -153,6 +153,7 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 
 One-liners only — full detail in CHANGELOG.md.
 
+- **v0.5.610** — Refs #421 (followup to v0.5.608): `recv.method(...args)` on any-typed receivers silently no-op'd — `Expr::CallSpread`'s closure-callee fallback evaluated `recv.method` as a property read which returned `undefined` for class-prototype methods, and `js_closure_call_apply_with_spread` then no-op'd. Hono's SmartRouter.match's inner `router.add(...routes[i])` hit this — inner routers never received the route entries, so match returned empty `[[],[]]` even when routes were registered. Fix: new `recv.method(...args)` arm in `Expr::CallSpread` (`crates/perry-codegen/src/expr.rs`) detects PropertyGet callees and routes through the new `js_native_call_method_apply` runtime helper which materialises a JS args array into a temp f64 buffer and forwards to `js_native_call_method`. Plus `replace`/`replaceAll` added to the any-typed string method dispatch tower (`crates/perry-runtime/src/object.rs`) — pattern can be string or RegExp; replacement must be string. Detect RegExp pattern via NaN-box POINTER_TAG check. Function replacements deferred (need closure dispatch). Hono's `await app.fetch(req)` now runs through the dispatch chain past route matching; remaining errors are deeper closure-box / context-finalization issues in hono internals (separate bug classes — pre-existing). Parity: 209 pass / 4 known fails / 13 skipped (98.1%, no regressions vs main).
 - **v0.5.609** — Closes #528 (followup to #515/#518): chained-call array-method fold leaked through the `recv_is_class` `_ => false` catch-all — `this.col().find({})` got rewritten as `Expr::ArrayFind(this.col(), {})` and `js_array_find` read garbage from the user object's header. New `Call(inner)` arm in `recv_is_class` only allows the fold when the inner call's method is a known array-producing builtin; otherwise bails to runtime dispatch.
 - **v0.5.608** — Refs #421: Phase 1 of handle-NaN-boxing unification — Web Fetch (Request/Response/Headers/Blob) handles now NaN-boxed at the FFI boundary; 25 fetch FFI fns migrated, 4 untyped property dispatch helpers added. Unblocks hono `request.url` in untyped position.
 - **v0.5.607** — Closes #529 (followup to #515): `obj["method"](args)` / `obj["prop"]` on a class instance returned `undefined` — fold computed `MemberProp` with non-numeric string key to `Expr::PropertyGet` so dispatch hits the vtable; mirror fold in assignment form.

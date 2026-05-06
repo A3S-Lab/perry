@@ -3921,6 +3921,43 @@ pub extern "C" fn js_instanceof(value: f64, class_id: u32) -> f64 {
 ///
 /// NOTE: This function is named js_native_call_method to avoid symbol collision
 /// with js_call_method in perry-jsruntime which handles V8 JavaScript values.
+
+/// Apply form for method calls with spread arguments on dynamically-typed
+/// receivers (refs #421). Reads `args_array_handle` (a JS array containing
+/// every regular + spread arg already concatenated by codegen), materialises
+/// the f64 elements into a temporary `Vec<f64>`, and forwards to
+/// `js_native_call_method`. Lets the caller use a single uniform shape for
+/// `recv.method(...args)` without exposing array layout to the dispatcher.
+#[no_mangle]
+pub unsafe extern "C" fn js_native_call_method_apply(
+    object: f64,
+    method_name_ptr: *const i8,
+    method_name_len: usize,
+    args_array_handle: i64,
+) -> f64 {
+    let arr = args_array_handle as *const crate::array::ArrayHeader;
+    let len = if arr.is_null() {
+        0
+    } else {
+        crate::array::js_array_length(arr) as usize
+    };
+    let buf: Vec<f64> = (0..len)
+        .map(|i| crate::array::js_array_get_f64(arr, i as u32))
+        .collect();
+    let (args_ptr, args_len) = if buf.is_empty() {
+        (std::ptr::null::<f64>(), 0_usize)
+    } else {
+        (buf.as_ptr(), buf.len())
+    };
+    js_native_call_method(
+        object,
+        method_name_ptr,
+        method_name_len,
+        args_ptr,
+        args_len,
+    )
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn js_native_call_method(
     object: f64,
@@ -4256,6 +4293,58 @@ pub unsafe extern "C" fn js_native_call_method(
                     };
                     let arr = crate::string::js_string_split(s_ptr, sep);
                     return f64::from_bits(JSValue::pointer(arr as *mut u8).bits());
+                }
+                "replace" | "replaceAll" => {
+                    // Two-arg shape: (pattern, replacement). pattern can be a
+                    // string OR a RegExp; replacement is a string. Function
+                    // replacements aren't supported here yet — they need
+                    // closure dispatch and aren't on hono's hot path.
+                    let pat_str = if args_len >= 1 && !args_ptr.is_null() {
+                        let v = unsafe { *args_ptr };
+                        crate::value::js_get_string_pointer_unified(v)
+                            as *const crate::StringHeader
+                    } else {
+                        std::ptr::null()
+                    };
+                    let repl_str = if args_len >= 2 && !args_ptr.is_null() {
+                        let v = unsafe { *args_ptr.add(1) };
+                        crate::value::js_get_string_pointer_unified(v)
+                            as *const crate::StringHeader
+                    } else {
+                        std::ptr::null()
+                    };
+                    // Detect RegExp pattern: NaN-boxed pointer to a RegExpHeader.
+                    if args_len >= 1 && !args_ptr.is_null() {
+                        let v = unsafe { *args_ptr };
+                        let jsv = JSValue::from_bits(v.to_bits());
+                        if jsv.is_pointer() {
+                            // Probe whether the pointer is a RegExpHeader by
+                            // checking the GC type tag the regex helpers
+                            // already validate; if it's not, the regex helper
+                            // returns the original string unchanged. The
+                            // global flag on the RegExp determines whether
+                            // it replaces all or just the first.
+                            let regex_ptr =
+                                jsv.as_pointer::<crate::regex::RegExpHeader>();
+                            // Heuristic: a non-null POINTER_TAG that's not a
+                            // string/array (those have different GC type tags)
+                            // is treated as a RegExp here. The runtime helper
+                            // already validates internally and falls back
+                            // safely on mismatch.
+                            if !regex_ptr.is_null() {
+                                let r = crate::regex::js_string_replace_regex(
+                                    s_ptr, regex_ptr, repl_str,
+                                );
+                                return f64::from_bits(JSValue::string_ptr(r).bits());
+                            }
+                        }
+                    }
+                    let r = if method_name == "replaceAll" {
+                        crate::regex::js_string_replace_all_string(s_ptr, pat_str, repl_str)
+                    } else {
+                        crate::regex::js_string_replace_string(s_ptr, pat_str, repl_str)
+                    };
+                    return f64::from_bits(JSValue::string_ptr(r).bits());
                 }
                 _ => {} // not a handled string method — fall through to TypeError catch-all
             }

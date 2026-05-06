@@ -956,6 +956,15 @@ pub fn declare_phase_b_strings(module: &mut LlModule) {
         DOUBLE,
         &[DOUBLE, PTR, I64, PTR, I64],
     );
+    // Apply form: takes the args as a JS array handle (i64). The runtime
+    // materialises the array elements into a temp f64 buffer and forwards to
+    // js_native_call_method. Used by `Expr::CallSpread` for the
+    // `recv.method(...args)` shape on any-typed receivers.
+    module.declare_function(
+        "js_native_call_method_apply",
+        DOUBLE,
+        &[DOUBLE, PTR, I64, I64],
+    );
     module.declare_function("js_promise_resolve", VOID, &[I64, DOUBLE]);
     module.declare_function("js_promise_reject", VOID, &[I64, DOUBLE]);
     module.declare_function("js_promise_resolved", I64, &[DOUBLE]);
