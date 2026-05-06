@@ -35,8 +35,9 @@
 use lazy_static::lazy_static;
 use perry_ffi::{
     alloc_string, gc_register_root_scanner, get_handle_mut, iter_handles_of, json_stringify,
-    notify_main_thread, register_handle, spawn_blocking, with_handle_mut, ArrayHeader, Handle,
-    JsClosure, JsString, JsValue, ObjectHeader, RawClosureHeader, StringHeader,
+    notify_main_thread, register_handle, spawn_blocking_with_reactor as spawn_blocking,
+    with_handle_mut, ArrayHeader, Handle, JsClosure, JsString, JsValue, ObjectHeader,
+    RawClosureHeader, StringHeader,
 };
 use std::collections::HashMap;
 use std::sync::{Mutex, Once};

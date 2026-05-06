@@ -29,8 +29,8 @@ use futures_util::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 use perry_ffi::{
     alloc_string, gc_register_root_scanner, get_handle_mut, iter_handles_of, notify_main_thread,
-    register_handle, spawn_blocking, take_handle, Handle, JsClosure, JsString, JsValue,
-    ObjectHeader, RawClosureHeader, StringHeader,
+    register_handle, spawn_blocking_with_reactor as spawn_blocking, take_handle, Handle, JsClosure,
+    JsString, JsValue, ObjectHeader, RawClosureHeader, StringHeader,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};

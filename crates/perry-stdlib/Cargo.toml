@@ -224,7 +224,7 @@ rand = "0.8"  # Required by lodash (core module)
 # === OPTIONAL DEPENDENCIES ===
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros", "io-util"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
 
 # HTTP Server
 hyper = { version = "1.4", features = ["server", "http1", "http2"], optional = true }

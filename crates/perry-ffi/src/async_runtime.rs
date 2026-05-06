@@ -44,6 +44,10 @@ extern "C" {
     fn perry_ffi_promise_resolve_bits(promise: *mut Promise, bits: u64);
     fn perry_ffi_promise_reject_bits(promise: *mut Promise, bits: u64);
     fn perry_ffi_spawn_blocking(ctx: *mut c_void, invoke: extern "C" fn(*mut c_void));
+    fn perry_ffi_spawn_blocking_with_reactor(
+        ctx: *mut c_void,
+        invoke: extern "C" fn(*mut c_void),
+    );
 }
 
 // NaN-box tags. These values are part of perry-runtime's stable
@@ -204,6 +208,47 @@ where
     }
 
     unsafe { perry_ffi_spawn_blocking(ctx, invoke) };
+}
+
+/// Like [`spawn_blocking`] but the dispatched task carries the
+/// runtime's I/O reactor context — required for any closure that
+/// drives `TcpStream` / `TcpListener` / WebSocket / hyper / similar
+/// async I/O via `tokio::runtime::Handle::current().block_on(fut)`
+/// from inside.
+///
+/// **Why two variants:** the plain `spawn_blocking` puts the closure
+/// on a tokio blocking-pool thread. From there, `Handle::current()
+/// .block_on(fut)` spins up a fresh current_thread runtime that
+/// has no I/O reactor — so any async I/O inside the future panics
+/// with "there is no reactor running, must be called from the
+/// context of a Tokio 1.x runtime". Pure-CPU work (bcrypt / argon2
+/// hashing, SQL serialization, JSON parsing) doesn't notice; pure-
+/// async-I/O work (TcpStream::connect, hyper request, WebSocket
+/// handshake) hits this hard.
+///
+/// This variant routes through `RUNTIME.spawn(async {
+/// spawn_blocking(closure).await })` so the blocking task inherits
+/// the runtime's reactor + handle. Use this when your closure does
+/// `Handle::current().block_on(async { ... I/O work ... })`.
+///
+/// Like the plain variant, this detaches — the caller does not
+/// observe completion.
+pub fn spawn_blocking_with_reactor<F>(f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let boxed: Box<dyn FnOnce() + Send> = Box::new(f);
+    let thin: Box<Box<dyn FnOnce() + Send>> = Box::new(boxed);
+    let ctx = Box::into_raw(thin) as *mut c_void;
+
+    extern "C" fn invoke(ctx: *mut c_void) {
+        let thin: Box<Box<dyn FnOnce() + Send>> =
+            unsafe { Box::from_raw(ctx as *mut Box<dyn FnOnce() + Send>) };
+        let f: Box<dyn FnOnce() + Send> = *thin;
+        f();
+    }
+
+    unsafe { perry_ffi_spawn_blocking_with_reactor(ctx, invoke) };
 }
 
 #[cfg(test)]

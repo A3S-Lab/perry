@@ -45,7 +45,9 @@
 #![deny(missing_docs)]
 
 mod async_runtime;
-pub use async_runtime::{nanbox_string_bits, spawn_blocking, JsPromise, Promise};
+pub use async_runtime::{
+    nanbox_string_bits, spawn_blocking, spawn_blocking_with_reactor, JsPromise, Promise,
+};
 
 mod handle;
 pub use handle::{

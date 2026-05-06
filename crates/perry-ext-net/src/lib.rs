@@ -325,14 +325,26 @@ fn spawn_socket_runner<F>(fut_factory: F)
 where
     F: FnOnce() -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + 'static,
 {
-    perry_ffi::spawn_blocking(move || {
-        // SAFETY of `Handle::current`: perry-stdlib's `perry_ffi_spawn_blocking`
-        // shim runs us on a tokio blocking-pool thread, which has the runtime
-        // handle set. If the wrapper is ever called from a non-tokio context
-        // this will panic — same caller contract as axios / better-sqlite3.
+    // Schedule the future onto a tokio runtime worker (which has
+    // the I/O reactor) instead of spawn_blocking + block_on (which
+    // creates a fresh current_thread runtime without I/O reactor).
+    // The v0.5.578 `spawn_blocking_with_reactor` shim runs the
+    // closure inside an `async` block on the multi-thread runtime,
+    // so `tokio::spawn(fut)` from inside picks up the I/O reactor
+    // properly. Detached spawn — we don't wait for the socket task
+    // to complete (that's the whole point: it loops until close).
+    perry_ffi::spawn_blocking_with_reactor(move || {
+        // We're already inside a tokio task (the
+        // spawn_blocking_with_reactor shim wraps us in
+        // `runtime().spawn(async {...})`), so `block_on` would
+        // panic with "cannot start a runtime from within a
+        // runtime". Schedule the socket future as a fresh
+        // detached task on the same multi-thread runtime
+        // instead — the future will drive itself to completion
+        // via `await` chains while we return immediately.
         let handle = tokio::runtime::Handle::current();
         let fut = fut_factory();
-        handle.block_on(fut);
+        handle.spawn(fut);
     });
 }
 

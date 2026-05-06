@@ -90,3 +90,72 @@ pub extern "C" fn perry_ffi_spawn_blocking(
         invoke(ctx_addr as *mut c_void);
     });
 }
+
+/// `perry_ffi_spawn_blocking_with_reactor(ctx, invoke)` — like
+/// `perry_ffi_spawn_blocking` but the wrapped closure is dispatched
+/// through `RUNTIME.spawn(async { spawn_blocking(closure).await })`
+/// instead of straight `RUNTIME.spawn_blocking(closure)`.
+///
+/// **Why both exist:** the plain `spawn_blocking` shim runs the
+/// closure on a tokio blocking-pool thread that does NOT carry the
+/// runtime's I/O reactor context. `tokio::runtime::Handle::current()
+/// .block_on(fut)` from inside the closure spins up a fresh
+/// current_thread runtime to drive the future, and that runtime has
+/// no reactor — so any `TcpStream::connect` / `TcpListener::bind` /
+/// `tokio::time::sleep` inside `fut` panics with "there is no
+/// reactor running, must be called from the context of a Tokio 1.x
+/// runtime".
+///
+/// This shim wraps the call so the blocking task inherits the
+/// runtime context properly (reactor + handle accessible). The
+/// wrapper detaches — the caller should not assume the closure
+/// runs synchronously.
+///
+/// Used by perry-ext-net / perry-ext-ws / perry-ext-http (any
+/// wrapper whose async work is pure I/O — TcpStream / hyper /
+/// tokio-tungstenite). Closes the v0.5.571 net regression batch
+/// (test_issue_422_socket_connect / test_net_min / test_net_socket /
+/// test_net_upgrade_tls / test_sock_write_map all panicked with
+/// "there is no reactor running" without this shim).
+#[no_mangle]
+pub extern "C" fn perry_ffi_spawn_blocking_with_reactor(
+    ctx: *mut c_void,
+    invoke: extern "C" fn(*mut c_void),
+) {
+    let ctx_addr = ctx as usize;
+    // Spawn directly on the multi-thread runtime so the closure
+    // body runs on a worker thread that has full I/O reactor +
+    // handle access. Inside the spawned task, `tokio::spawn(fut)`
+    // and `Handle::current().spawn(fut)` both work for fan-out
+    // I/O work.
+    async_bridge::runtime().spawn(async move {
+        invoke(ctx_addr as *mut c_void);
+    });
+}
+
+/// `perry_ffi_spawn_async(ctx, invoke)` — schedule `invoke(ctx)` to
+/// run on the multi-thread runtime's worker pool. Used by wrappers
+/// whose work is pure async I/O (TcpStream / WebSocket / hyper) and
+/// shouldn't tie up a blocking-pool thread for the whole
+/// connection's lifetime. Closes #421 / regression batch 2 from the
+/// v0.5.571 net + ws + http port.
+///
+/// The trampoline pattern matches `spawn_blocking` — perry-ffi
+/// boxes the user's `Pin<Box<dyn Future>>` into `ctx` and writes a
+/// trampoline that decodes + spawns it.
+///
+/// `invoke` must take ownership of `ctx`.
+#[no_mangle]
+pub extern "C" fn perry_ffi_spawn_async(
+    ctx: *mut c_void,
+    invoke: extern "C" fn(*mut c_void),
+) {
+    let ctx_addr = ctx as usize;
+    async_bridge::runtime().spawn(async move {
+        // The user-supplied trampoline receives the raw `ctx`,
+        // reconstructs the boxed future, and `.await`s it inline.
+        // This block runs on a worker thread with full reactor
+        // access (TcpStream::connect / TLS handshakes / etc.).
+        invoke(ctx_addr as *mut c_void);
+    });
+}

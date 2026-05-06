@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.577
+**Current Version:** 0.5.578
 
 
 ## TypeScript Parity Status
@@ -152,6 +152,12 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 One-liners only — full detail in CHANGELOG.md.
+
+- **v0.5.578** — Refs #421/#420 (net regression fix — tokio features + reactor context): the v0.5.571 perry-ext-net port introduced 5 parity regressions (`test_net_min`, `test_net_socket`, `test_net_upgrade_tls`, `test_issue_422_socket_connect`, `test_sock_write_map`) — all crashed with "there is no reactor running, must be called from the context of a Tokio 1.x runtime" or "Cannot start a runtime from within a runtime". Two cooperating bugs:
+
+  1. **Tokio feature mismatch** — perry-stdlib's `tokio` was declared with the reduced feature set `["rt-multi-thread", "sync", "time", "net", "macros", "io-util"]` while perry-ext-net pulled tokio with `"full"` from the workspace. When `auto-optimize` rebuilds perry-stdlib in a separate target dir (per-program feature set), cargo can't unify them — two distinct tokio compilations end up linked, each with its own thread-local runtime context. perry-stdlib's `runtime().spawn()` ran the closure on its own runtime; perry-ext-net's `tokio::runtime::Handle::current()` looked at perry-ext-net's tokio statics and saw nothing. Fixed by flipping perry-stdlib to `tokio = { features = ["full"] }` so both halves share the same compilation.
+
+  2. **`Handle::block_on` from inside an async task** — once the runtime context unified, `handle.block_on(fut)` panicked with "Cannot start a runtime from within a runtime" because the spawn_blocking_with_reactor shim wraps the closure in `runtime().spawn(async {...})`. Fixed by adding `perry_ffi::spawn_blocking_with_reactor` (companion to `spawn_blocking` — runs the closure inside an async block on the multi-thread runtime so the closure body has full reactor + handle access) plus switching perry-ext-net's `spawn_socket_runner` to use `handle.spawn(fut)` (detach onto the same runtime) instead of `handle.block_on(fut)`. Also flipped perry-ext-ws and perry-ext-http to the new shim. Net binaries now run to completion without crashing — though one observable diff remains in `test_net_min`'s 'connect' event firing (separate, smaller event-pump bug).
 
 - **v0.5.577** — **Closes #482** (refs #421/#420): `class Foo {}` followed by `export { Foo }` in a separate clause was lowered with `is_exported = false` (because the decl wasn't a syntactic `export class Foo {}`). The CLI driver's `exported_classes` lookup (`crates/perry/src/commands/compile.rs:1684`) filters on `class.is_exported`, so the class never reached the importer's `imported_classes` registry — `new Foo()` from another module fell through to the empty-object placeholder, and method calls like `f.add(...)` returned undefined. Hono's `RegExpRouter` / `Trie` / `Node` / `HonoBase` all use this pattern (`var X = class { ... }; export { X };` or `class X {}; export { X };`), so route registration silently no-op'd and `app.fetch()` returned a default Response with no status/body. Fix is one block in `crates/perry-hir/src/lower.rs`'s `ExportNamed` arm: after pushing the export clause, walk `module.classes` for one whose name matches the local and flip its `is_exported = true`. Hand-written class repro (`class Foo { add() {} }; export { Foo };` from a `compilePackages` package) round-trips correctly post-fix; `f.add()` returns the expected value. Hono progresses past route registration but `app.request()` still returns undefined (separate, deeper bug — class-field arrow methods on classes with private fields). Drizzle schema construction also benefits.
 
