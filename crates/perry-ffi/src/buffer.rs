@@ -18,6 +18,21 @@
 
 pub use perry_runtime::buffer::BufferHeader;
 
+extern "C" {
+    /// Runtime's stable extern allocator entry point. Single
+    /// symbol shared across the whole binary — going through
+    /// here (vs. `perry_runtime::buffer::buffer_alloc`) means the
+    /// allocation lands in the SAME thread-local slab + registry
+    /// the dispatch path checks. Without this, wrappers compiled
+    /// into separate rlibs (perry-ext-net, etc.) would each get
+    /// their own monomorphized `buffer_alloc` copy with private
+    /// thread-locals, and the runtime's `is_registered_buffer`
+    /// dispatch would miss buffers allocated by external wrappers
+    /// (small buffers in particular — they live in a per-thread
+    /// slab that the dispatch checks via address-range lookup).
+    fn js_buffer_alloc(size: i32, fill: i32) -> *mut BufferHeader;
+}
+
 /// Allocate a fresh `BufferHeader` from a byte slice. The
 /// runtime arena owns the storage; GC reclaims it when no live
 /// reference remains.
@@ -33,17 +48,22 @@ pub use perry_runtime::buffer::BufferHeader;
 /// JsValue::from_object_ptr(buf).bits()  // promise.resolve(...)
 /// ```
 pub fn alloc_buffer(bytes: &[u8]) -> *mut BufferHeader {
-    let len = bytes.len() as u32;
-    // SAFETY: `buffer_alloc` is the runtime's bump-allocator entry
-    // point. After alloc we set `length` (which capacity reserved
-    // but the runtime doesn't pre-fill) and copy bytes into the
-    // payload region directly past the header.
+    let len = bytes.len() as i32;
+    // SAFETY: `js_buffer_alloc` is the runtime's stable extern
+    // allocator. Going through the extern symbol (not the Rust
+    // function) means small buffers land in the runtime's
+    // per-thread slab that the dispatch path can find via
+    // `is_registered_buffer` — fixes the v0.5.572 regression where
+    // small Buffer payloads from perry-ext-net's `data` events
+    // arrived in user code as `[object Object]` because the
+    // dispatch couldn't tell them apart from raw heap pointers.
     unsafe {
-        let buf = perry_runtime::buffer::buffer_alloc(len);
+        let buf = js_buffer_alloc(len, 0);
         if buf.is_null() {
             return buf;
         }
-        (*buf).length = len;
+        // js_buffer_alloc already sets length=size and fills with
+        // 0; overwrite payload with the actual bytes.
         let dst = (buf as *mut u8).add(std::mem::size_of::<BufferHeader>());
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, len as usize);
         buf

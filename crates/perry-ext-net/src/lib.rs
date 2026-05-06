@@ -344,14 +344,14 @@ where
         // instead — the future will drive itself to completion
         // via `await` chains while we return immediately.
         //
-        // `try_current()` is a black-box defeat for the LTO
-        // pass: a release build without this guard call gets
-        // perry-ext-net's tokio CONTEXT statics dead-stripped,
-        // and the subsequent `Handle::current()` panics with
-        // "there is no reactor running" — even though
-        // perry-stdlib's tokio in fact has the runtime entered.
-        // Reading the result here keeps the static alive.
-        let _check = tokio::runtime::Handle::try_current();
+        // Black-box defeat for the LTO pass: a release build
+        // without this guard call gets perry-ext-net's tokio
+        // CONTEXT statics dead-stripped, and the subsequent
+        // `Handle::current()` panics with "there is no reactor
+        // running" — even though perry-stdlib's tokio has the
+        // runtime entered. Forcing the result through
+        // `std::hint::black_box` keeps the static alive.
+        let _check = std::hint::black_box(tokio::runtime::Handle::try_current());
         let handle = tokio::runtime::Handle::current();
         let fut = fut_factory();
         // Detach via JoinHandle drop — tokio doesn't cancel on drop

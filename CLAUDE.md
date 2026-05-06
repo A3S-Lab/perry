@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.579
+**Current Version:** 0.5.580
 
 
 ## TypeScript Parity Status
@@ -152,6 +152,8 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 One-liners only — full detail in CHANGELOG.md.
+
+- **v0.5.580** — Refs #421/#420 (perry-ffi `alloc_buffer` routes through extern `js_buffer_alloc` symbol): `data` events from perry-ext-net delivered Buffers that arrived in user code as `[object Object]` instead of working as Node Buffers — `buf.toString('utf8')` returned `"[object Object]"`. Root cause: `perry_ffi::alloc_buffer` called `perry_runtime::buffer::buffer_alloc` (a Rust function that gets monomorphized into perry-ext-net's archive). The runtime's small-buffer slab + `BUFFER_REGISTRY` are `thread_local!` statics — perry-ext-net's monomorphized copy had its OWN private slab, separate from the main thread's slab that perry-runtime's `is_registered_buffer` dispatch path checks. Allocations from external wrappers landed in perry-ext-net's slab; the dispatch on the main thread checked the runtime's slab and didn't find them → fell through to generic-object dispatch → toString returned the default `[object Object]`. Fix: `perry_ffi::alloc_buffer` now routes through the stable `extern "C" fn js_buffer_alloc(size, fill)` symbol — single shared entry point in libperry_runtime.a, all wrappers land in the SAME thread-local slab the dispatch checks. Also addressed `Handle::current()` LTO dead-strip via `std::hint::black_box(tokio::runtime::Handle::try_current())` (release-mode LTO without it strips perry-ext-net's tokio CONTEXT statics → spawn closure panics with "no reactor running"). Plus added `"type": "module"` to perry's `package.json` so node's `--experimental-strip-types` doesn't print the MODULE_TYPELESS warning that was diffing parity output. Net parity recovery: 5/5 → 3/5 fail → 2/5 fail (`test_net_min`, `test_net_socket`, `test_issue_422_socket_connect` pass; `test_net_upgrade_tls` needs TLS test server, `test_sock_write_map` hits issue #91 dispatch — Map.get'd socket dispatches through `HANDLE_METHOD_DISPATCH` → perry-ext-net doesn't expose `dispatch_net_socket` symbol yet. Both followups, not blocking).
 
 - **v0.5.579** — Refs #421/#420 (net event-firing fix — pump registration + LTO black-box): the v0.5.578 reactor fix made `test_net_min` not crash but the 'connect' event still didn't fire because (a) perry-stdlib's `js_stdlib_process_pending` was `#[cfg]`-gated off (the v0.5.572 well-known flip stripped `feature = "net"` so the pump-call site disappeared); (b) the spawn-blocking shim wasn't calling `ensure_pump_registered()`, so perry-runtime's `STDLIB_PUMP_FN` stayed null and `js_run_stdlib_pump` was a no-op even when stdlib was linked; (c) release-mode LTO was dead-stripping perry-ext-net's tokio CONTEXT statics, so `Handle::current()` from inside the spawned closure panicked with "no reactor running" even after the perry-stdlib runtime correctly entered the context. Three cooperating fixes:
 
