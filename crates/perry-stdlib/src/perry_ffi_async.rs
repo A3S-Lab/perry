@@ -81,6 +81,14 @@ pub extern "C" fn perry_ffi_spawn_blocking(
     ctx: *mut c_void,
     invoke: extern "C" fn(*mut c_void),
 ) {
+    // v0.5.579: ensure perry-stdlib's pump is registered with the
+    // runtime so events queued by external wrappers (perry-ext-*)
+    // get drained on the main thread. Without this, the runtime's
+    // `js_run_stdlib_pump` sees a null function pointer and never
+    // calls `js_stdlib_process_pending` → tokio events queued by
+    // perry-ext-net / -ws / -http stay forever in their pending
+    // queues and listener callbacks never fire.
+    async_bridge::ensure_pump_registered();
     // SAFETY of the raw `ctx` pointer is the caller's; we only
     // forward it across the spawn boundary to `invoke`. Wrapping
     // pointers in a `usize` lets us cross the closure boundary
@@ -122,6 +130,9 @@ pub extern "C" fn perry_ffi_spawn_blocking_with_reactor(
     ctx: *mut c_void,
     invoke: extern "C" fn(*mut c_void),
 ) {
+    // v0.5.579: see `perry_ffi_spawn_blocking` above for why this
+    // call is mandatory.
+    async_bridge::ensure_pump_registered();
     let ctx_addr = ctx as usize;
     // Spawn directly on the multi-thread runtime so the closure
     // body runs on a worker thread that has full I/O reactor +

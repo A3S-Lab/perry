@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Perry is a native TypeScript compiler written in Rust that compiles TypeScript source code directly to native executables. It uses SWC for TypeScript parsing and LLVM for code generation.
 
-**Current Version:** 0.5.578
+**Current Version:** 0.5.579
 
 
 ## TypeScript Parity Status
@@ -152,6 +152,14 @@ First-resolved directory cached in `compile_package_dirs`; subsequent imports re
 ## Recent Changes
 
 One-liners only — full detail in CHANGELOG.md.
+
+- **v0.5.579** — Refs #421/#420 (net event-firing fix — pump registration + LTO black-box): the v0.5.578 reactor fix made `test_net_min` not crash but the 'connect' event still didn't fire because (a) perry-stdlib's `js_stdlib_process_pending` was `#[cfg]`-gated off (the v0.5.572 well-known flip stripped `feature = "net"` so the pump-call site disappeared); (b) the spawn-blocking shim wasn't calling `ensure_pump_registered()`, so perry-runtime's `STDLIB_PUMP_FN` stayed null and `js_run_stdlib_pump` was a no-op even when stdlib was linked; (c) release-mode LTO was dead-stripping perry-ext-net's tokio CONTEXT statics, so `Handle::current()` from inside the spawned closure panicked with "no reactor running" even after the perry-stdlib runtime correctly entered the context. Three cooperating fixes:
+
+  1. `perry-ffi_spawn_blocking` + `perry_ffi_spawn_blocking_with_reactor` shims now call `async_bridge::ensure_pump_registered()` before scheduling — registers `js_stdlib_process_pending` with perry-runtime's `STDLIB_PUMP_FN` slot so subsequent `js_run_stdlib_pump` invocations actually drain.
+  2. perry-stdlib gains a new `external-net-pump` feature; the cfg gate around the net pump call site (in `js_stdlib_process_pending`) flips from `feature = "net"` to `any(feature = "bundled-net", feature = "external-net-pump")`. `optimized_libs::build_optimized_libs` activates the new feature when the well-known flip strips `bundled-net`. Pump-call site is preserved exactly when perry-ext-net is linked.
+  3. perry-ext-net's `spawn_socket_runner` adds a guard `let _check = tokio::runtime::Handle::try_current();` before `Handle::current()` — keeps the LTO pass from dead-stripping perry-ext-net's tokio CONTEXT statics. Without it, release-mode LTO strips the tokio thread-local definitions and `Handle::current()` panics inside the spawned closure even though perry-stdlib's runtime entered the context. Added a comment explaining the gotcha.
+
+  After fix: `test_net_min` runs to completion with 'connect fired' visible; perry-ext-net's full event-pump pipeline (push_event → notify_main_thread → js_run_stdlib_pump → js_stdlib_process_pending → js_net_process_pending → listener callback) is wired end-to-end. Remaining 4 net parity tests still diff on Buffer-as-object formatting + missing test-fixture servers (separate, smaller issues — not blocking #421's deeper hono dispatch chain that v0.5.577 unblocked).
 
 - **v0.5.578** — Refs #421/#420 (net regression fix — tokio features + reactor context): the v0.5.571 perry-ext-net port introduced 5 parity regressions (`test_net_min`, `test_net_socket`, `test_net_upgrade_tls`, `test_issue_422_socket_connect`, `test_sock_write_map`) — all crashed with "there is no reactor running, must be called from the context of a Tokio 1.x runtime" or "Cannot start a runtime from within a runtime". Two cooperating bugs:
 

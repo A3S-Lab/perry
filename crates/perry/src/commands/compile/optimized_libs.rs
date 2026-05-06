@@ -168,6 +168,14 @@ pub(super) fn build_optimized_libs(
             }) {
                 features.insert("async-runtime");
             }
+            // v0.5.579 — when the flip strips `bundled-net`, activate
+            // `external-net-pump` so perry-stdlib's
+            // `js_stdlib_process_pending` knows to call into
+            // perry-ext-net's queue. Without this the call site is
+            // `#[cfg]`-gated off and tokio events stay queued forever.
+            if original_features.contains(&"bundled-net") {
+                features.insert("external-net-pump");
+            }
             if matches!(format, OutputFormat::Text) {
                 println!(
                     "  well-known: routing `{}` → {} ({})",

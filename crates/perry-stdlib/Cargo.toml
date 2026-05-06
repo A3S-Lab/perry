@@ -109,6 +109,16 @@ bundled-ws = ["dep:tokio-tungstenite", "dep:futures-util", "async-runtime"]
 net = ["bundled-net"]
 bundled-net = ["async-runtime"]
 
+# Activated by `optimized_libs::build_optimized_libs` (v0.5.579) when
+# the well-known flip strips `bundled-net` and routes `import 'net'`
+# to perry-ext-net. Tells perry-stdlib's `js_stdlib_process_pending`
+# to call `js_net_process_pending` even though `pub mod net` isn't
+# compiled in — the symbol is provided by perry-ext-net at link
+# time. No fallback no-op stub: gating on this feature ensures
+# perry-stdlib only emits the call site (and thus the undefined
+# extern reference) when perry-ext-net is guaranteed to be linked.
+external-net-pump = ["async-runtime"]
+
 # TLS — direct `tls.connect()` and `socket.upgradeToTLS()` (Postgres SSLRequest flow).
 # Uses rustls (not native-tls) to avoid OpenSSL on every platform and keep Android
 # cross-compile unblocked; matches reqwest/tokio-tungstenite/mongodb feature flags.
