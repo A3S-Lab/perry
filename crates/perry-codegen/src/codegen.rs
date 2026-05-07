@@ -3301,7 +3301,18 @@ fn compile_method(
     // as uninitialized register values (read as NaN-boxed undefined).
     let is_constructor_method = method.name == format!("{}_constructor", class.name);
     if is_constructor_method {
-        crate::lower_call::apply_field_initializers_recursive_pub(&mut ctx, &class.name)
+        // Stage field initializers around the parent body chain so leaf
+        // fields can read state set by parent body (Refs #420):
+        //   - has extends: apply only ancestors here; self-fields apply
+        //     later (after super() in own-body case, after explicit parent
+        //     ctor call in no-own-body case).
+        //   - no extends: apply all (= just self) here.
+        let init_mode = if class.extends_name.is_some() {
+            crate::lower_call::FieldInitMode::AncestorsOnly
+        } else {
+            crate::lower_call::FieldInitMode::All
+        };
+        crate::lower_call::apply_field_initializers_recursive(&mut ctx, &class.name, init_mode)
             .with_context(|| {
                 format!(
                     "applying field initializers for '{}' constructor",
@@ -3417,6 +3428,21 @@ fn compile_method(
                     ctx.block().call_void(&ctor_sym, &ctor_args);
                 }
             }
+            // Apply self field initializers AFTER the parent body chain has
+            // run, so they can read state set by the parent body (e.g. drizzle's
+            // PgText.enumValues = this.config.enumValues — this.config is set
+            // in Column body via super-chain). Refs #420.
+            crate::lower_call::apply_field_initializers_recursive(
+                &mut ctx,
+                &class.name,
+                crate::lower_call::FieldInitMode::SelfOnly,
+            )
+            .with_context(|| {
+                format!(
+                    "applying self field initializers for '{}' constructor",
+                    class.name
+                )
+            })?;
         }
     }
 

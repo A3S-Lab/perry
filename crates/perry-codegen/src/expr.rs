@@ -4318,6 +4318,17 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 ctx.block().call_void(&ctor_name, &ctor_args);
             }
 
+            // After the parent body has run (which may have set `this.config`
+            // etc.), apply the CURRENT class's own field initializers — they
+            // may reference state set by the parent body. Per JS spec, field
+            // inits run immediately after super() returns. Refs #420
+            // (drizzle's PgText.enumValues = this.config.enumValues).
+            crate::lower_call::apply_field_initializers_recursive(
+                ctx,
+                &current_class_name,
+                crate::lower_call::FieldInitMode::SelfOnly,
+            )?;
+
             // super() evaluates to undefined in JS.
             Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)))
         }

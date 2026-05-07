@@ -2736,12 +2736,26 @@ pub(crate) fn lower_new(ctx: &mut FnCtx<'_>, class_name: &str, args: &[Expr]) ->
     ctx.this_stack.push(this_slot);
     ctx.class_stack.push(class_name.to_string());
 
-    // Apply field initializers FIRST — TypeScript / ES2022 semantics:
-    // class field initializers run at the start of the constructor body
-    // (after super() for derived classes, before any user ctor code).
-    // Walk the parent chain from the root down so parent fields are
-    // initialized before the child's fields.
-    apply_field_initializers_recursive(ctx, class_name)?;
+    // Apply ANCESTOR field initializers first — they need to be in place
+    // before any parent ctor body runs (parent body may reference its own
+    // declared fields). The leaf class's OWN field initializers are applied
+    // AFTER the parent body completes, because they may read state set by
+    // the parent body (e.g. drizzle's `class PgText extends PgColumn {
+    // enumValues = this.config.enumValues }` — PgColumn's body chain sets
+    // `this.config = config` via super → Column ctor; PgText's field init
+    // must run after that). Refs #420.
+    //
+    // For the own-ctor case (class has its own ctor body), the leaf's own
+    // fields are applied at the SuperCall site after parent body inlined
+    // (see expr.rs Expr::SuperCall handling). For the no-own-ctor case,
+    // they're applied here after the inherited body inline (below).
+    apply_field_initializers_recursive(ctx, class_name, FieldInitMode::AncestorsOnly)?;
+    let has_own_ctor = class.constructor.is_some();
+    let has_extends = class.extends_name.is_some();
+    if !has_extends {
+        // Base class — no super(), apply own fields now (before body).
+        apply_field_initializers_recursive(ctx, class_name, FieldInitMode::SelfOnly)?;
+    }
 
     // If there's a constructor, inline its body. We allocate slots for
     // each constructor parameter and pre-populate them with the lowered
@@ -2899,6 +2913,16 @@ pub(crate) fn lower_new(ctx: &mut FnCtx<'_>, class_name: &str, args: &[Expr]) ->
         }
     }
 
+    // Now that the parent body chain has run (setting `this.config`, etc.),
+    // apply the leaf class's own field initializers — they may reference
+    // state set by the parent body. For the own-ctor case, this is handled
+    // at the SuperCall site inside the body. For the no-own-ctor case and
+    // for classes with no extends (already applied above), we skip here.
+    // Refs #420 (drizzle's PgText.enumValues = this.config.enumValues).
+    if !has_own_ctor && has_extends {
+        apply_field_initializers_recursive(ctx, class_name, FieldInitMode::SelfOnly)?;
+    }
+
     ctx.this_stack.pop();
     ctx.class_stack.pop();
     Ok(obj_box)
@@ -2917,10 +2941,28 @@ pub(crate) fn apply_field_initializers_recursive_pub(
     ctx: &mut FnCtx<'_>,
     class_name: &str,
 ) -> Result<()> {
-    apply_field_initializers_recursive(ctx, class_name)
+    apply_field_initializers_recursive(ctx, class_name, FieldInitMode::All)
 }
 
-fn apply_field_initializers_recursive(ctx: &mut FnCtx<'_>, class_name: &str) -> Result<()> {
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FieldInitMode {
+    /// Apply field initializers for the entire chain root → leaf.
+    All,
+    /// Apply only the ancestors' field initializers (skip the leaf class).
+    /// Used to set up parent fields before a parent ctor body runs.
+    AncestorsOnly,
+    /// Apply only the named class's own field initializers (skip ancestors).
+    /// Used after a parent ctor body has run to install the leaf's fields,
+    /// which may reference state set by the parent body (e.g.
+    /// `enumValues = this.config.enumValues` in drizzle's PgText). Refs #420.
+    SelfOnly,
+}
+
+pub(crate) fn apply_field_initializers_recursive(
+    ctx: &mut FnCtx<'_>,
+    class_name: &str,
+    mode: FieldInitMode,
+) -> Result<()> {
     // Collect the inheritance chain from root down.
     let mut chain: Vec<String> = Vec::new();
     let mut cur = Some(class_name.to_string());
@@ -2932,6 +2974,28 @@ fn apply_field_initializers_recursive(ctx: &mut FnCtx<'_>, class_name: &str) -> 
         cur = class.extends_name.clone();
     }
     chain.reverse();
+
+    // Apply mode filter:
+    //   All: keep entire chain
+    //   AncestorsOnly: drop the leaf (last entry)
+    //   SelfOnly: keep only the leaf
+    let chain: Vec<String> = match mode {
+        FieldInitMode::All => chain,
+        FieldInitMode::AncestorsOnly => {
+            if chain.len() <= 1 {
+                Vec::new()
+            } else {
+                chain[..chain.len() - 1].to_vec()
+            }
+        }
+        FieldInitMode::SelfOnly => {
+            if let Some(last) = chain.last().cloned() {
+                vec![last]
+            } else {
+                Vec::new()
+            }
+        }
+    };
 
     for class_name_in_chain in chain {
         let class = match ctx.classes.get(&class_name_in_chain).copied() {
