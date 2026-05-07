@@ -710,6 +710,67 @@ pub unsafe extern "C" fn js_dynamic_add(a: f64, b: f64) -> f64 {
     a + b
 }
 
+/// Dynamic `a + b` for type-uncertain operands. Per JS spec, when either
+/// operand is a string after ToPrimitive, the result is string concatenation;
+/// otherwise both operands are coerced to numbers and summed (or BigInt-
+/// summed when either is BigInt). The codegen dispatches here for `+` when
+/// neither operand has a statically-known type — refs #486 (hono's
+/// `Node.buildRegExpStr` does `k + c.buildRegExpStr()` inside a for-of loop
+/// over `Object.keys(...)` results, both operands lower to plain f64s with
+/// inferred type Any, the static-string-concat fast path doesn't fire, and
+/// the previous fallback called `js_number_coerce` on each side and `fadd`d
+/// the results — turning `"c" + ""` into `NaN + 0 = NaN`).
+#[no_mangle]
+pub unsafe extern "C" fn js_dynamic_string_or_number_add(a: f64, b: f64) -> f64 {
+    let a_val = JSValue::from_bits(a.to_bits());
+    let b_val = JSValue::from_bits(b.to_bits());
+
+    // String concat takes priority: either operand being a string forces
+    // ToPrimitive on the other side via the spec's "if either is a string,
+    // do concat" branch. js_string_concat_value handles the
+    // `string + non-string` case (it calls js_jsvalue_to_string on the
+    // non-string side); we use it for both orderings by pre-coercing the
+    // other operand to string via js_jsvalue_to_string when it ISN'T a
+    // string.
+    if a_val.is_any_string() || b_val.is_any_string() {
+        let a_str = if a_val.is_any_string() {
+            js_get_string_pointer_unified(a) as *mut crate::string::StringHeader
+        } else {
+            js_jsvalue_to_string(a)
+        };
+        let b_str = if b_val.is_any_string() {
+            js_get_string_pointer_unified(b) as *mut crate::string::StringHeader
+        } else {
+            js_jsvalue_to_string(b)
+        };
+        let result = crate::string::js_string_concat(a_str, b_str);
+        return f64::from_bits(JSValue::string_ptr(result).bits());
+    }
+
+    // BigInt: same as js_dynamic_add.
+    if a_val.is_bigint() || b_val.is_bigint() {
+        let result = crate::bigint::js_bigint_add(
+            coerce_to_bigint_ptr(a) as *const _,
+            coerce_to_bigint_ptr(b) as *const _,
+        );
+        return js_nanbox_bigint(result as i64);
+    }
+
+    // Both numeric — coerce non-numbers (booleans, null, undefined) the
+    // same way the static fallback path did.
+    let a_num = if a_val.is_number() || a_val.is_int32() {
+        a
+    } else {
+        crate::builtins::js_number_coerce(a)
+    };
+    let b_num = if b_val.is_number() || b_val.is_int32() {
+        b
+    } else {
+        crate::builtins::js_number_coerce(b)
+    };
+    a_num + b_num
+}
+
 /// Dynamic subtract: BigInt - BigInt if either operand is BigInt, else f64 - f64.
 #[no_mangle]
 pub unsafe extern "C" fn js_dynamic_sub(a: f64, b: f64) -> f64 {

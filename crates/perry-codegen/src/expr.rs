@@ -1123,6 +1123,37 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 if l_is_str || r_is_str {
                     return lower_string_coerce_concat(ctx, left, right, l_is_str, r_is_str);
                 }
+                // Refs #486: neither operand is statically known. Per JS
+                // spec for `+`, if EITHER side is a string at runtime, the
+                // result is string concatenation; otherwise numeric add
+                // (or BigInt add when bigint is involved). Pre-fix, the
+                // numeric-fallback path below called js_number_coerce on
+                // both sides — turning `"c" + ""` into `NaN + 0 = NaN` for
+                // any string operand whose type wasn't statically inferred.
+                // Hono's `Node.buildRegExpStr` does `k + c.buildRegExpStr()`
+                // inside a for-of loop over `Object.keys(...)` results;
+                // both operands lower as plain f64s with type Any, the
+                // string-concat fast path didn't fire, and every recursive
+                // step poisoned the result. Dispatch through the runtime
+                // helper that checks NaN-box tags: STRING_TAG / SHORT_STRING_TAG
+                // → string concat, BIGINT → bigint add, otherwise numeric.
+                // Stay on the static numeric/bigint paths when at least one
+                // operand is provably non-string (numeric / bigint / boolean
+                // / int) — those don't risk the string-concat semantics and
+                // we keep the inline fadd codegen for hot arithmetic loops.
+                let l_non_str =
+                    crate::type_analysis::is_numeric_expr(ctx, left) || is_bigint_expr(ctx, left);
+                let r_non_str =
+                    crate::type_analysis::is_numeric_expr(ctx, right) || is_bigint_expr(ctx, right);
+                if !l_non_str && !r_non_str {
+                    let l = lower_expr(ctx, left)?;
+                    let r = lower_expr(ctx, right)?;
+                    return Ok(ctx.block().call(
+                        DOUBLE,
+                        "js_dynamic_string_or_number_add",
+                        &[(DOUBLE, &l), (DOUBLE, &r)],
+                    ));
+                }
             }
             // BigInt arithmetic fast path. NaN-tagged bigints compare
             // unordered under `fadd`/`fsub`/`fmul`/`fdiv`/`frem` (the

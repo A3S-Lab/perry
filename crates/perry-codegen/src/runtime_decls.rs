@@ -600,6 +600,14 @@ pub fn declare_phase_b_strings(module: &mut LlModule) {
     // the raw `js_bigint_<op>`, and re-box with BIGINT_TAG. Also
     // tolerate mixed bigint/int32 operands.
     module.declare_function("js_dynamic_add", DOUBLE, &[DOUBLE, DOUBLE]);
+    // Refs #486: dispatch path for `+` when neither operand has a static
+    // type (string|number|bigint). Per JS spec, string concat takes
+    // priority; otherwise BigInt or numeric add. Hono's
+    // `Node.buildRegExpStr` does `k + c.buildRegExpStr()` inside a for-of
+    // loop where both operands lower as plain f64s with inferred type
+    // Any — the static-string-concat fast path doesn't fire and the
+    // numeric-fallback path coerced strings to NaN.
+    module.declare_function("js_dynamic_string_or_number_add", DOUBLE, &[DOUBLE, DOUBLE]);
     module.declare_function("js_dynamic_sub", DOUBLE, &[DOUBLE, DOUBLE]);
     module.declare_function("js_dynamic_mul", DOUBLE, &[DOUBLE, DOUBLE]);
     module.declare_function("js_dynamic_div", DOUBLE, &[DOUBLE, DOUBLE]);
