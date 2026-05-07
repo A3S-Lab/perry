@@ -432,6 +432,36 @@ pub(crate) fn collect_let_ids(stmts: &[perry_hir::Stmt], out: &mut HashSet<u32>)
             perry_hir::Stmt::While { body, .. } | perry_hir::Stmt::DoWhile { body, .. } => {
                 collect_let_ids(body, out);
             }
+            // Try/Switch/Labeled: lets nested under these constructs were
+            // previously invisible to the boxing analysis' `declared` set.
+            // A `let x = …` inside `try { let x = …; … }` would not be
+            // included in the per-scope declared set, so even if the rest
+            // of the analysis recognised x as captured-and-mutated, the
+            // box was never allocated.
+            perry_hir::Stmt::Try {
+                body,
+                catch,
+                finally,
+            } => {
+                collect_let_ids(body, out);
+                if let Some(c) = catch {
+                    if let Some((id, _)) = c.param {
+                        out.insert(id);
+                    }
+                    collect_let_ids(&c.body, out);
+                }
+                if let Some(f) = finally {
+                    collect_let_ids(f, out);
+                }
+            }
+            perry_hir::Stmt::Switch { cases, .. } => {
+                for case in cases {
+                    collect_let_ids(&case.body, out);
+                }
+            }
+            perry_hir::Stmt::Labeled { body, .. } => {
+                collect_let_ids(std::slice::from_ref(body.as_ref()), out);
+            }
             _ => {}
         }
     }
@@ -489,6 +519,48 @@ pub(crate) fn collect_ref_ids_in_stmts(stmts: &[perry_hir::Stmt], out: &mut Hash
                     collect_ref_ids_in_expr(upd, out);
                 }
                 collect_ref_ids_in_stmts(body, out);
+            }
+            // Try/Switch/Labeled: previously fell through to `_ => {}` and
+            // every LocalGet/LocalSet inside their body was invisible to the
+            // boxing analysis. For the self-recursive-closure path
+            // (`let dispatch = (i) => { try { dispatch(i+1); } catch (e) {} }`),
+            // skipping the try body meant `closure_refs.contains(dispatch_id)`
+            // was false, dispatch wasn't recognized as self-recursive, and
+            // capture[0] held the pre-let `undefined` value. The recursive
+            // call invoked an undefined closure, the body never ran, and the
+            // function returned `undefined`. Hono's compose dispatches every
+            // middleware through this exact shape (`try { res = await
+            // handler(c, () => dispatch(i+1)); } catch (err) {…}`).
+            perry_hir::Stmt::Try {
+                body,
+                catch,
+                finally,
+            } => {
+                collect_ref_ids_in_stmts(body, out);
+                if let Some(c) = catch {
+                    if let Some((id, _)) = c.param {
+                        out.insert(id);
+                    }
+                    collect_ref_ids_in_stmts(&c.body, out);
+                }
+                if let Some(f) = finally {
+                    collect_ref_ids_in_stmts(f, out);
+                }
+            }
+            perry_hir::Stmt::Switch {
+                discriminant,
+                cases,
+            } => {
+                collect_ref_ids_in_expr(discriminant, out);
+                for case in cases {
+                    if let Some(t) = &case.test {
+                        collect_ref_ids_in_expr(t, out);
+                    }
+                    collect_ref_ids_in_stmts(&case.body, out);
+                }
+            }
+            perry_hir::Stmt::Labeled { body, .. } => {
+                collect_ref_ids_in_stmts(std::slice::from_ref(body.as_ref()), out);
             }
             _ => {}
         }
