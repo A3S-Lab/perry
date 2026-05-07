@@ -64,3 +64,22 @@ pub extern "C" fn perry_system_image_picker_pick(
         js_closure_call1(cb, nb);
     }
 }
+
+// ---- perry/background (issue #538) — no-op stubs. ----
+// This platform has no native deferred-background-work API exposed to
+// non-system apps; `registerTask` records nothing, `schedule` and `cancel`
+// are silent no-ops. Apps targeting only this platform should branch via
+// `getDeviceIdiom()` and skip the background path.
+#[no_mangle]
+pub extern "C" fn perry_background_register_task(_identifier_ptr: i64, _handler: f64) {}
+#[no_mangle]
+pub extern "C" fn perry_background_schedule(
+    _identifier_ptr: i64,
+    _kind_ptr: i64,
+    _earliest_start_ms: f64,
+    _requires_network: f64,
+    _requires_charging: f64,
+) {
+}
+#[no_mangle]
+pub extern "C" fn perry_background_cancel(_identifier_ptr: i64) {}

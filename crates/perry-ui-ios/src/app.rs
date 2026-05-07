@@ -88,6 +88,12 @@ define_class!(
             // Fire notification auth prompt once here so notificationSend() doesn't
             // re-prompt on every call (per #94).
             crate::notifications::request_authorization();
+            // Drain pending BGTaskScheduler registrations from `registerTask`
+            // calls during module init (#538). BGTaskScheduler enforces a
+            // "register all handlers during launch" contract — if we miss
+            // this window, late-registered identifiers won't be reachable
+            // for the OS's first wake-up.
+            crate::background::flush_pending_registrations();
             true
         }
 

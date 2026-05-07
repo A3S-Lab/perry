@@ -18,9 +18,9 @@ use crate::lower_array_method::lower_array_method;
 // from the same source of truth. Local aliases below preserve the
 // pre-refactor type names used throughout this file.
 use perry_dispatch::{
-    ArgKind as UiArgKind, MethodRow as UiSig, ReturnKind as UiReturnKind, PERRY_I18N_TABLE,
-    PERRY_MEDIA_TABLE, PERRY_SYSTEM_TABLE, PERRY_UI_INSTANCE_TABLE, PERRY_UI_TABLE,
-    PERRY_UPDATER_TABLE,
+    ArgKind as UiArgKind, MethodRow as UiSig, ReturnKind as UiReturnKind, PERRY_BACKGROUND_TABLE,
+    PERRY_I18N_TABLE, PERRY_MEDIA_TABLE, PERRY_SYSTEM_TABLE, PERRY_UI_INSTANCE_TABLE,
+    PERRY_UI_TABLE, PERRY_UPDATER_TABLE,
 };
 
 // Tier 2.2 (v0.5.333-339): incremental extraction of `lower_call.rs`
@@ -544,6 +544,13 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         // `perry/updater` arrive as ExternFuncRef; route by name to the
         // perry_updater_* runtime symbols in `perry-updater`.
         if let Some(sig) = perry_updater_table_lookup(name) {
+            return lower_perry_ui_table_call(ctx, sig, args);
+        }
+        // perry/background dispatch (issue #538): registerTask / schedule /
+        // cancel from `perry/background`. Backed by perry_background_* in
+        // libperry_ui_*.a (real impls on iOS + Android, no-op stubs
+        // elsewhere). Same calling convention as perry/system.
+        if let Some(sig) = perry_background_table_lookup(name) {
             return lower_perry_ui_table_call(ctx, sig, args);
         }
         // Built-in runtime extern functions (`js_weakmap_set`,
@@ -4299,6 +4306,17 @@ pub(super) fn perry_i18n_table_lookup(method: &str) -> Option<&'static UiSig> {
 /// covers verify, install, relaunch, sentinel state, and path resolution.
 pub(super) fn perry_updater_table_lookup(method: &str) -> Option<&'static UiSig> {
     PERRY_UPDATER_TABLE.iter().find(|s| s.method == method)
+}
+
+// =============================================================================
+// perry/background dispatch table (issue #538)
+// =============================================================================
+
+/// Maps the TS exports from `types/perry/background/index.d.ts` to their
+/// runtime symbols (`perry_background_register_task` / `_schedule` /
+/// `_cancel`) exported by the per-platform `perry-ui-*` crates.
+pub(super) fn perry_background_table_lookup(method: &str) -> Option<&'static UiSig> {
+    PERRY_BACKGROUND_TABLE.iter().find(|s| s.method == method)
 }
 
 // =============================================================================

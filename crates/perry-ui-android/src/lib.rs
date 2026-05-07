@@ -1,5 +1,6 @@
 pub mod app;
 pub mod audio;
+pub mod background;
 pub mod callback;
 pub mod camera;
 pub mod clipboard;
@@ -1482,6 +1483,32 @@ pub extern "C" fn perry_system_geolocation_request_permission(callback: f64) {
 #[no_mangle]
 pub extern "C" fn perry_system_image_picker_pick(max_count: f64, allow_multiple: f64, callback: f64) {
     image_picker::pick(max_count, allow_multiple, callback);
+}
+
+// ---- perry/background (issue #538) — WorkManager ----
+#[no_mangle]
+pub extern "C" fn perry_background_register_task(identifier_ptr: i64, handler: f64) {
+    background::register_task(identifier_ptr as *const u8, handler);
+}
+#[no_mangle]
+pub extern "C" fn perry_background_schedule(
+    identifier_ptr: i64,
+    kind_ptr: i64,
+    earliest_start_ms: f64,
+    requires_network: f64,
+    requires_charging: f64,
+) {
+    background::schedule(
+        identifier_ptr as *const u8,
+        kind_ptr as *const u8,
+        earliest_start_ms,
+        requires_network,
+        requires_charging,
+    );
+}
+#[no_mangle]
+pub extern "C" fn perry_background_cancel(identifier_ptr: i64) {
+    background::cancel(identifier_ptr as *const u8);
 }
 
 #[no_mangle]

@@ -2088,6 +2088,40 @@ pub static PERRY_SYSTEM_TABLE: &[MethodRow] = &[
         ret: ReturnKind::Void,
     },
 ];
+
+/// perry/background — deferred / periodic background work (issue #538).
+/// iOS BGTaskScheduler + Android WorkManager. Handler closures arrive via
+/// `registerTask` and are persisted in a runtime-side identifier→closure
+/// table so the platform's launchHandler / Worker can dispatch them.
+/// `kind` is passed as a NaN-boxed string ("appRefresh" | "processing");
+/// `earliestStartMs` is f64 (epoch ms or 0); `requiresNetwork` /
+/// `requiresCharging` are NaN-boxed booleans.
+pub static PERRY_BACKGROUND_TABLE: &[MethodRow] = &[
+    MethodRow {
+        method: "registerTask",
+        runtime: "perry_background_register_task",
+        args: &[ArgKind::Str, ArgKind::Closure],
+        ret: ReturnKind::Void,
+    },
+    MethodRow {
+        method: "schedule",
+        runtime: "perry_background_schedule",
+        args: &[
+            ArgKind::Str,
+            ArgKind::Str,
+            ArgKind::F64,
+            ArgKind::F64,
+            ArgKind::F64,
+        ],
+        ret: ReturnKind::Void,
+    },
+    MethodRow {
+        method: "cancel",
+        runtime: "perry_background_cancel",
+        args: &[ArgKind::Str],
+        ret: ReturnKind::Void,
+    },
+];
 pub static PERRY_I18N_TABLE: &[MethodRow] = &[
     MethodRow {
         method: "Currency",
@@ -2367,6 +2401,11 @@ pub fn perry_updater_lookup(method: &str) -> Option<&'static MethodRow> {
 /// Look up a TS method name in the perry/media table.
 pub fn perry_media_lookup(method: &str) -> Option<&'static MethodRow> {
     PERRY_MEDIA_TABLE.iter().find(|s| s.method == method)
+}
+
+/// Look up a TS method name in the perry/background table (issue #538).
+pub fn perry_background_lookup(method: &str) -> Option<&'static MethodRow> {
+    PERRY_BACKGROUND_TABLE.iter().find(|s| s.method == method)
 }
 
 /// Resolve a TS method name to its runtime symbol across the perry/ui +

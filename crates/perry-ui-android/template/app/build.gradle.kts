@@ -51,4 +51,7 @@ dependencies {
     // supplies an API key via the AndroidManifest.xml meta-data entry
     // (resolves the `__YOUR_GOOGLE_MAPS_API_KEY__` placeholder there).
     implementation("com.google.android.gms:play-services-maps:18.2.0")
+    // perry/background (#538) — WorkManager-backed deferred / periodic
+    // tasks. PerryBackgroundWorker.kt extends `androidx.work.Worker`.
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

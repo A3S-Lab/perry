@@ -597,10 +597,13 @@ fn scan_imports_for_stubs(
             Some(s) => s,
             None => continue,
         };
-        // Only `perry/ui` / `perry/system` / `perry/updater` imports
-        // can resolve to stubbed symbols. Cheap pre-filter avoids
-        // walking the manifest for every import.
-        if !matches!(source, "perry/ui" | "perry/system" | "perry/updater") {
+        // Only `perry/ui` / `perry/system` / `perry/updater` /
+        // `perry/background` imports can resolve to stubbed symbols.
+        // Cheap pre-filter avoids walking the manifest for every import.
+        if !matches!(
+            source,
+            "perry/ui" | "perry/system" | "perry/updater" | "perry/background"
+        ) {
             continue;
         }
 

@@ -1952,6 +1952,28 @@ pub extern "C" fn perry_system_image_picker_pick(max_count: f64, allow_multiple:
     image_picker::pick(max_count, allow_multiple, callback);
 }
 
+// ---- perry/background (issue #538) — no-op stubs on macOS. ----
+// macOS does have NSBackgroundActivityScheduler, but its model differs
+// significantly from BGTaskScheduler/WorkManager — it's typically used
+// for daemon-like utilities, and configuring the underlying QoS /
+// repeating schedule via the scheduler's blocks doesn't fit a
+// register/schedule split cleanly. For desktop apps, the user is
+// expected to keep the app open while it polls. Out-of-scope for the
+// initial #538 cut.
+#[no_mangle]
+pub extern "C" fn perry_background_register_task(_identifier_ptr: i64, _handler: f64) {}
+#[no_mangle]
+pub extern "C" fn perry_background_schedule(
+    _identifier_ptr: i64,
+    _kind_ptr: i64,
+    _earliest_start_ms: f64,
+    _requires_network: f64,
+    _requires_charging: f64,
+) {
+}
+#[no_mangle]
+pub extern "C" fn perry_background_cancel(_identifier_ptr: i64) {}
+
 // =============================================================================
 // Audio (perry/system) — AVAudioEngine-based microphone capture
 // =============================================================================

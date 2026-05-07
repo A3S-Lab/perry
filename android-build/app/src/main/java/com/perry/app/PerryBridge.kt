@@ -720,6 +720,103 @@ object PerryBridge {
         }
     }
 
+    // --- Background tasks (issue #538) — WorkManager ---
+
+    /** Map identifier → callback key, written from native registerTask, read
+     *  by PerryBackgroundWorker.doWork to invoke the right Perry handler. */
+    private val backgroundHandlerKeys = mutableMapOf<String, Long>()
+
+    @JvmStatic
+    fun backgroundRegisterTask(identifier: String, callbackKey: Long) {
+        backgroundHandlerKeys[identifier] = callbackKey
+    }
+
+    @JvmStatic
+    fun backgroundLookupCallbackKey(identifier: String): Long {
+        return backgroundHandlerKeys[identifier] ?: 0L
+    }
+
+    @JvmStatic
+    fun backgroundSchedule(
+        identifier: String,
+        kind: String,
+        earliestStartMs: Double,
+        requiresNetwork: Boolean,
+        requiresCharging: Boolean
+    ) {
+        try {
+            val constraintsCls = Class.forName("androidx.work.Constraints\$Builder")
+            val constraintsBuilder = constraintsCls.getConstructor().newInstance()
+            if (requiresNetwork) {
+                val networkTypeCls = Class.forName("androidx.work.NetworkType")
+                val connected = networkTypeCls.getField("CONNECTED").get(null)
+                constraintsCls.getMethod("setRequiredNetworkType", networkTypeCls)
+                    .invoke(constraintsBuilder, connected)
+            }
+            if (requiresCharging) {
+                constraintsCls.getMethod("setRequiresCharging", Boolean::class.javaPrimitiveType)
+                    .invoke(constraintsBuilder, true)
+            }
+            val constraints = constraintsCls.getMethod("build").invoke(constraintsBuilder)
+
+            val workerCls = Class.forName("com.perry.app.PerryBackgroundWorker")
+            val builderCls = Class.forName("androidx.work.OneTimeWorkRequest\$Builder")
+            val builder = builderCls.getConstructor(Class::class.java).newInstance(workerCls)
+
+            val dataBuilderCls = Class.forName("androidx.work.Data\$Builder")
+            val dataBuilder = dataBuilderCls.getConstructor().newInstance()
+            dataBuilderCls.getMethod("putString", String::class.java, String::class.java)
+                .invoke(dataBuilder, "identifier", identifier)
+            val data = dataBuilderCls.getMethod("build").invoke(dataBuilder)
+            builderCls.getMethod("setInputData", Class.forName("androidx.work.Data"))
+                .invoke(builder, data)
+
+            builderCls.getMethod("setConstraints", Class.forName("androidx.work.Constraints"))
+                .invoke(builder, constraints)
+
+            if (earliestStartMs > 0.0) {
+                val nowMs = System.currentTimeMillis().toDouble()
+                val delayMs = (earliestStartMs - nowMs).toLong().coerceAtLeast(0L)
+                builderCls.getMethod(
+                    "setInitialDelay",
+                    Long::class.javaPrimitiveType,
+                    java.util.concurrent.TimeUnit::class.java
+                ).invoke(builder, delayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
+
+            val request = builderCls.getMethod("build").invoke(builder)
+            val workManagerCls = Class.forName("androidx.work.WorkManager")
+            val workManager = workManagerCls.getMethod("getInstance", Context::class.java)
+                .invoke(null, activity)
+            val policyCls = Class.forName("androidx.work.ExistingWorkPolicy")
+            val replace = policyCls.getField("REPLACE").get(null)
+            workManagerCls.getMethod(
+                "enqueueUniqueWork",
+                String::class.java, policyCls,
+                Class.forName("androidx.work.OneTimeWorkRequest")
+            ).invoke(workManager, identifier, replace, request)
+            val _unused = kind
+        } catch (e: ClassNotFoundException) {
+            Log.w("PerryBackground", "androidx.work not on classpath; schedule() is a no-op")
+        } catch (e: Exception) {
+            Log.e("PerryBackground", "schedule failed: ${e.message}")
+        }
+    }
+
+    @JvmStatic
+    fun backgroundCancel(identifier: String) {
+        try {
+            val workManagerCls = Class.forName("androidx.work.WorkManager")
+            val workManager = workManagerCls.getMethod("getInstance", Context::class.java)
+                .invoke(null, activity)
+            workManagerCls.getMethod("cancelUniqueWork", String::class.java)
+                .invoke(workManager, identifier)
+        } catch (_: ClassNotFoundException) {
+        } catch (e: Exception) {
+            Log.e("PerryBackground", "cancel failed: ${e.message}")
+        }
+    }
+
     // --- Audio Permission ---
 
     @JvmStatic

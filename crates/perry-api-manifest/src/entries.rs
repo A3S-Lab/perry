@@ -94,6 +94,7 @@ pub const NATIVE_MODULES: &[&str] = &[
     "perry/thread",
     "perry/updater",
     "perry/media",
+    "perry/background",
     "redis",
     "rate-limiter-flexible",
     "fetch",
@@ -119,6 +120,7 @@ pub const RUNTIME_ONLY_MODULES: &[&str] = &[
     "perry/thread",
     "perry/media",
     "perry/tui",
+    "perry/background",
     "tty",
 ];
 
@@ -1625,6 +1627,10 @@ pub static API_MANIFEST: &[ApiEntry] = &[
     method("perry/system", "geolocationStopWatch", false, None),
     method("perry/system", "geolocationRequestPermission", false, None),
     method("perry/system", "imagePickerPick", false, None),
+    // --- perry/background (issue #538) — BGTaskScheduler / WorkManager. ---
+    method("perry/background", "registerTask", false, None),
+    method("perry/background", "schedule", false, None),
+    method("perry/background", "cancel", false, None),
     // --- perry/i18n — auto-derivable from PERRY_I18N_TABLE. ---
     method("perry/i18n", "t", false, None),
     method("perry/i18n", "Currency", false, None),

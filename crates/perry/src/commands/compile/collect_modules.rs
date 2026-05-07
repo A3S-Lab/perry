@@ -272,6 +272,13 @@ pub(super) fn collect_modules(
                     ctx.needs_ui = true;
                 }
             }
+            // perry/background (issue #538) — BGTaskScheduler/WorkManager
+            // bindings live in libperry_ui_*.a alongside the platform
+            // OS-framework integration, so importing this module always
+            // triggers UI lib linking.
+            if import.source == "perry/background" {
+                ctx.needs_ui = true;
+            }
             if import.source == "perry/plugin" {
                 ctx.needs_plugins = true;
             }

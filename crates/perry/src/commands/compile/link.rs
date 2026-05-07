@@ -1034,6 +1034,8 @@ pub(super) fn build_and_run_link(
             .arg("MapKit") // perry/ui MapView (#517) — MKMapView
             .arg("-framework")
             .arg("PDFKit") // perry/ui PdfView (#516) — PDFView
+            .arg("-framework")
+            .arg("BackgroundTasks") // perry/background BGTaskScheduler (#538)
             .arg("-liconv")
             .arg("-lresolv")
             .arg("-lobjc")
