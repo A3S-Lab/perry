@@ -1313,6 +1313,31 @@ fn get_parent_class_id(class_id: u32) -> Option<u32> {
     registry.as_ref().and_then(|r| r.get(&class_id).copied())
 }
 
+/// Look up a method by name in the class vtable, walking the parent chain.
+/// Returns `Some((func_ptr, param_count))` if found, `None` otherwise.
+/// Used by `js_assimilate_thenable` (refs #586) and other runtime callers
+/// that need to probe a class for a method without invoking it.
+pub fn lookup_class_method_in_chain(
+    class_id: u32,
+    name: &str,
+) -> Option<(usize, u32)> {
+    let registry = CLASS_VTABLE_REGISTRY.read().unwrap();
+    let reg = registry.as_ref()?;
+    let mut cur = class_id;
+    for _ in 0..32 {
+        if let Some(vt) = reg.get(&cur) {
+            if let Some(entry) = vt.methods.get(name) {
+                return Some((entry.func_ptr, entry.param_count));
+            }
+        }
+        match get_parent_class_id(cur) {
+            Some(pid) if pid != 0 => cur = pid,
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Check if a pointer is a valid heap object (safe to dereference GcHeader).
 /// Values below 0x100000 (1MB) are likely INT32_TAG extracts, small handles,
 /// or null. The upper bound filters out NaN-box tag bits that leaked through.
@@ -3904,6 +3929,37 @@ pub extern "C" fn js_instanceof(value: f64, class_id: u32) -> f64 {
         if jsval.is_pointer() {
             let addr = (bits & 0x0000_FFFF_FFFF_FFFF) as usize;
             if crate::regex::is_regex_pointer(addr as *const u8) {
+                return true_val;
+            }
+        }
+        return false_val;
+    }
+
+    // `Object` — ECMAScript spec: `x instanceof Object` is true for any
+    // non-primitive (every object/array/function/Map/Set/Buffer/RegExp/
+    // Date/typed-array/Promise/etc.). The codegen maps `Object` to this
+    // reserved id (#585 follow-up: pre-#585 fix this case worked by
+    // accident because the codegen produced `class_id = 0` and the
+    // runtime returned true via `0 == 0` on the obj_class_id check).
+    const CLASS_ID_OBJECT: u32 = 0xFFFF0050;
+    if class_id == CLASS_ID_OBJECT {
+        if jsval.is_pointer() {
+            return true_val;
+        }
+        if !value.is_nan()
+            && value.is_finite()
+            && crate::date::is_registered_date_bits(value.to_bits())
+        {
+            return true_val;
+        }
+        let top16 = (bits >> 48) as u16;
+        if top16 == 0 && bits >= 0x1000 {
+            let addr = bits as usize;
+            if crate::buffer::is_registered_buffer(addr)
+                || crate::set::is_registered_set(addr)
+                || crate::map::is_registered_map(addr)
+                || crate::typedarray::lookup_typed_array_kind(addr).is_some()
+            {
                 return true_val;
             }
         }

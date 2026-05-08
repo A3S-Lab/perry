@@ -5523,6 +5523,14 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 "Set" => 0xFFFF0023u32,
                 // `Array` — runtime detects via GC_TYPE_ARRAY at obj-8.
                 "Array" => 0xFFFF0024u32,
+                // `Object` — every non-primitive matches per ECMAScript;
+                // reserved id mapped in the runtime. Pre-#585 this fell
+                // into the `cid = 0` fallback and matched accidentally
+                // because the runtime's direct-class-id check returned
+                // true on `0 == 0`. The #585 fix gates `class_id == 0`
+                // → false, so `{} instanceof Object` would otherwise
+                // regress; thread a real id through here instead.
+                "Object" => 0xFFFF0050u32,
                 _ => ctx.class_ids.get(ty).copied().unwrap_or_else(|| {
                     // Issue #574: `b instanceof Lib.A` where Lib is a
                     // namespace import. The HIR captures the receiver
@@ -8577,7 +8585,23 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         //
         // Returns %value as a NaN-boxed double.
         Expr::Await(operand) => {
-            let promise_box = lower_expr(ctx, operand)?;
+            let raw_operand = lower_expr(ctx, operand)?;
+
+            // Issue #586: ECMAScript thenable assimilation. Before the
+            // is-Promise branch, route the operand through
+            // `js_assimilate_thenable`. For real Promises and non-thenable
+            // values it's a passthrough; for objects whose class chain
+            // defines `.then`, it allocates a wrapper Promise, invokes
+            // `value.then(resolve, reject)`, and returns the wrapper —
+            // which the existing polling loop below then drives until
+            // resolve/reject fires. Without this, `await thenable` would
+            // fall through to the merge block with the thenable itself
+            // and the await would resolve with the object instead of
+            // calling its `.then` (drizzle-orm's `QueryPromise.execute()`
+            // never ran for `await db.select().from(users)`).
+            let promise_box = ctx
+                .block()
+                .call(DOUBLE, "js_assimilate_thenable", &[(DOUBLE, &raw_operand)]);
 
             // Defensive guard: if the operand is not actually a
             // Promise (e.g. `await someNumber` or an unsupported

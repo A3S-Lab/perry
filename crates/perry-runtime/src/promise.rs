@@ -616,6 +616,25 @@ pub extern "C" fn js_promise_resolved(value: f64) -> *mut Promise {
             return promise;
         }
     }
+
+    // Issue #586: ECMAScript thenable assimilation. The async-to-generator
+    // transform rewrites every `await x` into `Promise.resolve(x).then(...)`
+    // — which means thenable assimilation has to happen here, not in the
+    // codegen-side `Expr::Await` lowering. `js_assimilate_thenable` returns
+    // a fresh Promise wrapper that follows the thenable's `.then(resolve,
+    // reject)` callbacks; chain its eventual state into our outer promise
+    // via the same `js_promise_resolve_with_promise` pattern as the real-
+    // Promise arm above. Drizzle's `QueryPromise` (`then` triggers the SQL
+    // round-trip) is the load-bearing motivating case (#488).
+    let assim = js_assimilate_thenable(value);
+    if assim.to_bits() != value.to_bits() && js_value_is_promise(assim) != 0 {
+        let inner = crate::value::js_nanbox_get_pointer(assim) as *mut Promise;
+        if !inner.is_null() && inner != promise {
+            js_promise_resolve_with_promise(promise, inner);
+            return promise;
+        }
+    }
+
     js_promise_resolve(promise, value);
     promise
 }
@@ -1232,6 +1251,132 @@ extern "C" fn promise_race_reject_handler(
 #[no_mangle]
 pub extern "C" fn js_await_any_promise(value: f64) -> f64 {
     value
+}
+
+/// ECMAScript thenable assimilation for `await`. Issue #586.
+///
+/// `await x` semantics: if `x` is an object with a callable `then` method,
+/// the runtime should call `x.then(resolve, reject)` and resume with whatever
+/// the underlying then implementation passes to `resolve`. Real Promises take
+/// the fast path; thenables (e.g. drizzle-orm's `QueryPromise`) need this.
+///
+/// Behavior:
+/// - Already a Promise → pass through unchanged (caller's await loop polls it).
+/// - Object whose class chain contains a `then(onFulfilled, onRejected)` method
+///   → allocate a fresh Promise, build resolve/reject closures bound to it,
+///     invoke `value.then(resolve, reject)`, and return the new Promise (which
+///     the await loop then polls). When the user's `then` calls `resolve(v)`,
+///     our handler resolves the wrapper promise; the await loop sees Fulfilled
+///     and returns `v`.
+/// - Anything else (primitives, plain objects without a `then` method, Map /
+///   Set / Buffer / handle values) → pass through unchanged so the await
+///   resolves with the value itself per spec.
+///
+/// `then` is looked up only in the class vtable, not as an instance field.
+/// Object literals with a `then: () => ...` arrow stored as a property are
+/// uncommon in practice and would require a parallel `js_object_get_field_by_name`
+/// probe — out of scope for this fix.
+#[no_mangle]
+pub extern "C" fn js_assimilate_thenable(value: f64) -> f64 {
+    use crate::value::JSValue;
+
+    // Real Promise — caller's await loop already handles it.
+    if js_value_is_promise(value) != 0 {
+        return value;
+    }
+
+    let bits = value.to_bits();
+    let jsval = JSValue::from_bits(bits);
+
+    if !jsval.is_pointer() {
+        return value;
+    }
+
+    let raw_ptr = (bits & 0x0000_FFFF_FFFF_FFFF) as usize;
+    if raw_ptr < 0x100000 {
+        return value;
+    }
+
+    // Side-table-tracked heap types don't have ClassVTable entries; skip.
+    if crate::buffer::is_registered_buffer(raw_ptr)
+        || crate::set::is_registered_set(raw_ptr)
+        || crate::map::is_registered_map(raw_ptr)
+        || crate::symbol::is_registered_symbol(raw_ptr)
+        || crate::regex::is_regex_pointer(raw_ptr as *const u8)
+        || crate::date::is_registered_date_bits(bits)
+    {
+        return value;
+    }
+
+    let obj_ptr = jsval.as_pointer::<crate::object::ObjectHeader>();
+    if obj_ptr.is_null() {
+        return value;
+    }
+
+    // Verify GC type before reading class_id; reading garbage past random
+    // pointers would either return a fake match or segfault.
+    let class_id = unsafe {
+        let gc_header = (obj_ptr as *const u8).sub(crate::gc::GC_HEADER_SIZE)
+            as *const crate::gc::GcHeader;
+        let gc_type = (*gc_header).obj_type;
+        if gc_type != crate::gc::GC_TYPE_OBJECT {
+            return value;
+        }
+        (*obj_ptr).class_id
+    };
+    if class_id == 0 {
+        return value;
+    }
+
+    // Probe the vtable chain for `then`. Bail out on plain objects (no class
+    // method) so the await passes the original value through unchanged.
+    let (then_func_ptr, then_param_count) =
+        match crate::object::lookup_class_method_in_chain(class_id, "then") {
+            Some(p) => p,
+            None => return value,
+        };
+
+    // Allocate the wrapper promise plus resolve/reject closures pointing at it.
+    let new_promise = js_promise_new();
+    let promise_i64 = new_promise as i64;
+
+    let resolve_closure =
+        crate::closure::js_closure_alloc(promise_resolve_fn as *const u8, 1);
+    crate::closure::js_closure_set_capture_ptr(resolve_closure, 0, promise_i64);
+    let reject_closure =
+        crate::closure::js_closure_alloc(promise_reject_fn as *const u8, 1);
+    crate::closure::js_closure_set_capture_ptr(reject_closure, 0, promise_i64);
+
+    // The user's `then(onFulfilled, onRejected)` reads each parameter as a
+    // raw f64 closure pointer (matching the convention used by
+    // `js_promise_new_with_executor`).
+    let resolve_f64 = f64::from_bits(resolve_closure as u64);
+    let reject_f64 = f64::from_bits(reject_closure as u64);
+
+    // Invoke `value.then(resolve, reject)` via the vtable. Mirrors
+    // `call_vtable_method` in object.rs: NaN-box `this` with POINTER_TAG so
+    // the method body sees a real instance pointer.
+    let this_f64 = f64::from_bits(JSValue::pointer(obj_ptr as *mut u8).bits());
+    unsafe {
+        match then_param_count {
+            0 => {
+                let f: extern "C" fn(f64) -> f64 = std::mem::transmute(then_func_ptr);
+                f(this_f64);
+            }
+            1 => {
+                let f: extern "C" fn(f64, f64) -> f64 = std::mem::transmute(then_func_ptr);
+                f(this_f64, resolve_f64);
+            }
+            _ => {
+                // 2+ params: pass resolve/reject; any extra slots arrive as NaN.
+                let f: extern "C" fn(f64, f64, f64) -> f64 =
+                    std::mem::transmute(then_func_ptr);
+                f(this_f64, resolve_f64, reject_f64);
+            }
+        }
+    }
+
+    crate::value::js_nanbox_pointer(new_promise as i64)
 }
 
 /// Build a `{ status: "fulfilled", value: v }` object for Promise.allSettled.
