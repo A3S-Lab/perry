@@ -19,10 +19,12 @@ works unchanged.
 ## Supported Packages
 
 ### Networking & HTTP
-- **fastify** — HTTP server framework
-- **axios** — HTTP client
-- **node-fetch** / **fetch** — HTTP fetch API
-- **ws** — WebSocket client/server
+- **node:http** / **node:https** / **node:http2** — Node.js stdlib HTTP server modules + WebSocket upgrade dispatch (issue #577). The full `IncomingMessage` / `ServerResponse` surface plus TLS via rustls and HTTP/2 via ALPN. See [HTTP & Networking](http.md#nodejs-compatibility--nodehttp--nodehttps--nodehttp2).
+- **hono** — runtime-agnostic web framework. `app.fetch` works end-to-end via `compilePackages` (testing + edge runtimes). Long-lived port-listening server pattern is currently blocked on [#589](https://github.com/PerryTS/perry/issues/589). See [HTTP & Networking → Hono](http.md#hono).
+- **fastify** — HTTP server framework (native binding, separate from node:http).
+- **axios** — HTTP client.
+- **node-fetch** / **fetch** — HTTP fetch API.
+- **ws** — WebSocket client/server.
 
 ### Databases
 - **mysql2** — MySQL client

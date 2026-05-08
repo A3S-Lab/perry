@@ -65,6 +65,56 @@ already a fully-connected client — drive it via the standard
 `wsId.on('message', cb)` / `wsId.send(msg)` / `wsId.close()` surface
 that standalone `WebSocketServer({ port })` clients use.
 
+## Hono
+
+[Hono](https://hono.dev/) is a runtime-agnostic web framework whose only
+required interface is `app.fetch(req: Request) → Promise<Response>`. Add
+it to `perry.compilePackages` and the entire `app.fetch` surface
+including middleware (`hono/logger`, `hono/cors`, `hono/jwt`), route
+groups, and JSON responses works unchanged (issues #421, #486, #487
+closed). `app.fetch` is enough for testing, edge-runtime deployments
+(Cloudflare Workers / Vercel Edge / AWS Lambda / Deno Deploy — those
+runtimes call `app.fetch` themselves), and any scenario where some
+outer host hands you a `Request`.
+
+```typescript
+import { Hono } from "hono"
+import { logger } from "hono/logger"
+
+const app = new Hono()
+app.use("*", logger())
+app.get("/", (c) => c.json({ message: "hello", ok: true }))
+
+// app.fetch() works end-to-end — feed it a Request, get a Response.
+const res = await app.fetch(new Request("http://localhost/"))
+console.log(res.status, await res.text())
+
+export default app  // for CF Workers / similar runtimes
+```
+
+`package.json`:
+
+```json
+{
+  "perry": {
+    "compilePackages": ["hono"]
+  }
+}
+```
+
+### Long-lived HTTP server (port-listening) — currently blocked
+
+The canonical "deploy a hono app as a native binary on a Linux VM"
+pattern — `serve({ fetch: app.fetch, port: 3000 })` via
+`@hono/node-server`, or a hand-rolled `node:http` adapter that drives
+`app.fetch` — currently fails to link because the Web Fetch FFIs
+(`Headers` / `Response` constructors) aren't pulled in alongside
+perry-ext-http-server. Tracked at [issue #589](https://github.com/PerryTS/perry/issues/589).
+
+Workaround until #589 lands: deploy as an edge-runtime worker (CF
+Workers / Vercel Edge), or use [perry's Fastify binding](#fastify-server)
+with a single catch-all route delegating to `app.fetch`.
+
 ## Fastify Server
 
 ```typescript

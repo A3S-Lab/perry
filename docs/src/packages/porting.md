@@ -13,6 +13,18 @@ Perry compiles a practical subset of TypeScript. Most pure TS/JS packages can be
 | Package's core API is built on `Proxy` (ORMs, validation DSLs, reactive stores) | **Probably not portable.** The surface Perry-users touch is the Proxy. |
 | Package is pure TS/JS but uses lookbehind regex, `Symbol`, `WeakMap`, etc. | **Patchable.** See [Common gaps](#common-gaps) below. |
 
+### Known-working packages
+
+These work end-to-end via `compilePackages` with no patches required:
+
+- **`hono`** — the full hono `app.fetch` surface including middleware
+  (`hono/logger`, `hono/cors`, `hono/jwt`), route groups, JSON responses.
+  Enough for testing and edge-runtime deploys (CF Workers / Vercel Edge /
+  Lambda / Deno Deploy). See [HTTP & Networking → Hono](../stdlib/http.md#hono).
+  Long-lived HTTP server deployment via `@hono/node-server` or hand-rolled
+  `node:http` is currently blocked on [#589](https://github.com/PerryTS/perry/issues/589).
+  Closed via issues #421 / #486 / #487 / #577.
+
 ## The workflow
 
 ### 1. Add it to `compilePackages`
