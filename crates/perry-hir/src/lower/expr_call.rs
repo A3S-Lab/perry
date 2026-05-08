@@ -4106,6 +4106,33 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                     } else {
                                         false
                                     }
+                                } else if let (
+                                    ast::Expr::Ident(obj_ident),
+                                    ast::MemberProp::Ident(prop_ident),
+                                ) = (inner.obj.as_ref(), &inner.prop)
+                                {
+                                    // Closes #589 (runtime path): `r.headers.forEach(cb)`
+                                    // where `r` is a Response/Request (or returned Headers
+                                    // already). Without this guard, the array-method fold
+                                    // catch-all rewrites the call to `Expr::ArrayForEach`
+                                    // and codegen dispatches `js_array_forEach` against a
+                                    // Headers handle — Headers iteration silently no-ops.
+                                    // Bail to the chained-Web-Fetch dispatch in
+                                    // `crates/perry-codegen/src/lower_call.rs:1313`, which
+                                    // routes `.forEach` / `.get` / `.has` / `.keys` /
+                                    // `.values` / `.entries` through the Headers FFI.
+                                    let is_fetch_headers =
+                                        prop_ident.sym.as_ref() == "headers"
+                                            && matches!(
+                                                ctx.lookup_native_instance(obj_ident.sym.as_ref()),
+                                                Some(("fetch", _)) | Some(("Request", _))
+                                                    | Some(("Headers", _))
+                                            );
+                                    if is_fetch_headers {
+                                        true
+                                    } else {
+                                        false
+                                    }
                                 } else {
                                     false
                                 }

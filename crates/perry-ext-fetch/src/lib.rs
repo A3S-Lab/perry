@@ -28,6 +28,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 const STRING_TAG: u64 = 0x7FFF_0000_0000_0000;
+const POINTER_TAG: u64 = 0x7FFD_0000_0000_0000;
+const TAG_UNDEFINED: u64 = 0x7FFC_0000_0000_0001;
 
 unsafe fn read_str(ptr: *const StringHeader) -> Option<String> {
     if ptr.is_null() {
@@ -35,6 +37,25 @@ unsafe fn read_str(ptr: *const StringHeader) -> Option<String> {
     }
     let h = JsString::from_raw(ptr as *mut StringHeader);
     perry_ffi::read_string(h).map(String::from)
+}
+
+/// Decode a Web Fetch handle (Response / Headers / Request / Blob) from
+/// the f64 the codegen passes across the FFI. Mirrors perry-stdlib's
+/// `handle_id` (refs #421 Phase 1 + #589 follow-up): accepts both the
+/// NaN-boxed POINTER_TAG form (top-16 ≥ 0x7FF8) and the legacy raw-float
+/// form (`1.0` = id 1) so callers see the same id regardless of which
+/// staticlib produced the handle.
+#[inline]
+fn handle_id(value: f64) -> usize {
+    let bits = value.to_bits();
+    let top16 = bits >> 48;
+    if top16 >= 0x7FF8 {
+        (bits & 0x0000_FFFF_FFFF_FFFF) as usize
+    } else if top16 == 0 && bits != 0 {
+        bits as usize
+    } else {
+        value as usize
+    }
 }
 
 fn nanbox_string(ptr: *mut StringHeader) -> u64 {
@@ -325,10 +346,18 @@ pub unsafe extern "C" fn js_fetch_with_options(
 }
 
 // ── Response handle accessors ─────────────────────────────────────
+//
+// All response/headers/request accessors take `handle: f64` to match
+// perry-stdlib's signature. The codegen-side dispatch (declared in
+// `crates/perry-codegen/src/runtime_decls.rs:1072-1082`) passes DOUBLE
+// for these calls; an `i64` Rust signature would put the bits in a
+// general register (x0 on aarch64) while the call site put them in a
+// floating-point register (d0), and the function would read garbage —
+// the `Invalid response handle` symptom of #589's runtime path.
 
 #[no_mangle]
-pub extern "C" fn js_fetch_response_status(handle: i64) -> f64 {
-    let id = handle as usize;
+pub extern "C" fn js_fetch_response_status(handle: f64) -> f64 {
+    let id = handle_id(handle);
     FETCH_RESPONSES
         .lock()
         .unwrap()
@@ -338,8 +367,8 @@ pub extern "C" fn js_fetch_response_status(handle: i64) -> f64 {
 }
 
 #[no_mangle]
-pub extern "C" fn js_fetch_response_status_text(handle: i64) -> *mut StringHeader {
-    let id = handle as usize;
+pub extern "C" fn js_fetch_response_status_text(handle: f64) -> *mut StringHeader {
+    let id = handle_id(handle);
     let g = FETCH_RESPONSES.lock().unwrap();
     match g.get(&id) {
         Some(r) => alloc_string(&r.status_text).as_raw(),
@@ -348,8 +377,8 @@ pub extern "C" fn js_fetch_response_status_text(handle: i64) -> *mut StringHeade
 }
 
 #[no_mangle]
-pub extern "C" fn js_fetch_response_ok(handle: i64) -> f64 {
-    let id = handle as usize;
+pub extern "C" fn js_fetch_response_ok(handle: f64) -> f64 {
+    let id = handle_id(handle);
     let g = FETCH_RESPONSES.lock().unwrap();
     match g.get(&id) {
         Some(r) if (200..300).contains(&r.status) => 1.0,
@@ -360,10 +389,10 @@ pub extern "C" fn js_fetch_response_ok(handle: i64) -> f64 {
 /// # Safety
 /// `handle` must come from a previous `js_fetch_*` resolution.
 #[no_mangle]
-pub unsafe extern "C" fn js_fetch_response_text(handle: i64) -> *mut Promise {
+pub unsafe extern "C" fn js_fetch_response_text(handle: f64) -> *mut Promise {
     let promise = JsPromise::new();
     let raw = promise.as_raw();
-    let id = handle as usize;
+    let id = handle_id(handle);
     let body = FETCH_RESPONSES
         .lock()
         .unwrap()
@@ -382,10 +411,10 @@ pub unsafe extern "C" fn js_fetch_response_text(handle: i64) -> *mut Promise {
 /// # Safety
 /// `handle` must come from a previous `js_fetch_*` resolution.
 #[no_mangle]
-pub unsafe extern "C" fn js_fetch_response_json(handle: i64) -> *mut Promise {
+pub unsafe extern "C" fn js_fetch_response_json(handle: f64) -> *mut Promise {
     let promise = JsPromise::new();
     let raw = promise.as_raw();
-    let id = handle as usize;
+    let id = handle_id(handle);
     let body = FETCH_RESPONSES
         .lock()
         .unwrap()
@@ -561,7 +590,7 @@ pub unsafe extern "C" fn js_headers_set(
     key_ptr: *const StringHeader,
     value_ptr: *const StringHeader,
 ) -> f64 {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let Some(key) = read_str(key_ptr) else {
         return 0.0;
     };
@@ -582,7 +611,7 @@ pub unsafe extern "C" fn js_headers_get(
     handle: f64,
     key_ptr: *const StringHeader,
 ) -> *mut StringHeader {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let Some(key) = read_str(key_ptr) else {
         return std::ptr::null_mut();
     };
@@ -597,7 +626,7 @@ pub unsafe extern "C" fn js_headers_get(
 /// `key_ptr` must be null or a Perry-runtime `StringHeader`.
 #[no_mangle]
 pub unsafe extern "C" fn js_headers_has(handle: f64, key_ptr: *const StringHeader) -> f64 {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let Some(key) = read_str(key_ptr) else {
         return 0.0;
     };
@@ -616,7 +645,7 @@ pub unsafe extern "C" fn js_headers_has(handle: f64, key_ptr: *const StringHeade
 /// `key_ptr` must be null or a Perry-runtime `StringHeader`.
 #[no_mangle]
 pub unsafe extern "C" fn js_headers_delete(handle: f64, key_ptr: *const StringHeader) -> f64 {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let Some(key) = read_str(key_ptr) else {
         return 0.0;
     };
@@ -629,61 +658,159 @@ pub unsafe extern "C" fn js_headers_delete(handle: f64, key_ptr: *const StringHe
     0.0
 }
 
-/// `headers.forEach(callback)` — invoke callback(value, key) for each entry.
-#[no_mangle]
-pub extern "C" fn js_headers_for_each(handle: f64, callback: f64) -> f64 {
-    let id = handle as usize;
-    let cb_bits = callback.to_bits();
-    let cb_ptr = (cb_bits & 0x0000_FFFF_FFFF_FFFF) as *const RawClosureHeader;
-    if cb_ptr.is_null() {
-        return 0.0;
-    }
-    let entries: Vec<(String, String)> = HEADERS_HANDLES
+/// Snapshot the headers under `handle` as a sorted-by-key vec. WHATWG
+/// Fetch spec calls for iteration order to be sorted lexicographically
+/// by header name; perry-stdlib's matching helper does the same (refs
+/// #576 in CLAUDE.md). Used by forEach / keys / values / entries.
+fn snapshot_sorted(handle: f64) -> Vec<(String, String)> {
+    let id = handle_id(handle);
+    let mut entries: Vec<(String, String)> = HEADERS_HANDLES
         .lock()
         .unwrap()
         .get(&id)
         .map(|h| h.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
         .unwrap_or_default();
-    for (key, value) in &entries {
-        let key_str = alloc_string(key);
-        let value_str = alloc_string(value);
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+}
+
+/// `headers.forEach(callback)` — invoke callback(value, key) for each
+/// entry. Iteration order is WHATWG-Fetch sorted-by-key (spec-compliant
+/// — perry-stdlib's copy applies the same sort, refs #576).
+#[no_mangle]
+pub extern "C" fn js_headers_for_each(handle: f64, callback: f64) -> f64 {
+    let cb_bits = callback.to_bits();
+    let cb_ptr = (cb_bits & 0x0000_FFFF_FFFF_FFFF) as *const RawClosureHeader;
+    if cb_ptr.is_null() {
+        return 0.0;
+    }
+    for (key, value) in snapshot_sorted(handle) {
+        let key_str = alloc_string(&key);
+        let value_str = alloc_string(&value);
         let key_v = JsValue::from_string_ptr(key_str.as_raw());
         let value_v = JsValue::from_string_ptr(value_str.as_raw());
         let closure = unsafe { JsClosure::from_raw(cb_ptr) };
         // Web Fetch order is (value, key) per the spec.
         let _ =
             unsafe { closure.call2(f64::from_bits(value_v.bits()), f64::from_bits(key_v.bits())) };
-        let _ = (key_v, value_v); // silence warnings if unused
+        let _ = (key_v, value_v);
     }
     1.0
 }
 
+/// NaN-box a perry-ffi ArrayHeader pointer as a POINTER_TAG f64.
+/// Mirrors perry-stdlib's `nanbox_array_pointer`; codegen unboxes via
+/// `js_nanbox_get_pointer` on the consuming side.
+#[inline]
+fn nanbox_array_ptr(arr: *mut perry_ffi::ArrayHeader) -> f64 {
+    let bits = POINTER_TAG | ((arr as u64) & 0x0000_FFFF_FFFF_FFFF);
+    f64::from_bits(bits)
+}
+
+/// Build a JsValue holding a NaN-boxed string pointer (STRING_TAG).
+#[inline]
+fn js_string_value(s: &str) -> JsValue {
+    JsValue::from_string_ptr(alloc_string(s).as_raw())
+}
+
+/// `headers.keys()` — sorted-by-key string array. Matches perry-stdlib's
+/// equivalent; refs #576 (`for…of headers.keys()` direct iteration plus
+/// spread / Array.from work via the array's own iterator).
+#[no_mangle]
+pub extern "C" fn js_headers_keys(handle: f64) -> f64 {
+    let entries = snapshot_sorted(handle);
+    unsafe {
+        let mut arr = perry_ffi::js_array_alloc(entries.len() as u32);
+        for (k, _) in entries {
+            arr = perry_ffi::js_array_push(arr, js_string_value(&k));
+        }
+        nanbox_array_ptr(arr)
+    }
+}
+
+/// `headers.values()` — sorted-by-key value array. See `js_headers_keys`.
+#[no_mangle]
+pub extern "C" fn js_headers_values(handle: f64) -> f64 {
+    let entries = snapshot_sorted(handle);
+    unsafe {
+        let mut arr = perry_ffi::js_array_alloc(entries.len() as u32);
+        for (_, v) in entries {
+            arr = perry_ffi::js_array_push(arr, js_string_value(&v));
+        }
+        nanbox_array_ptr(arr)
+    }
+}
+
+/// `headers.entries()` — sorted-by-key array of `[key, value]` pair
+/// arrays. `for (const [k, v] of headers.entries())` and the bare
+/// `for (const [k, v] of h)` direct-iteration shape both route here
+/// (the latter via the codegen Symbol.iterator alias added in #576).
+#[no_mangle]
+pub extern "C" fn js_headers_entries(handle: f64) -> f64 {
+    let entries = snapshot_sorted(handle);
+    unsafe {
+        let mut arr = perry_ffi::js_array_alloc(entries.len() as u32);
+        for (k, v) in entries {
+            let mut pair = perry_ffi::js_array_alloc(2);
+            pair = perry_ffi::js_array_push(pair, js_string_value(&k));
+            pair = perry_ffi::js_array_push(pair, js_string_value(&v));
+            // Push the inner pair as a NaN-boxed pointer JsValue so
+            // the outer array's element reads as a real array.
+            let pair_v = JsValue::from_bits(nanbox_array_ptr(pair).to_bits());
+            arr = perry_ffi::js_array_push(arr, pair_v);
+        }
+        nanbox_array_ptr(arr)
+    }
+}
+
 // ── Response advanced ─────────────────────────────────────────────
 
-/// `new Response(body, init)` — minimal: stores body string + status.
+/// `new Response(body, init)` — stores body string + status + statusText
+/// + headers. The `headers_handle` arg matches perry-stdlib's 4-arg shape
+/// (declared in `crates/perry-codegen/src/runtime_decls.rs:1045`); a
+/// 3-arg version dropped the codegen-supplied headers handle on the
+/// floor — `fetchRes.headers.forEach(...)` then iterated an empty map.
 ///
 /// # Safety
-/// All string pointers must be null or Perry-runtime `StringHeader`s.
+/// All string pointers must be null or Perry-runtime `StringHeader`s;
+/// `headers_handle` must be 0.0 / TAG_UNDEFINED or a valid handle id
+/// returned by `js_headers_new`.
 #[no_mangle]
 pub unsafe extern "C" fn js_response_new(
     body_ptr: *const StringHeader,
     status: f64,
     status_text_ptr: *const StringHeader,
+    headers_handle: f64,
 ) -> f64 {
     let body = read_str(body_ptr).unwrap_or_default().into_bytes();
-    let status = status as u16;
+    let status = if status.is_nan() || status == 0.0 {
+        200
+    } else {
+        status as u16
+    };
     let status_text = read_str(status_text_ptr).unwrap_or_else(|| "OK".to_string());
+    let headers_id = handle_id(headers_handle);
+    let headers = if headers_id != 0 {
+        HEADERS_HANDLES
+            .lock()
+            .unwrap()
+            .get(&headers_id)
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
     store_response(FetchResponse {
         status,
         status_text,
-        headers: HashMap::new(),
+        headers,
         body,
     }) as f64
 }
 
 #[no_mangle]
 pub extern "C" fn js_response_get_headers(handle: f64) -> f64 {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let headers = FETCH_RESPONSES
         .lock()
         .unwrap()
@@ -695,7 +822,7 @@ pub extern "C" fn js_response_get_headers(handle: f64) -> f64 {
 
 #[no_mangle]
 pub extern "C" fn js_response_clone(handle: f64) -> f64 {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let cloned = FETCH_RESPONSES.lock().unwrap().get(&id).cloned();
     match cloned {
         Some(r) => store_response(r) as f64,
@@ -709,7 +836,7 @@ pub extern "C" fn js_response_clone(handle: f64) -> f64 {
 pub unsafe extern "C" fn js_response_array_buffer(handle: f64) -> *mut Promise {
     let promise = JsPromise::new();
     let raw = promise.as_raw();
-    let id = handle as usize;
+    let id = handle_id(handle);
     let body = FETCH_RESPONSES
         .lock()
         .unwrap()
@@ -733,7 +860,7 @@ pub unsafe extern "C" fn js_response_array_buffer(handle: f64) -> *mut Promise {
 pub unsafe extern "C" fn js_response_blob(handle: f64) -> *mut Promise {
     let promise = JsPromise::new();
     let raw = promise.as_raw();
-    let id = handle as usize;
+    let id = handle_id(handle);
     let cloned = FETCH_RESPONSES.lock().unwrap().get(&id).cloned();
     match cloned {
         Some(r) => {
@@ -755,7 +882,7 @@ pub unsafe extern "C" fn js_response_blob(handle: f64) -> *mut Promise {
 
 #[no_mangle]
 pub extern "C" fn js_response_body(handle: f64) -> f64 {
-    let id = handle as usize;
+    let id = handle_id(handle);
     if FETCH_RESPONSES.lock().unwrap().contains_key(&id) {
         // Return the same handle as a stub stream id; fully wiring
         // ReadableStream is a followup (matches perry-stdlib's
@@ -932,15 +1059,22 @@ pub extern "C" fn js_blob_stream(handle: f64) -> f64 {
 
 // ── Request ───────────────────────────────────────────────────────
 
-/// `new Request(url, init)` — minimal; stores url/method/body.
+/// `new Request(url, init)` — stores url/method/body. The `headers_handle`
+/// arg matches perry-stdlib's 4-arg shape (declared in
+/// `crates/perry-codegen/src/runtime_decls.rs:1064`); it's currently ignored
+/// at the storage level (perry-ext-fetch's RequestData has no headers field
+/// yet), but accepting the arg keeps the ABI in sync with codegen so the f64
+/// arg lands in the right register.
 ///
 /// # Safety
-/// All string pointers must be null or Perry-runtime `StringHeader`s.
+/// All string pointers must be null or Perry-runtime `StringHeader`s;
+/// `headers_handle` must be 0.0 / TAG_UNDEFINED or a valid handle id.
 #[no_mangle]
 pub unsafe extern "C" fn js_request_new(
     url_ptr: *const StringHeader,
     method_ptr: *const StringHeader,
     body_ptr: *const StringHeader,
+    _headers_handle: f64,
 ) -> f64 {
     let url = read_str(url_ptr).unwrap_or_default();
     let method = read_str(method_ptr).unwrap_or_else(|| "GET".to_string());
@@ -950,7 +1084,7 @@ pub unsafe extern "C" fn js_request_new(
 
 #[no_mangle]
 pub extern "C" fn js_request_get_url(handle: f64) -> *mut StringHeader {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let g = REQUEST_HANDLES.lock().unwrap();
     match g.get(&id) {
         Some(r) => alloc_string(&r.url).as_raw(),
@@ -960,7 +1094,7 @@ pub extern "C" fn js_request_get_url(handle: f64) -> *mut StringHeader {
 
 #[no_mangle]
 pub extern "C" fn js_request_get_method(handle: f64) -> *mut StringHeader {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let g = REQUEST_HANDLES.lock().unwrap();
     match g.get(&id) {
         Some(r) => alloc_string(&r.method).as_raw(),
@@ -970,14 +1104,14 @@ pub extern "C" fn js_request_get_method(handle: f64) -> *mut StringHeader {
 
 #[no_mangle]
 pub extern "C" fn js_request_get_body(handle: f64) -> f64 {
-    let id = handle as usize;
+    let id = handle_id(handle);
     let g = REQUEST_HANDLES.lock().unwrap();
     match g.get(&id).and_then(|r| r.body.as_ref()) {
         Some(s) => {
             let ptr = alloc_string(s).as_raw();
             f64::from_bits(STRING_TAG | (ptr as u64 & 0x0000_FFFF_FFFF_FFFF))
         }
-        None => f64::from_bits(0x7FFC_0000_0000_0001), // TAG_UNDEFINED
+        None => f64::from_bits(TAG_UNDEFINED),
     }
 }
 
