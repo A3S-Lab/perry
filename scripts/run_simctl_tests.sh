@@ -48,6 +48,12 @@ PERRY_BIN="${PERRY_BIN:-$REPO_ROOT/target/release/perry}"
 BUNDLE_ID_PREFIX="${BUNDLE_ID_PREFIX:-com.perry.doctests}"
 LAUNCH_TIMEOUT="${LAUNCH_TIMEOUT:-30}"
 
+# Export so the inline `python3 -c '...'` UDID lookup below sees DEVICE.
+# Without this export, callers that set DEVICE via assignment-then-call
+# (rather than `DEVICE=... ./script`) leak through to a python subprocess
+# with DEVICE unset and a KeyError aborts the whole script.
+export DEVICE
+
 # macOS doesn't ship GNU `timeout`. Homebrew's coreutils provides it as
 # `gtimeout`. Fall back to a pure-bash `&+sleep+kill` watchdog if neither
 # is on PATH — slower startup, same guarantee.

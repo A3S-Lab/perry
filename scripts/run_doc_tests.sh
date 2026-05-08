@@ -5,7 +5,11 @@
 # PERRY_UI_TEST_MODE=1), and verifies compile + exit status + optional
 # stdout diffs. Invoked on macOS/Linux CI; Windows uses run_doc_tests.ps1.
 
-set -euo pipefail
+# `set -e` was the original setting, but the release_sweep.sh hook below
+# needs to RUN AFTER cargo exits non-zero (because non-zero is the normal
+# "some doc-tests failed" signal that we want to record in the summary
+# JSON, not a hard abort that skips the summary entirely).
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
