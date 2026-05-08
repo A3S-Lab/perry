@@ -2111,6 +2111,19 @@ pub static PERRY_SYSTEM_TABLE: &[MethodRow] = &[
         args: &[ArgKind::F64],
         ret: ReturnKind::Void,
     },
+    // ---- Deep links: Universal Links / App Links / URL schemes (issue #583) ----
+    MethodRow {
+        method: "appOnOpenUrl",
+        runtime: "perry_system_app_on_open_url",
+        args: &[ArgKind::Closure],
+        ret: ReturnKind::Void,
+    },
+    MethodRow {
+        method: "appGetLaunchUrl",
+        runtime: "perry_system_app_get_launch_url",
+        args: &[],
+        ret: ReturnKind::Str,
+    },
 ];
 
 /// perry/background — deferred / periodic background work (issue #538).

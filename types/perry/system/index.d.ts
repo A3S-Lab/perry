@@ -339,3 +339,91 @@ export function networkOnChange(
 
 /** Cancel a subscription started by `networkOnChange`. No-op on unknown ids. */
 export function networkStopOnChange(id: number): void;
+
+// -----------------------------------------------------------------------------
+// Deep links — Universal Links (iOS) / App Links (Android) / URL schemes (issue #583)
+//
+// Two URL families are unified behind a single callback:
+//
+//   1. Custom schemes: `myapp://chat/abc123`. Tapping such a link from a
+//      notification, a website banner, or another app opens your app and
+//      hands you the URL.
+//   2. Universal / App Links: `https://yourdomain.com/reset?token=…`. These
+//      open the app if installed (and fall through to the browser if not),
+//      so the same link works in Mail / Messages / web.
+//
+// `source` is one of:
+//   - `"cold-start"` — the URL was the launch URL (app was not running).
+//   - `"foreground"` — the app was already running (or backgrounded) and
+//     the OS handed us a URL.
+//
+// On iOS, both arms are wired:
+//   - `application(_:open:options:)` / `scene(_:openURLContexts:)` for
+//     custom schemes.
+//   - `application(_:continue:restorationHandler:)` /
+//     `scene(_:continueUserActivity:)` for Universal Links.
+// On macOS the AppKit `application(_:open:)` and the `kAEGetURL` Apple
+// Event handler cover both.
+// On Android both arms route through `Activity.getIntent().getData()`
+// (cold start) and `onNewIntent` (foreground).
+//
+// Required platform manifest entries — Perry generates these automatically
+// from `package.json`'s `perry.deepLinks` section:
+//
+//   "perry": {
+//     "deepLinks": {
+//       "schemes": ["myapp"],
+//       "universalLinks": {
+//         "ios":     ["myapp.com", "www.myapp.com"],
+//         "android": ["myapp.com", "www.myapp.com"]
+//       }
+//     }
+//   }
+//
+//   - iOS: `CFBundleURLTypes` (custom scheme) + `com.apple.developer.
+//          associated-domains` entitlement (`applinks:<host>`).
+//   - Android: `<intent-filter android:autoVerify="true">` entries for
+//          each scheme + host.
+//
+// Two server-side files YOU still own (Perry doesn't host them — they
+// live on the domain you declare in `universalLinks`):
+//
+//   - https://yourdomain.com/.well-known/apple-app-site-association
+//     (Apple App Site Association — JSON, signed via your team ID +
+//     bundle ID, served with `Content-Type: application/json`).
+//   - https://yourdomain.com/.well-known/assetlinks.json
+//     (Android Asset Links — JSON, lists the SHA-256 fingerprint of your
+//     APK signing certificate).
+//
+// Without those files on the host, iOS / Android refuse to associate the
+// domain with the app and the link falls through to the browser. Once
+// they're in place, `appOnOpenUrl` fires.
+//
+// Other targets (tvOS / visionOS / watchOS / GTK4 / Windows / Web): the
+// platform's URL surface is either nonexistent or different (Windows Toast
+// activations, Web window.location). Stubs never invoke the callback;
+// `appGetLaunchUrl()` returns `""`.
+// -----------------------------------------------------------------------------
+
+/**
+ * Register the deep-link handler. The callback fires when the OS hands us a
+ * URL — whether at launch, while running, or when transitioning from the
+ * background. Setting a fresh handler replaces the previous one.
+ *
+ * If the app was launched by a deep link (`source = "cold-start"`), the
+ * callback fires once on registration with the launch URL — so registering
+ * the handler at module load time is enough; no separate `appGetLaunchUrl`
+ * read is required for the cold-start flow.
+ */
+export function appOnOpenUrl(
+    cb: (url: string, source: "cold-start" | "foreground") => void,
+): void;
+
+/**
+ * Read the URL that launched the app, if any. Returns `""` when the app was
+ * launched normally (icon tap, system, dock). Useful when the cold-start
+ * flow needs to read the URL synchronously before the first frame —
+ * otherwise prefer `appOnOpenUrl`, which delivers the same URL through the
+ * unified callback path.
+ */
+export function appGetLaunchUrl(): string;

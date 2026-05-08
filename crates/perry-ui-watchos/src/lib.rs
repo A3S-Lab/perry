@@ -1435,6 +1435,7 @@ pub extern "C" fn perry_media_destroy(handle: f64) {
 
 pub mod issue_552_stub;
 pub mod network_stub;
+pub mod deeplinks_stub;
 
 // =============================================================================
 // Issue #553 — BottomNavigation, pull-to-refresh on LazyVStack, onScrollEnd,

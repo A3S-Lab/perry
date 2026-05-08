@@ -158,6 +158,43 @@ define_class!(
                 );
             }
         }
+
+        /// Custom URL scheme delivery (issue #583). Fires when the app is
+        /// already running and the OS hands us a `myapp://…` URL.
+        ///
+        /// On scene-based apps the equivalent path is
+        /// `scene(_:openURLContexts:)`; UIKit calls one or the other,
+        /// never both, so wiring both surfaces is safe.
+        #[unsafe(method(application:openURL:options:))]
+        fn application_open_url(
+            &self,
+            _app: &AnyObject,
+            url: &AnyObject,
+            _options: &AnyObject,
+        ) -> bool {
+            unsafe {
+                crate::deeplinks::dispatch_app_open_url(url as *const AnyObject);
+            }
+            true
+        }
+
+        /// Universal Link delivery (issue #583). The `userActivity` is an
+        /// `NSUserActivity` whose `webpageURL` is the
+        /// `https://yourdomain.com/path?…` link.
+        #[unsafe(method(application:continueUserActivity:restorationHandler:))]
+        fn application_continue_user_activity(
+            &self,
+            _app: &AnyObject,
+            user_activity: &AnyObject,
+            _restoration_handler: *const AnyObject,
+        ) -> bool {
+            unsafe {
+                crate::deeplinks::dispatch_continue_user_activity(
+                    user_activity as *const AnyObject,
+                );
+            }
+            true
+        }
     }
 );
 
@@ -168,8 +205,13 @@ unsafe extern "C" fn scene_will_connect(
     _sel: *const std::ffi::c_void,
     scene: *mut AnyObject,
     _session: *mut AnyObject,
-    _options: *mut AnyObject,
+    options: *mut AnyObject,
 ) {
+    // Issue #583: drain any cold-start URLs / Universal-Link activities
+    // out of the scene-connection options BEFORE the JS module's
+    // `appOnOpenUrl(...)` call has had a chance to register a handler.
+    // The deeplinks module caches the URL until a handler arrives.
+    crate::deeplinks::dispatch_scene_connection_options(options as *const AnyObject);
     let mtm = MainThreadMarker::new().expect("perry/ui must run on the main thread");
 
     // Create UIWindow attached to the scene (UIWindowScene)
@@ -307,6 +349,28 @@ extern "C" {
     fn objc_getProtocol(name: *const i8) -> *const std::ffi::c_void;
 }
 
+/// SceneDelegate `scene(_:openURLContexts:)` — custom-scheme delivery
+/// while the app is running (issue #583).
+unsafe extern "C" fn scene_open_url_contexts(
+    _this: *mut AnyObject,
+    _sel: *const std::ffi::c_void,
+    _scene: *mut AnyObject,
+    contexts: *mut AnyObject,
+) {
+    crate::deeplinks::dispatch_scene_open_url_contexts(contexts as *const AnyObject);
+}
+
+/// SceneDelegate `scene(_:continueUserActivity:)` — Universal Link
+/// delivery while the app is running (issue #583).
+unsafe extern "C" fn scene_continue_user_activity(
+    _this: *mut AnyObject,
+    _sel: *const std::ffi::c_void,
+    _scene: *mut AnyObject,
+    activity: *mut AnyObject,
+) {
+    crate::deeplinks::dispatch_continue_user_activity(activity as *const AnyObject);
+}
+
 /// Register the PerrySceneDelegate class dynamically at runtime.
 fn register_scene_delegate() {
     unsafe {
@@ -336,6 +400,26 @@ fn register_scene_delegate() {
             sel,
             scene_will_connect as *const std::ffi::c_void,
             c"v@:@@@".as_ptr(),
+        );
+
+        // Issue #583: scene(_:openURLContexts:) — custom-scheme delivery
+        // when the scene is already connected. Type encoding v@:@@.
+        let sel_open = sel_registerName(c"scene:openURLContexts:".as_ptr());
+        class_addMethod(
+            cls,
+            sel_open,
+            scene_open_url_contexts as *const std::ffi::c_void,
+            c"v@:@@".as_ptr(),
+        );
+
+        // Issue #583: scene(_:continueUserActivity:) — Universal Link
+        // delivery when the scene is already connected. Type encoding v@:@@.
+        let sel_continue = sel_registerName(c"scene:continueUserActivity:".as_ptr());
+        class_addMethod(
+            cls,
+            sel_continue,
+            scene_continue_user_activity as *const std::ffi::c_void,
+            c"v@:@@".as_ptr(),
         );
 
         objc_registerClassPair(cls);

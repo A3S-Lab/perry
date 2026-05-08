@@ -2249,6 +2249,21 @@ fn build_and_run_android(
         std::fs::write(&gradle_path, updated)?;
     }
 
+    // Issue #583: inject deep-link intent filters into AndroidManifest.xml
+    // from package.json `perry.deepLinks`. Adds an
+    // `<intent-filter android:autoVerify="true">` block per host for App
+    // Links, plus a per-scheme `<intent-filter>` for custom schemes. The
+    // singleTop launch mode is also enabled so foreground URL deliveries
+    // route through `onNewIntent` instead of relaunching the Activity.
+    let manifest_path = build_dir.join("app/src/main/AndroidManifest.xml");
+    if manifest_path.exists() {
+        if let Err(e) = inject_android_deeplinks(&manifest_path, project_root, format) {
+            if let OutputFormat::Text = format {
+                println!("Warning: deep-link intent filters not applied: {}", e);
+            }
+        }
+    }
+
     // Generate gradle wrapper if not present
     let gradlew = build_dir.join("gradlew");
     if !gradlew.exists() {
@@ -2310,6 +2325,142 @@ fn build_and_run_android(
 
     // Install and launch
     install_and_launch_android(&apk_path, bundle_id, serial, format)
+}
+
+/// Issue #583 — read `package.json` `perry.deepLinks` and rewrite the
+/// AndroidManifest.xml inside the materialized template directory:
+///
+///   1. Insert one `<intent-filter android:autoVerify="true">` per host
+///      under `universalLinks.android` (App Links — the host's
+///      `assetlinks.json` MUST be served on `https://<host>/.well-
+///      known/assetlinks.json` for autoVerify to work; that file is the
+///      app developer's responsibility per the issue).
+///   2. Insert one `<intent-filter>` per `schemes[*]` (custom-scheme
+///      delivery — e.g. `myapp://chat/abc`).
+///   3. Add `android:launchMode="singleTop"` to the activity tag so a
+///      foreground URL delivery hits `onNewIntent` instead of relaunching
+///      the Activity (and replaying the cold-start path with the new
+///      URL).
+///
+/// All three mutations are scoped to the existing
+/// `<activity android:name=".PerryActivity">` block in the template.
+/// The function is best-effort: package.json missing or no deepLinks
+/// section → no-op.
+fn inject_android_deeplinks(
+    manifest_path: &Path,
+    project_root: &Path,
+    format: OutputFormat,
+) -> Result<()> {
+    // Walk up from project_root to find package.json.
+    let mut dir: PathBuf = project_root.to_path_buf();
+    let mut deeplinks: Option<serde_json::Value> = None;
+    for _ in 0..6 {
+        let pkg = dir.join("package.json");
+        if pkg.exists() {
+            let data = std::fs::read_to_string(&pkg)?;
+            let pkg_val: serde_json::Value = serde_json::from_str(&data)?;
+            if let Some(dl) = pkg_val.get("perry").and_then(|p| p.get("deepLinks")) {
+                deeplinks = Some(dl.clone());
+            }
+            break;
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    let deeplinks = match deeplinks {
+        Some(d) => d,
+        None => return Ok(()), // No deepLinks section — leave manifest alone.
+    };
+
+    let mut manifest = std::fs::read_to_string(manifest_path)?;
+
+    // Build the intent-filter blocks.
+    let mut intent_filters = String::new();
+
+    // Universal Links → App Links intent filter (autoVerify="true",
+    // android:scheme="https", android:host="...", BROWSABLE category).
+    if let Some(hosts) = deeplinks
+        .get("universalLinks")
+        .and_then(|u| u.get("android"))
+        .and_then(|v| v.as_array())
+    {
+        for h in hosts {
+            if let Some(host) = h.as_str() {
+                intent_filters.push_str(&format!(
+                    "            <intent-filter android:autoVerify=\"true\">\n                <action android:name=\"android.intent.action.VIEW\" />\n                <category android:name=\"android.intent.category.DEFAULT\" />\n                <category android:name=\"android.intent.category.BROWSABLE\" />\n                <data android:scheme=\"https\" android:host=\"{host}\" />\n            </intent-filter>\n",
+                    host = host
+                ));
+            }
+        }
+    }
+
+    // Custom schemes — `myapp://…` intent filter.
+    if let Some(schemes) = deeplinks.get("schemes").and_then(|s| s.as_array()) {
+        for s in schemes {
+            if let Some(scheme) = s.as_str() {
+                intent_filters.push_str(&format!(
+                    "            <intent-filter>\n                <action android:name=\"android.intent.action.VIEW\" />\n                <category android:name=\"android.intent.category.DEFAULT\" />\n                <category android:name=\"android.intent.category.BROWSABLE\" />\n                <data android:scheme=\"{scheme}\" />\n            </intent-filter>\n",
+                    scheme = scheme
+                ));
+            }
+        }
+    }
+
+    if intent_filters.is_empty() {
+        return Ok(());
+    }
+
+    // Locate the existing PerryActivity's <intent-filter> for
+    // android.intent.action.MAIN — we insert the deep-link filters
+    // immediately AFTER that block, still inside <activity>.
+    let activity_marker = "android:name=\".PerryActivity\"";
+    let activity_pos = manifest
+        .find(activity_marker)
+        .ok_or_else(|| anyhow!("PerryActivity tag not found in AndroidManifest.xml"))?;
+
+    // Add launchMode=singleTop to the activity tag if not already present.
+    // The template has android:configChanges right after android:exported,
+    // which is a safe insertion point.
+    if !manifest[activity_pos..]
+        .lines()
+        .take(8)
+        .any(|l| l.contains("android:launchMode"))
+    {
+        manifest = manifest.replacen(
+            "android:configChanges=",
+            "android:launchMode=\"singleTop\"\n            android:configChanges=",
+            1,
+        );
+    }
+
+    // Re-find the MAIN intent-filter close tag after the launchMode edit.
+    let main_close = manifest
+        .find("</intent-filter>")
+        .ok_or_else(|| anyhow!("PerryActivity MAIN intent-filter not found"))?;
+    let insert_at = main_close + "</intent-filter>".len();
+    manifest.insert_str(insert_at, &format!("\n{}", intent_filters.trim_end()));
+
+    std::fs::write(manifest_path, &manifest)?;
+
+    if let OutputFormat::Text = format {
+        let scheme_count = deeplinks
+            .get("schemes")
+            .and_then(|s| s.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let host_count = deeplinks
+            .get("universalLinks")
+            .and_then(|u| u.get("android"))
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        println!(
+            "  Deep links: {} scheme(s) + {} App Link host(s) → AndroidManifest.xml",
+            scheme_count, host_count
+        );
+    }
+    Ok(())
 }
 
 /// Sign an unsigned APK with the Android debug keystore for local testing.

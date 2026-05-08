@@ -743,6 +743,77 @@ object PerryBridge {
         networkListeners.remove(id)
     }
 
+    // ─── Deep links (issue #583) ───────────────────────────────────────────
+    //
+    // Single-handler model matching iOS / macOS — `appOnOpenUrl` replaces
+    // the previous handler. `pendingColdStartUrl` is captured before the
+    // handler is registered (cold-start URL arrives via the Activity's
+    // onCreate before the JS module's appOnOpenUrl call has run); the
+    // first `appOnOpenUrl` drains it. `lastLaunchUrl` is the cached cold-
+    // start URL exposed via `appGetLaunchUrl`; cleared once the handler
+    // has consumed it so a re-launch's URL doesn't shadow.
+
+    private var deepLinkHandlerKey: Long = 0L
+    private var pendingColdStartUrl: String? = null
+    private var lastLaunchUrl: String = ""
+    private var appLaunched: Boolean = false
+
+    /// Called from the Activity's `onCreate` after `intent.data` is read.
+    /// If the JS handler is already registered (rare but possible — a
+    /// quick-spawned native thread might race ahead), fires immediately;
+    /// otherwise caches until `appOnOpenUrl` arrives.
+    @JvmStatic
+    fun onDeepLinkColdStart(url: String?) {
+        if (url.isNullOrEmpty()) return
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            uiHandler.post { onDeepLinkColdStart(url) }
+            return
+        }
+        lastLaunchUrl = url
+        if (deepLinkHandlerKey != 0L) {
+            nativeInvokeDeepLinkCallback(deepLinkHandlerKey, url, "cold-start")
+        } else {
+            pendingColdStartUrl = url
+        }
+    }
+
+    /// Called from `onNewIntent` when the OS hands the running Activity
+    /// a fresh URL.
+    @JvmStatic
+    fun onDeepLinkForeground(url: String?) {
+        if (url.isNullOrEmpty()) return
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            uiHandler.post { onDeepLinkForeground(url) }
+            return
+        }
+        lastLaunchUrl = url
+        if (deepLinkHandlerKey != 0L) {
+            nativeInvokeDeepLinkCallback(deepLinkHandlerKey, url, "foreground")
+        }
+        // No handler — drop. Foreground deliveries can't be replayed
+        // without a listener; stashing them would mask logic bugs in user
+        // code (forgetting to register the handler).
+    }
+
+    @JvmStatic
+    fun appOnOpenUrl(callbackKey: Long) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            uiHandler.post { appOnOpenUrl(callbackKey) }
+            return
+        }
+        deepLinkHandlerKey = callbackKey
+        val pending = pendingColdStartUrl
+        pendingColdStartUrl = null
+        if (pending != null) {
+            nativeInvokeDeepLinkCallback(callbackKey, pending, "cold-start")
+        }
+    }
+
+    @JvmStatic
+    fun appGetLaunchUrl(): String {
+        return lastLaunchUrl
+    }
+
     // --- Image picker (issue #552) ---
 
     @JvmStatic
@@ -1354,6 +1425,11 @@ object PerryBridge {
     // Issue #582: network reachability — `(connected, kind)` argument pair.
     @JvmStatic
     external fun nativeInvokeNetworkCallback(key: Long, connected: Boolean, kind: String)
+
+    // Issue #583: deep links — `(url, source)` argument pair where source
+    // is `"cold-start"` or `"foreground"`.
+    @JvmStatic
+    external fun nativeInvokeDeepLinkCallback(key: Long, url: String, source: String)
 
     // =====================================================================
     // MapView (issue #517) — Google Maps SDK for Android.

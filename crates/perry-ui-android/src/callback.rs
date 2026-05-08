@@ -275,6 +275,36 @@ pub extern "C" fn Java_com_perry_app_PerryBridge_nativeInvokeCallbackWithStringA
     pump_microtasks();
 }
 
+/// JNI entry point for the issue #583 deep-link callback. Java signature:
+/// `nativeInvokeDeepLinkCallback(long key, String url, String source)`.
+/// Builds the NaN-boxed `(url, source)` argument pair and dispatches to
+/// the registered Perry closure. `source` is `"cold-start"` or
+/// `"foreground"`.
+#[no_mangle]
+pub extern "C" fn Java_com_perry_app_PerryBridge_nativeInvokeDeepLinkCallback(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    key: jni::sys::jlong,
+    url: jni::objects::JString,
+    source: jni::objects::JString,
+) {
+    let url_str: String = env.get_string(&url).map(|s| s.into()).unwrap_or_default();
+    let source_str: String = env
+        .get_string(&source)
+        .map(|s| s.into())
+        .unwrap_or_default();
+    let url_jsval = unsafe {
+        let p = js_string_from_bytes(url_str.as_ptr(), url_str.len() as i64);
+        js_nanbox_string(p as i64)
+    };
+    let source_jsval = unsafe {
+        let p = js_string_from_bytes(source_str.as_ptr(), source_str.len() as i64);
+        js_nanbox_string(p as i64)
+    };
+    invoke2(key as i64, url_jsval, source_jsval);
+    pump_microtasks();
+}
+
 /// JNI entry point for the issue #582 network reachability callback. Java
 /// signature: `nativeInvokeNetworkCallback(long key, boolean connected, String kind)`.
 /// Builds the NaN-boxed `(connected, kind)` argument pair and dispatches to

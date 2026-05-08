@@ -5,6 +5,7 @@ pub mod dpi_compat;
 pub mod issue_552_stub;
 pub mod media_playback;
 pub mod network_stub;
+pub mod deeplinks_stub;
 
 // Install a vectored exception handler that prints crash info to stderr.
 #[cfg(target_os = "windows")]

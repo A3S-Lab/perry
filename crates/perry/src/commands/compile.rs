@@ -453,6 +453,124 @@ pub struct TargetNativeConfig {
 }
 
 /// Get the Rust target triple for a given perry target string
+/// Issue #583 — read `package.json` `perry.deepLinks` and inject the
+/// generated CFBundleURLTypes into `info_plist`, plus write an
+/// `app.entitlements` file alongside the bundle for any `applinks:`
+/// associated domains. Returns the mutated plist on success, `None` on
+/// any read/parse/write failure (caller falls back to the unmutated
+/// plist — matches existing config-helper convention in this file).
+fn inject_ios_deeplinks(
+    info_plist: &str,
+    input: &std::path::Path,
+    app_dir: &std::path::Path,
+    format: OutputFormat,
+) -> Option<String> {
+    let mut dir = input.canonicalize().ok()?;
+    let mut deeplinks: Option<serde_json::Value> = None;
+    for _ in 0..5 {
+        dir = dir.parent()?.to_path_buf();
+        let pkg = dir.join("package.json");
+        if pkg.exists() {
+            let data = fs::read_to_string(&pkg).ok()?;
+            let pkg_val: serde_json::Value = serde_json::from_str(&data).ok()?;
+            if let Some(dl) = pkg_val.get("perry").and_then(|p| p.get("deepLinks")) {
+                deeplinks = Some(dl.clone());
+            }
+            break;
+        }
+    }
+    let deeplinks = deeplinks?;
+
+    let bundle_id_for_url_name = lookup_bundle_id_from_info_plist(info_plist)
+        .unwrap_or_else(|| "perry.deeplink".to_string());
+
+    // CFBundleURLTypes — one entry per scheme.
+    let mut url_types_xml = String::new();
+    if let Some(schemes) = deeplinks
+        .get("schemes")
+        .and_then(|s| s.as_array())
+        .filter(|a| !a.is_empty())
+    {
+        url_types_xml.push_str("    <key>CFBundleURLTypes</key>\n    <array>\n");
+        for scheme in schemes {
+            if let Some(s) = scheme.as_str() {
+                url_types_xml.push_str(&format!(
+                    "        <dict>\n            <key>CFBundleURLName</key>\n            <string>{bundle}.{name}</string>\n            <key>CFBundleURLSchemes</key>\n            <array>\n                <string>{name}</string>\n            </array>\n        </dict>\n",
+                    bundle = bundle_id_for_url_name,
+                    name = s
+                ));
+            }
+        }
+        url_types_xml.push_str("    </array>\n");
+    }
+
+    // Associated domains entitlement — written to a sidecar
+    // `app.entitlements` file; the user's signing pipeline picks it up.
+    let universal_hosts: Vec<String> = deeplinks
+        .get("universalLinks")
+        .and_then(|u| u.get("ios"))
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|h| h.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !universal_hosts.is_empty() {
+        let mut entitlements = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n    <key>com.apple.developer.associated-domains</key>\n    <array>\n",
+        );
+        for host in &universal_hosts {
+            entitlements.push_str(&format!("        <string>applinks:{}</string>\n", host));
+        }
+        entitlements.push_str("    </array>\n</dict>\n</plist>\n");
+        let entitlements_path = app_dir.join("app.entitlements");
+        fs::write(&entitlements_path, entitlements).ok()?;
+        if let OutputFormat::Text = format {
+            println!(
+                "  Deep links: {} associated domain(s) → {}",
+                universal_hosts.len(),
+                entitlements_path.display()
+            );
+            println!(
+                "  Sign with: codesign --entitlements {} ...",
+                entitlements_path.display()
+            );
+        }
+    }
+
+    if url_types_xml.is_empty() {
+        // Nothing to inject (only universal links configured) — return
+        // the unmutated plist; the entitlements file is written either way.
+        return Some(info_plist.to_string());
+    }
+    if let OutputFormat::Text = format {
+        let scheme_count = deeplinks
+            .get("schemes")
+            .and_then(|s| s.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        println!("  Deep links: {} URL scheme(s) → CFBundleURLTypes", scheme_count);
+    }
+    Some(info_plist.replace(
+        "</dict>\n</plist>",
+        &format!("{}</dict>\n</plist>", url_types_xml),
+    ))
+}
+
+/// Cheap CFBundleIdentifier extraction from an in-memory Info.plist string.
+/// We need it for the CFBundleURLName field (Apple's convention is
+/// `<bundle-id>.<scheme>`). Falls back to `perry.deeplink` when the
+/// expected `<string>...</string>` shape isn't found.
+fn lookup_bundle_id_from_info_plist(info_plist: &str) -> Option<String> {
+    let key = "<key>CFBundleIdentifier</key>";
+    let after_key = info_plist.find(key)? + key.len();
+    let rest = &info_plist[after_key..];
+    let start = rest.find("<string>")? + "<string>".len();
+    let end = rest[start..].find("</string>")?;
+    Some(rest[start..start + end].trim().to_string())
+}
+
 fn rust_target_triple(target: Option<&str>) -> Option<&'static str> {
     match target {
         Some("ios-simulator") | Some("ios-widget-simulator") => Some("aarch64-apple-ios-sim"),
@@ -4766,6 +4884,16 @@ pub fn run_with_parse_cache(
         } else {
             info_plist
         };
+
+        // Issue #583: deep links — append CFBundleURLTypes from
+        // package.json `perry.deepLinks.schemes`, and emit an
+        // `app.entitlements` file with `com.apple.developer.associated-
+        // domains` entries from `perry.deepLinks.universalLinks.ios`.
+        // The entitlements file is referenced by codesign at signing
+        // time; the existing `perry publish` flow picks it up
+        // automatically when present alongside the .app bundle.
+        let info_plist = inject_ios_deeplinks(&info_plist, &args.input, &app_dir, format)
+            .unwrap_or(info_plist);
 
         fs::write(app_dir.join("Info.plist"), info_plist)?;
 

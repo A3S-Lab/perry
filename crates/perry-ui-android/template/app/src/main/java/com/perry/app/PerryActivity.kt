@@ -52,6 +52,12 @@ class PerryActivity : Activity() {
         // Initialize the bridge with this Activity
         PerryBridge.init(this, rootLayout)
 
+        // Issue #583: capture the cold-start URL (if any). Tapping a
+        // `myapp://…` link or a Universal-Link `https://yourdomain.com/…`
+        // launches us with `intent.data` populated. The bridge holds the
+        // URL until the JS module's `appOnOpenUrl` registers its handler.
+        intent?.data?.toString()?.let { PerryBridge.onDeepLinkColdStart(it) }
+
         // Request any dangerous runtime permissions declared in the manifest
         // before starting native code, so they're available when needed.
         val needed = getDangerousPermissionsToRequest()
@@ -107,6 +113,18 @@ class PerryActivity : Activity() {
                 PerryBridge.onGeolocationPermissionResult(granted)
             }
         }
+    }
+
+    /**
+     * Issue #583: foreground deep-link delivery. The OS calls this when the
+     * Activity is already running (singleTop launchMode in the manifest)
+     * and the user taps a deep link — the new URL arrives in this Intent
+     * rather than via a fresh onCreate.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.data?.toString()?.let { PerryBridge.onDeepLinkForeground(it) }
     }
 
     @Deprecated("Required to wire pre-existing file dialog and the issue #552 image picker")

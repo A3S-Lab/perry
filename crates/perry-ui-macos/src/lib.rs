@@ -3,6 +3,7 @@ pub mod audio;
 pub mod background;
 pub mod clipboard;
 pub mod crash_log;
+pub mod deeplinks;
 pub mod file_dialog;
 pub mod geolocation;
 pub mod image_picker;
@@ -1965,6 +1966,21 @@ pub extern "C" fn perry_system_network_on_change(callback: f64) -> f64 {
 #[no_mangle]
 pub extern "C" fn perry_system_network_stop_on_change(id: f64) {
     network::stop_on_change(id);
+}
+
+// ---- Deep links (issue #583) ----
+#[no_mangle]
+pub extern "C" fn perry_system_app_on_open_url(callback: f64) {
+    deeplinks::set_handler(callback);
+}
+#[no_mangle]
+pub extern "C" fn perry_system_app_get_launch_url() -> i64 {
+    let s = deeplinks::launch_url();
+    let bytes = s.as_bytes();
+    extern "C" {
+        fn js_string_from_bytes(ptr: *const u8, len: u32) -> *mut u8;
+    }
+    unsafe { js_string_from_bytes(bytes.as_ptr(), bytes.len() as u32) as i64 }
 }
 
 // ---- perry/background (issue #538) — NSBackgroundActivityScheduler ----

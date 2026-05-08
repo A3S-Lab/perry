@@ -265,6 +265,8 @@ pub(super) fn collect_modules(
                             | "networkGetStatus"
                             | "networkOnChange"
                             | "networkStopOnChange"
+                            | "appOnOpenUrl"
+                            | "appGetLaunchUrl"
                     ),
                     // Namespace imports — opt in conservatively (covers
                     // `import * as system from "perry/system"; system.audioStartRecording()`).

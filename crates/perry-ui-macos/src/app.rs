@@ -480,6 +480,10 @@ pub fn app_run(_app_handle: i64) {
     unsafe {
         let delegate = PerryAppDelegate::new();
         let _: () = msg_send![&*app, setDelegate: &*delegate];
+        // Issue #583: register the kAEGetURL handler so legacy URL-launch
+        // pathways (older Spotlight, AppleScript `open location`) reach the
+        // same dispatch as the AppKit application:openURLs: surface.
+        crate::deeplinks::install_apple_event_handler(&*delegate as *const _ as *const AnyObject);
         std::mem::forget(delegate);
     }
 
@@ -1338,6 +1342,34 @@ define_class!(
                     user_info as *const _ as *mut AnyObject,
                 );
             }
+        }
+
+        /// Issue #583: AppKit URL delivery. AppKit calls this on launch
+        /// (cold-start) and while the app is running (foreground). The
+        /// dispatch helper inspects `mark_launched` to label the source.
+        #[unsafe(method(application:openURLs:))]
+        fn application_open_urls(&self, _app: &AnyObject, urls: &AnyObject) {
+            unsafe {
+                crate::deeplinks::dispatch_open_urls(urls as *const AnyObject);
+            }
+        }
+
+        /// Issue #583: legacy `kAEGetURL` Apple Event. Some launchers
+        /// (older Spotlight, AppleScript `open location`) deliver custom
+        /// schemes through this surface instead of the AppKit method.
+        #[unsafe(method(apple_event_get_url:withReplyEvent:))]
+        fn apple_event_get_url(&self, event: &AnyObject, _reply: &AnyObject) {
+            unsafe {
+                crate::deeplinks::dispatch_apple_event_url(event as *const AnyObject);
+            }
+        }
+
+        /// Issue #583: NSApplication finished launching — flip the
+        /// cold-start gate. Subsequent URL deliveries get
+        /// `source = "foreground"`.
+        #[unsafe(method(applicationDidFinishLaunching:))]
+        fn application_did_finish_launching(&self, _notification: &AnyObject) {
+            crate::deeplinks::mark_launched();
         }
     }
 );

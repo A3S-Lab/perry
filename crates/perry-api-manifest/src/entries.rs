@@ -1639,6 +1639,9 @@ pub static API_MANIFEST: &[ApiEntry] = &[
     method("perry/system", "networkGetStatus", false, None),
     method("perry/system", "networkOnChange", false, None),
     method("perry/system", "networkStopOnChange", false, None),
+    // --- perry/system deep links (issue #583). ---
+    method("perry/system", "appOnOpenUrl", false, None),
+    method("perry/system", "appGetLaunchUrl", false, None),
     // --- perry/background (issue #538) — BGTaskScheduler / WorkManager. ---
     method("perry/background", "registerTask", false, None),
     method("perry/background", "schedule", false, None),
