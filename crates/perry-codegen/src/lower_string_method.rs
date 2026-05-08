@@ -153,19 +153,34 @@ pub(crate) fn lower_string_method(
             Ok(crate::expr::nanbox_pointer_inline(blk, &result_arr))
         }
         // Unary string-returning methods (no args).
-        "toLowerCase" | "toUpperCase" | "trim" | "trimStart" | "trimEnd" => {
-            if !args.is_empty() {
+        // toLocaleLowerCase / toLocaleUpperCase route to the same runtime
+        // fns as toLowerCase / toUpperCase. Without an Intl.* locale system
+        // (a documented categorical gap) Perry can't honor a `locales` arg,
+        // and for the common ASCII/non-Turkic case the output matches Node
+        // byte-for-byte. Closes #592 — Effect's `aliasOrValue` (Cron.ts:846)
+        // is the load-bearing user-impact site.
+        "toLowerCase" | "toUpperCase" | "toLocaleLowerCase" | "toLocaleUpperCase"
+        | "trim" | "trimStart" | "trimEnd" => {
+            // toLocaleLowerCase / toLocaleUpperCase optionally take a
+            // `locales` arg per ECMAScript spec; we evaluate it for side
+            // effects but ignore the value (no Intl support).
+            let allows_locale_arg =
+                matches!(property, "toLocaleLowerCase" | "toLocaleUpperCase");
+            if !args.is_empty() && !allows_locale_arg {
                 bail!(
                     "perry-codegen: String.{} takes no args, got {}",
                     property,
                     args.len()
                 );
             }
+            for a in args {
+                let _ = lower_expr(ctx, a)?;
+            }
             let blk = ctx.block();
             let recv_handle = unbox_str_handle(blk, &recv_box);
             let runtime_fn = match property {
-                "toLowerCase" => "js_string_to_lower_case",
-                "toUpperCase" => "js_string_to_upper_case",
+                "toLowerCase" | "toLocaleLowerCase" => "js_string_to_lower_case",
+                "toUpperCase" | "toLocaleUpperCase" => "js_string_to_upper_case",
                 "trim" => "js_string_trim",
                 "trimStart" => "js_string_trim_start",
                 "trimEnd" => "js_string_trim_end",

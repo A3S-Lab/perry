@@ -992,7 +992,8 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
             // 2-arg form (searchString, position) is also unambiguous.
             let is_string_only_method = match property.as_str() {
                 "split" | "charCodeAt" | "charAt" | "trim" | "trimStart" | "trimEnd"
-                | "substring" | "substr" | "toLowerCase" | "toUpperCase" | "replaceAll"
+                | "substring" | "substr" | "toLowerCase" | "toUpperCase"
+                | "toLocaleLowerCase" | "toLocaleUpperCase" | "replaceAll"
                 | "padStart" | "padEnd" | "repeat" | "normalize" | "codePointAt"
                 | "localeCompare" => true,
                 // slice/indexOf/includes exist on both strings and arrays.
