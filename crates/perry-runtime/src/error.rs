@@ -225,10 +225,15 @@ pub extern "C" fn js_error_get_kind(error: *mut ErrorHeader) -> u32 {
 /// Issue #462: property access against `undefined` / `null` must throw
 /// `TypeError` per spec. Codegen emits a tag check before the IC fast
 /// path; on a TAG_UNDEFINED or TAG_NULL receiver, it calls this helper.
-/// Until generalized exception-throw machinery is in place, the helper
-/// prints a node-shaped diagnostic to stderr and aborts with a non-zero
-/// exit, matching the user-visible behavior of node's uncaught
-/// `TypeError`.
+///
+/// Issue #596: route through Perry's setjmp/longjmp exception machinery
+/// so a user `try { obj.prop } catch (e) { ... }` (or the same shape
+/// post-await inside an async fn body) catches the throw instead of
+/// the program exiting with the diagnostic. Constructs a real
+/// `TypeError` with the V8-shaped message and calls `js_throw` —
+/// which longjmps to the nearest enclosing setjmp catch frame, OR
+/// prints the uncaught diagnostic + exits 1 if `TRY_DEPTH == 0`
+/// (preserving the prior user-visible behavior for unhandled cases).
 ///
 /// `receiver_is_null` distinguishes "Cannot read properties of null"
 /// from "Cannot read properties of undefined" (matches V8's wording).
@@ -252,11 +257,16 @@ pub extern "C" fn js_throw_type_error_property_access(
             std::str::from_utf8(bytes).unwrap_or("")
         }
     };
-    eprintln!(
-        "TypeError: Cannot read properties of {} (reading '{}')",
+    let msg = format!(
+        "Cannot read properties of {} (reading '{}')",
         receiver, prop
     );
-    std::process::exit(1);
+    unsafe {
+        let msg_str = crate::string::js_string_from_bytes(msg.as_ptr(), msg.len() as u32);
+        let err_ptr = js_typeerror_new(msg_str);
+        let err_value = crate::value::JSValue::pointer(err_ptr as *const u8).bits();
+        crate::exception::js_throw(f64::from_bits(err_value))
+    }
 }
 
 /// Issue #510: calling a method on a primitive whose name doesn't
@@ -302,10 +312,19 @@ pub extern "C" fn js_throw_type_error_not_a_function(
             std::str::from_utf8(bytes).unwrap_or("")
         }
     };
-    if kind.is_empty() {
-        eprintln!("TypeError: {} is not a function", prop);
+    // #596: route through Perry's exception machinery so the user's
+    // `try { primVal.bogus() } catch (e) { ... }` catches the throw
+    // rather than the program exiting. Falls back to print-and-exit
+    // via `js_throw`'s `TRY_DEPTH == 0` path when there's no handler.
+    let msg = if kind.is_empty() {
+        format!("{} is not a function", prop)
     } else {
-        eprintln!("TypeError: ({}).{} is not a function", kind, prop);
+        format!("({}).{} is not a function", kind, prop)
+    };
+    unsafe {
+        let msg_str = crate::string::js_string_from_bytes(msg.as_ptr(), msg.len() as u32);
+        let err_ptr = js_typeerror_new(msg_str);
+        let err_value = crate::value::JSValue::pointer(err_ptr as *const u8).bits();
+        crate::exception::js_throw(f64::from_bits(err_value))
     }
-    std::process::exit(1);
 }
