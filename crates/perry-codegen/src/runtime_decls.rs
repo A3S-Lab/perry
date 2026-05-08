@@ -1605,9 +1605,14 @@ pub fn declare_stdlib_ffi(module: &mut LlModule) {
     module.declare_function("js_axios_create", DOUBLE, &[I64]);
     module.declare_function("js_axios_delete", I64, &[I64]);
     module.declare_function("js_axios_get", I64, &[I64]);
-    module.declare_function("js_axios_post", I64, &[I64, I64]);
-    module.declare_function("js_axios_put", I64, &[I64, I64]);
-    module.declare_function("js_axios_patch", I64, &[I64, I64]);
+    // #598: body arg is a NaN-boxed f64 (DOUBLE) so the runtime can
+    // distinguish strings from objects via the tag and JSON.stringify
+    // non-string bodies. Pre-fix this was I64 (raw unboxed pointer)
+    // which had no way to tell `axios.post(url, "raw json")` from
+    // `axios.post(url, {a: 1})`.
+    module.declare_function("js_axios_post", I64, &[I64, DOUBLE]);
+    module.declare_function("js_axios_put", I64, &[I64, DOUBLE]);
+    module.declare_function("js_axios_patch", I64, &[I64, DOUBLE]);
     module.declare_function("js_axios_request", I64, &[I64]);
     module.declare_function("js_axios_response_status", DOUBLE, &[I64]);
     module.declare_function("js_axios_response_status_text", I64, &[I64]);

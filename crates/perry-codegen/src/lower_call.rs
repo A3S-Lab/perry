@@ -3714,20 +3714,32 @@ pub(super) fn lower_fetch_native_method(
                 return Ok(Some(nanbox_pointer_inline(blk, &promise)));
             }
             "post" | "put" | "patch" => {
+                // #598: pass the body as a NaN-boxed f64 instead of
+                // unboxing to i64. Pre-fix the unbox produced a raw
+                // pointer the runtime read as `*const StringHeader`
+                // — for an object literal the pointer was a real
+                // ObjectHeader, the runtime read its bytes as a
+                // StringHeader (length / refcount / data prefix),
+                // and the request body became `^@^B^@^@H...` (the
+                // ObjectHeader struct followed by the first character
+                // of the stringified field). The runtime side now
+                // detects strings vs everything-else via the NaN-box
+                // tag and routes through `js_json_stringify`.
                 let body_box = if args.len() > 1 {
                     lower_expr(ctx, &args[1])?
                 } else {
                     double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
                 };
-                let body_handle = unbox_to_i64(ctx.block(), &body_box);
                 let rt_fn = match method {
                     "post" => "js_axios_post",
                     "put" => "js_axios_put",
                     _ => "js_axios_patch",
                 };
-                let promise =
-                    ctx.block()
-                        .call(I64, rt_fn, &[(I64, &url_handle), (I64, &body_handle)]);
+                let promise = ctx.block().call(
+                    I64,
+                    rt_fn,
+                    &[(I64, &url_handle), (DOUBLE, &body_box)],
+                );
                 return Ok(Some(nanbox_pointer_inline(ctx.block(), &promise)));
             }
             _ => {}

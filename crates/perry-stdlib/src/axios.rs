@@ -17,6 +17,34 @@ unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
     Some(String::from_utf8_lossy(bytes).to_string())
 }
 
+/// #598: read the body argument as a JSON string. Strings pass
+/// through as-is; everything else is JSON.stringify'd via the
+/// runtime's `js_json_stringify`. See perry-ext-axios's parallel
+/// helper for the full rationale.
+unsafe fn body_string_from_value(value_bits: f64) -> String {
+    const STRING_TAG: u64 = 0x7FFF_0000_0000_0000;
+    const SHORT_STRING_TAG: u64 = 0x7FFB_0000_0000_0000;
+    const TAG_MASK: u64 = 0xFFFF_0000_0000_0000;
+    const TAG_UNDEFINED: u64 = 0x7FFC_0000_0000_0001;
+    const TAG_NULL: u64 = 0x7FFC_0000_0000_0002;
+    let bits = value_bits.to_bits();
+    if bits == TAG_UNDEFINED || bits == TAG_NULL {
+        return String::new();
+    }
+    let tag = bits & TAG_MASK;
+    if tag == STRING_TAG || tag == SHORT_STRING_TAG {
+        let ptr = (bits & 0x0000_FFFF_FFFF_FFFF) as *const StringHeader;
+        return string_from_header(ptr).unwrap_or_default();
+    }
+    // Object / array / number / etc. — JSON.stringify (type_hint=0
+    // = auto-detect from NaN-box tag).
+    extern "C" {
+        fn js_json_stringify(value: f64, type_hint: u32) -> *mut StringHeader;
+    }
+    let str_ptr = js_json_stringify(value_bits, 0);
+    string_from_header(str_ptr).unwrap_or_default()
+}
+
 /// Response handle wrapper
 pub struct AxiosResponseHandle {
     pub status: u16,
@@ -83,7 +111,7 @@ pub unsafe extern "C" fn js_axios_get(url_ptr: *const StringHeader) -> *mut Prom
 #[no_mangle]
 pub unsafe extern "C" fn js_axios_post(
     url_ptr: *const StringHeader,
-    data_ptr: *const StringHeader,
+    data: f64,
 ) -> *mut Promise {
     let promise = js_promise_new();
 
@@ -97,7 +125,11 @@ pub unsafe extern "C" fn js_axios_post(
         }
     };
 
-    let body = string_from_header(data_ptr).unwrap_or_default();
+    // #598: stringify on Perry's main thread BEFORE crossing the
+    // tokio boundary. `js_json_stringify` reads from perry-runtime's
+    // thread-local arena; calling it from inside `spawn_for_promise`
+    // would access the wrong arena.
+    let body = body_string_from_value(data);
 
     spawn_for_promise(promise as *mut u8, async move {
         let client = reqwest::Client::new();
@@ -149,7 +181,7 @@ pub unsafe extern "C" fn js_axios_post(
 #[no_mangle]
 pub unsafe extern "C" fn js_axios_put(
     url_ptr: *const StringHeader,
-    data_ptr: *const StringHeader,
+    data: f64,
 ) -> *mut Promise {
     let promise = js_promise_new();
 
@@ -163,7 +195,8 @@ pub unsafe extern "C" fn js_axios_put(
         }
     };
 
-    let body = string_from_header(data_ptr).unwrap_or_default();
+    // #598: stringify on the main thread (see js_axios_post).
+    let body = body_string_from_value(data);
 
     spawn_for_promise(promise as *mut u8, async move {
         let client = reqwest::Client::new();
@@ -270,7 +303,7 @@ pub unsafe extern "C" fn js_axios_delete(url_ptr: *const StringHeader) -> *mut P
 #[no_mangle]
 pub unsafe extern "C" fn js_axios_patch(
     url_ptr: *const StringHeader,
-    data_ptr: *const StringHeader,
+    data: f64,
 ) -> *mut Promise {
     let promise = js_promise_new();
 
@@ -284,7 +317,8 @@ pub unsafe extern "C" fn js_axios_patch(
         }
     };
 
-    let body = string_from_header(data_ptr).unwrap_or_default();
+    // #598: stringify on the main thread (see js_axios_post).
+    let body = body_string_from_value(data);
 
     spawn_for_promise(promise as *mut u8, async move {
         let client = reqwest::Client::new();
