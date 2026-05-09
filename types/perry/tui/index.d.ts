@@ -150,10 +150,13 @@ declare module "perry/tui" {
      * `_` cursor character. Wire keypresses via `useInput` and
      * mutate the value state — the widget itself is purely visual.
      *
-     * v1 limitation: cursor is always at the end. Cursor
-     * repositioning lands in v1.5.
+     * The 2-arg form positions the cursor at an arbitrary index
+     * inside the value (left/right arrow inside text). Cursor at the
+     * value's length renders a trailing reverse-video space (matching
+     * most terminal text editors' end-of-line cursor). (#404.)
      */
     export function Input(value: string): Widget;
+    export function Input(value: string, cursor: number): Widget;
 
     /**
      * Vertical list of items as a Box of Text children. The
@@ -174,6 +177,44 @@ declare module "perry/tui" {
      * via `useInput` to edit.
      */
     export function TextArea(value: string): Widget;
+
+    /**
+     * Animated spinner whose frame index is driven by an internal
+     * timer — no `setInterval` wiring required. Defaults to a 100 ms
+     * cycle through `["-", "\\", "|", "/"]`. Inside `run()`, the global
+     * timer flips `STATE_DIRTY` every ~50 ms so the loop re-renders
+     * cleanly; outside `run()` (one-shot `render()`), only the
+     * snapshot prints. (#403.)
+     */
+    export function AnimatedSpinner(opts?: {
+        interval?: number;
+        frames?: string[];
+    }): Widget;
+
+    /**
+     * Render a 2D grid as a column-stacked Box. Header row is bold;
+     * the optional `selected` row index (default -1 = none) is drawn
+     * with reverse video. Column widths auto-fit the longest header
+     * or cell. (#402.)
+     */
+    export function Table(opts: {
+        headers: string[];
+        rows: string[][];
+        selected?: number;
+    }): Widget;
+
+    /**
+     * Horizontal tab bar (active label drawn with reverse video)
+     * followed by the active tab's body widget. `body[i]` is mounted
+     * only when `active === i` — non-active bodies aren't rendered
+     * at all (matches React's null-render fallback for missing
+     * keys). (#402.)
+     */
+    export function Tabs(opts: {
+        tabs: string[];
+        active: number;
+        body: Widget[];
+    }): Widget;
 
     /**
      * Allocate a reactive state slot with the given initial value.

@@ -340,6 +340,162 @@ pub(crate) fn lower_native_method_call(
         }
     }
 
+    // perry/tui Input(value, cursor) — 2-arg form for arbitrary-position
+    // cursor. The runtime decomposes into a row Box of [before, cursor,
+    // after] Text widgets so the cursor character draws with reverse
+    // video at the right offset. The 1-arg `Input(value)` form falls
+    // through to the regular dispatch table. (#404.)
+    if module == "perry/tui" && method == "Input" && object.is_none() && args.len() >= 2 {
+        let content_ptr = get_raw_string_ptr(ctx, &args[0])?;
+        let cursor = lower_expr(ctx, &args[1])?;
+        ctx.pending_declares.push((
+            "js_perry_tui_input_at".to_string(),
+            I64,
+            vec![I64, DOUBLE],
+        ));
+        let handle = ctx.block().call(
+            I64,
+            "js_perry_tui_input_at",
+            &[(I64, &content_ptr), (DOUBLE, &cursor)],
+        );
+        return Ok(nanbox_pointer_inline(ctx.block(), &handle));
+    }
+
+    // perry/tui AnimatedSpinner({ interval, frames }) — unpacks the
+    // options object and dispatches to `js_perry_tui_animated_spinner`.
+    // Both opts are optional; the runtime falls back to 100 ms /
+    // ['-', '\\', '|', '/']. Handles 0-arg, 1-arg-options, and 1-arg-
+    // non-options (treated as default) call shapes here so bare
+    // `AnimatedSpinner()` doesn't trip over the dispatch table's
+    // 2-arg arity expectation. (#403.)
+    if module == "perry/tui" && method == "AnimatedSpinner" && object.is_none() {
+        let mut interval_expr: Expr = Expr::Number(0.0);
+        let mut frames_expr: Option<Expr> = None;
+        if let Some(first) = args.first() {
+            if let Some(props) = extract_options_fields(ctx, first) {
+                for (k, v) in &props {
+                    match k.as_str() {
+                        "interval" => interval_expr = v.clone(),
+                        "frames" => frames_expr = Some(v.clone()),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let interval = lower_expr(ctx, &interval_expr)?;
+        let frames = match frames_expr {
+            Some(e) => lower_expr(ctx, &e)?,
+            None => double_literal(0.0),
+        };
+        let frames_h = unbox_to_i64(ctx.block(), &frames);
+        ctx.pending_declares.push((
+            "js_perry_tui_animated_spinner".to_string(),
+            I64,
+            vec![DOUBLE, I64],
+        ));
+        let handle = ctx.block().call(
+            I64,
+            "js_perry_tui_animated_spinner",
+            &[(DOUBLE, &interval), (I64, &frames_h)],
+        );
+        return Ok(nanbox_pointer_inline(ctx.block(), &handle));
+    }
+
+    // perry/tui Table({ headers, rows, selected }) — unpacks the options
+    // object and dispatches to `js_perry_tui_table(headers_ptr, rows_ptr,
+    // selected_idx)`. The 2D `rows` array is passed through unchanged;
+    // the runtime walks it via `read_string_2d_array`. (#402.)
+    if module == "perry/tui" && method == "Table" && object.is_none() && !args.is_empty() {
+        if let Some(props) = extract_options_fields(ctx, &args[0]) {
+            let mut headers_expr: Option<Expr> = None;
+            let mut rows_expr: Option<Expr> = None;
+            let mut selected_expr: Expr = Expr::Number(-1.0);
+            for (k, v) in &props {
+                match k.as_str() {
+                    "headers" => headers_expr = Some(v.clone()),
+                    "rows" => rows_expr = Some(v.clone()),
+                    "selected" => selected_expr = v.clone(),
+                    _ => {}
+                }
+            }
+            let headers = match headers_expr {
+                Some(e) => lower_expr(ctx, &e)?,
+                None => double_literal(0.0),
+            };
+            let rows = match rows_expr {
+                Some(e) => lower_expr(ctx, &e)?,
+                None => double_literal(0.0),
+            };
+            let selected = lower_expr(ctx, &selected_expr)?;
+            // Unbox the array pointers (NaN-boxed POINTER) into raw i64.
+            let blk = ctx.block();
+            let headers_h = unbox_to_i64(blk, &headers);
+            let rows_h = unbox_to_i64(blk, &rows);
+            ctx.pending_declares.push((
+                "js_perry_tui_table".to_string(),
+                I64,
+                vec![I64, I64, DOUBLE],
+            ));
+            let handle = ctx.block().call(
+                I64,
+                "js_perry_tui_table",
+                &[
+                    (I64, &headers_h),
+                    (I64, &rows_h),
+                    (DOUBLE, &selected),
+                ],
+            );
+            return Ok(nanbox_pointer_inline(ctx.block(), &handle));
+        }
+    }
+
+    // perry/tui Tabs({ tabs, active, body }) — unpacks the options
+    // object and dispatches to `js_perry_tui_tabs(tabs_ptr, active,
+    // body_ptr)`. `body` is an array of widget handles; only the
+    // active tab's body is mounted. (#402.)
+    if module == "perry/tui" && method == "Tabs" && object.is_none() && !args.is_empty() {
+        if let Some(props) = extract_options_fields(ctx, &args[0]) {
+            let mut tabs_expr: Option<Expr> = None;
+            let mut active_expr: Expr = Expr::Number(0.0);
+            let mut body_expr: Option<Expr> = None;
+            for (k, v) in &props {
+                match k.as_str() {
+                    "tabs" => tabs_expr = Some(v.clone()),
+                    "active" => active_expr = v.clone(),
+                    "body" => body_expr = Some(v.clone()),
+                    _ => {}
+                }
+            }
+            let tabs = match tabs_expr {
+                Some(e) => lower_expr(ctx, &e)?,
+                None => double_literal(0.0),
+            };
+            let active = lower_expr(ctx, &active_expr)?;
+            let body = match body_expr {
+                Some(e) => lower_expr(ctx, &e)?,
+                None => double_literal(0.0),
+            };
+            let blk = ctx.block();
+            let tabs_h = unbox_to_i64(blk, &tabs);
+            let body_h = unbox_to_i64(blk, &body);
+            ctx.pending_declares.push((
+                "js_perry_tui_tabs".to_string(),
+                I64,
+                vec![I64, DOUBLE, I64],
+            ));
+            let handle = ctx.block().call(
+                I64,
+                "js_perry_tui_tabs",
+                &[
+                    (I64, &tabs_h),
+                    (DOUBLE, &active),
+                    (I64, &body_h),
+                ],
+            );
+            return Ok(nanbox_pointer_inline(ctx.block(), &handle));
+        }
+    }
+
     // perry/tui Box — TS shapes:
     //   Box()                                — empty container
     //   Box([child, …])                      — children array (Phase 1)

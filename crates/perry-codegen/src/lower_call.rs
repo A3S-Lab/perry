@@ -8621,6 +8621,52 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         args: &[NA_STR],
         ret: NR_PTR,
     },
+    // perry/tui Phase 4.6 — Table + Tabs widgets. Direct-FFI shapes
+    // (positional args); object-literal `Table({headers, rows, selected})`
+    // is unpacked at the codegen level (lower_call/native.rs).
+    // (#402.)
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "Table",
+        class_filter: None,
+        runtime: "js_perry_tui_table",
+        args: &[NA_PTR, NA_PTR, NA_F64],
+        ret: NR_PTR,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "Tabs",
+        class_filter: None,
+        runtime: "js_perry_tui_tabs",
+        args: &[NA_PTR, NA_F64, NA_PTR],
+        ret: NR_PTR,
+    },
+    // perry/tui Phase 4.7 — Input(value, cursor). Direct-call shape;
+    // codegen also dispatches to this from the 2-arg form so the
+    // table acts as a fallback for hand-emitted calls. (#404.)
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "InputAt",
+        class_filter: None,
+        runtime: "js_perry_tui_input_at",
+        args: &[NA_STR, NA_F64],
+        ret: NR_PTR,
+    },
+    // perry/tui Phase 4.7 — AnimatedSpinner. Bare `AnimatedSpinner()`
+    // hits this row with both args defaulted; object-literal opts
+    // form is unpacked at the codegen level. (#403.)
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "AnimatedSpinner",
+        class_filter: None,
+        runtime: "js_perry_tui_animated_spinner",
+        args: &[NA_F64, NA_PTR],
+        ret: NR_PTR,
+    },
     // ========== readline (#347 Phase 1) ==========
     // createInterface(opts) returns a Handle (i64, NaN-boxed POINTER).
     // Instance methods take that Handle as the first arg via has_receiver.

@@ -314,11 +314,6 @@ pub extern "C" fn js_perry_tui_spinner(frame: f64) -> i64 {
 /// own keypress handler (via `useInput`) that mutates a state slot
 /// holding the value; the widget is purely visual. Returns a Text
 /// widget.
-///
-/// v1 limitation: cursor is always at the end of the value. Cursor
-/// repositioning (left/right arrow inside text) is a Phase 4.6
-/// follow-up — needs per-cell style support so the cursor's char can
-/// be rendered with reverse-video at an arbitrary position.
 #[no_mangle]
 pub extern "C" fn js_perry_tui_input(value_ptr: *const StringHeader) -> i64 {
     let value = unsafe { read_string(value_ptr) };
@@ -329,6 +324,68 @@ pub extern "C" fn js_perry_tui_input(value_ptr: *const StringHeader) -> i64 {
         bg: Color::Default,
         style: super::cell::Style::default(),
     })
+}
+
+/// `Input(value, cursor)` — single-line text input with the cursor at
+/// an arbitrary index inside the value (left/right arrow positioning).
+/// Decomposes into a horizontal Box of three Text widgets so the
+/// cursor character can be drawn with reverse-video without needing
+/// per-cell styled runs in `Node::Text`. (#404.)
+///
+/// Out-of-range cursor is clamped to `[0, value.chars().count()]`. A
+/// cursor at exactly the value's end renders a trailing reverse-video
+/// space (matching most terminal text editors' end-of-line cursor).
+#[no_mangle]
+pub extern "C" fn js_perry_tui_input_at(value_ptr: *const StringHeader, cursor: f64) -> i64 {
+    let value = unsafe { read_string(value_ptr) };
+    let chars: Vec<char> = value.chars().collect();
+    let len = chars.len();
+    let c = cursor.clamp(0.0, len as f64) as usize;
+
+    let parent = super::tree::register(Node::Box {
+        children: Vec::new(),
+        fg: Color::Default,
+        bg: Color::Default,
+        style: super::style::BoxStyle {
+            flex_direction: super::style::FlexDirection::Row,
+            ..Default::default()
+        },
+    });
+
+    if c > 0 {
+        let before: String = chars[..c].iter().collect();
+        let w = super::tree::register(Node::Text {
+            content: before,
+            fg: Color::Default,
+            bg: Color::Default,
+            style: super::cell::Style::default(),
+        });
+        super::tree::box_add_child(parent, w);
+    }
+
+    let cursor_ch = if c < len { chars[c].to_string() } else { " ".to_string() };
+    let cursor_widget = super::tree::register(Node::Text {
+        content: cursor_ch,
+        fg: Color::Default,
+        bg: Color::Default,
+        style: super::cell::Style(super::cell::Style::REVERSE),
+    });
+    super::tree::box_add_child(parent, cursor_widget);
+
+    if c < len {
+        let after: String = chars[c + 1..].iter().collect();
+        if !after.is_empty() {
+            let w = super::tree::register(Node::Text {
+                content: after,
+                fg: Color::Default,
+                bg: Color::Default,
+                style: super::cell::Style::default(),
+            });
+            super::tree::box_add_child(parent, w);
+        }
+    }
+
+    parent
 }
 
 /// Read items from a JS array of strings into an owned `Vec<String>`.
@@ -433,6 +490,301 @@ pub extern "C" fn js_perry_tui_text_area(value_ptr: *const StringHeader) -> i64 
 pub extern "C" fn js_perry_tui_box_add_child(parent: i64, child: i64) -> f64 {
     box_add_child(parent, child);
     f64::from_bits(0x7FFC_0000_0000_0001) // TAG_UNDEFINED
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4.7 widget — AnimatedSpinner (#403).
+// ---------------------------------------------------------------------------
+
+/// Default frame set for `AnimatedSpinner()` with no `frames` opt —
+/// the same `-\|/` cycle as the static `Spinner(frame)` v1 widget.
+const DEFAULT_SPINNER_FRAMES: &[&str] = &["-", "\\", "|", "/"];
+
+/// Spawn-once timer thread that flips `STATE_DIRTY` at a fixed cadence
+/// so an animated spinner re-renders inside the `run()` loop without
+/// the user wiring `setInterval` themselves. The 50 ms tick is twice
+/// the default 100 ms spinner interval (Nyquist) — fast enough that
+/// even a 60 ms spinner re-renders cleanly.
+fn ensure_spinner_ticker() {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_ok()
+    {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            super::state::STATE_DIRTY.store(true, std::sync::atomic::Ordering::Release);
+        });
+    }
+}
+
+/// Process-relative monotonic clock anchored on first call. Used for
+/// computing animated-spinner frame indices — `Instant::now()`'s
+/// `duration_since(START)` gives us an always-positive elapsed.
+fn process_elapsed_ms() -> u128 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let s = START.get_or_init(std::time::Instant::now);
+    s.elapsed().as_millis()
+}
+
+/// `AnimatedSpinner({ interval, frames })` — render a single Text
+/// widget showing the current animation frame. Defaults: 100 ms /
+/// frame, `-\|/` cycle. Spawning the global ticker thread (once)
+/// guarantees the `run()` loop sees `STATE_DIRTY` and re-renders;
+/// for one-shot `render()` outside `run()`, only the snapshot prints
+/// (no animation — matches `Spinner(0)` static behavior). (#403.)
+#[no_mangle]
+pub extern "C" fn js_perry_tui_animated_spinner(interval_ms: f64, frames_ptr: i64) -> i64 {
+    ensure_spinner_ticker();
+    let interval = if interval_ms > 0.0 {
+        interval_ms as u128
+    } else {
+        100
+    };
+    let frames_owned: Vec<String>;
+    let frames: Vec<&str> = if frames_ptr != 0 {
+        frames_owned = read_string_array(frames_ptr);
+        if frames_owned.is_empty() {
+            DEFAULT_SPINNER_FRAMES.iter().copied().collect()
+        } else {
+            frames_owned.iter().map(|s| s.as_str()).collect()
+        }
+    } else {
+        DEFAULT_SPINNER_FRAMES.iter().copied().collect()
+    };
+    let idx = ((process_elapsed_ms() / interval) as usize) % frames.len();
+    super::tree::register(Node::Text {
+        content: frames[idx].to_string(),
+        fg: Color::Default,
+        bg: Color::Default,
+        style: super::cell::Style::default(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4.6 widgets — Table + Tabs (#402).
+// ---------------------------------------------------------------------------
+
+/// Read a 2D JS array of strings (`string[][]`) into a `Vec<Vec<String>>`.
+/// Each outer element must itself be an array; non-array elements are
+/// treated as a one-cell row containing the stringified value.
+fn read_string_2d_array(rows_ptr: i64) -> Vec<Vec<String>> {
+    use crate::array::{js_array_get_f64_unchecked, js_array_length, ArrayHeader};
+    use crate::value::{js_jsvalue_to_string, JSValue};
+    let arr = rows_ptr as *const ArrayHeader;
+    if arr.is_null() {
+        return Vec::new();
+    }
+    unsafe {
+        let len = js_array_length(arr);
+        let mut out = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            let v = js_array_get_f64_unchecked(arr, i);
+            // Detect array via NaN-box pointer tag + GcHeader type byte.
+            let bits = v.to_bits();
+            let pointer_tag = bits >> 48;
+            let inner_ptr = (bits & 0x0000_FFFF_FFFF_FFFF) as i64;
+            if pointer_tag >= 0x7FFD && inner_ptr != 0 {
+                // Probably an Array — try via js_array_length first (it
+                // returns 0 for non-arrays so a real empty row reads
+                // safely as zero cells, matching the spec).
+                let row = inner_ptr as *const ArrayHeader;
+                let row_len = js_array_length(row);
+                let mut row_strs = Vec::with_capacity(row_len as usize);
+                for j in 0..row_len {
+                    let cell = js_array_get_f64_unchecked(row, j);
+                    let s_ptr = js_jsvalue_to_string(cell);
+                    row_strs.push(read_string(s_ptr));
+                }
+                out.push(row_strs);
+            } else {
+                // Scalar element — promote to a 1-cell row.
+                let s_ptr = js_jsvalue_to_string(v);
+                out.push(vec![read_string(s_ptr)]);
+            }
+        }
+        let _ = JSValue::undefined();
+        out
+    }
+}
+
+/// Read a JS array of widget handles into a `Vec<i64>`. Used by Tabs
+/// to splice per-tab body widgets into the container.
+fn read_handle_array(handles_ptr: i64) -> Vec<i64> {
+    use crate::array::{js_array_get_f64_unchecked, js_array_length, ArrayHeader};
+    let arr = handles_ptr as *const ArrayHeader;
+    if arr.is_null() {
+        return Vec::new();
+    }
+    unsafe {
+        let len = js_array_length(arr);
+        let mut out = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            let v = js_array_get_f64_unchecked(arr, i);
+            // Widget handles are NaN-boxed POINTER values — extract the
+            // low 48 bits as a raw handle.
+            let h = (v.to_bits() & 0x0000_FFFF_FFFF_FFFF) as i64;
+            out.push(h);
+        }
+        out
+    }
+}
+
+/// Pad `s` to `width` chars with trailing spaces. Truncates if longer.
+fn pad_right(s: &str, width: usize) -> String {
+    let n = s.chars().count();
+    if n >= width {
+        let mut t = String::with_capacity(width);
+        for c in s.chars().take(width) {
+            t.push(c);
+        }
+        t
+    } else {
+        let mut t = String::with_capacity(width);
+        t.push_str(s);
+        for _ in 0..(width - n) {
+            t.push(' ');
+        }
+        t
+    }
+}
+
+/// `Table({ headers, rows, selected })` — render a 2D grid as a
+/// column-stacked Box of single-row Text widgets. Each row is built
+/// by joining padded cells with two-space gaps. The selected row's
+/// Text widget is rendered with Style::REVERSE. Returns a Box handle.
+/// (#402.)
+#[no_mangle]
+pub extern "C" fn js_perry_tui_table(headers_ptr: i64, rows_ptr: i64, selected: f64) -> i64 {
+    let headers = read_string_array(headers_ptr);
+    let rows = read_string_2d_array(rows_ptr);
+    let sel = selected as i32;
+
+    // Compute column widths — max of header length and any row's cell
+    // length. The grid is sparse-tolerant: rows shorter than `headers`
+    // are padded with empty cells; longer rows are clipped.
+    let cols = headers.len();
+    let mut widths: Vec<usize> = headers.iter().map(|h| h.chars().count()).collect();
+    for row in &rows {
+        for (i, cell) in row.iter().take(cols).enumerate() {
+            let w = cell.chars().count();
+            if w > widths[i] {
+                widths[i] = w;
+            }
+        }
+    }
+
+    let parent = super::tree::register(Node::Box {
+        children: Vec::new(),
+        fg: Color::Default,
+        bg: Color::Default,
+        style: super::style::BoxStyle::default(),
+    });
+
+    // Header row — bold + 2-space cell separator.
+    let mut header_line = String::new();
+    for (i, h) in headers.iter().enumerate() {
+        if i > 0 {
+            header_line.push_str("  ");
+        }
+        header_line.push_str(&pad_right(h, widths[i]));
+    }
+    let header_widget = super::tree::register(Node::Text {
+        content: header_line,
+        fg: Color::Default,
+        bg: Color::Default,
+        style: super::cell::Style(super::cell::Style::BOLD),
+    });
+    super::tree::box_add_child(parent, header_widget);
+
+    // Data rows — selected row gets reverse-video.
+    for (ri, row) in rows.iter().enumerate() {
+        let mut line = String::new();
+        for ci in 0..cols {
+            if ci > 0 {
+                line.push_str("  ");
+            }
+            let cell = row.get(ci).map(|s| s.as_str()).unwrap_or("");
+            line.push_str(&pad_right(cell, widths[ci]));
+        }
+        let style = if ri as i32 == sel {
+            super::cell::Style(super::cell::Style::REVERSE)
+        } else {
+            super::cell::Style::default()
+        };
+        let row_widget = super::tree::register(Node::Text {
+            content: line,
+            fg: Color::Default,
+            bg: Color::Default,
+            style,
+        });
+        super::tree::box_add_child(parent, row_widget);
+    }
+
+    parent
+}
+
+/// `Tabs({ tabs, active, body })` — render a horizontal tab bar
+/// (active tab in reverse video) followed by the active tab's body
+/// widget. `tabs` is the label array, `active` is the 0-based index,
+/// `body` is the parallel array of widget handles (one per tab) — only
+/// the active body is rendered. Returns a Box handle. (#402.)
+#[no_mangle]
+pub extern "C" fn js_perry_tui_tabs(tabs_ptr: i64, active: f64, body_ptr: i64) -> i64 {
+    let tabs = read_string_array(tabs_ptr);
+    let bodies = read_handle_array(body_ptr);
+    let active_idx = active.max(0.0) as usize;
+
+    let outer = super::tree::register(Node::Box {
+        children: Vec::new(),
+        fg: Color::Default,
+        bg: Color::Default,
+        style: super::style::BoxStyle {
+            flex_direction: super::style::FlexDirection::Column,
+            ..Default::default()
+        },
+    });
+
+    // Tab bar — horizontal Box with one Text per tab + one-space gap.
+    let bar = super::tree::register(Node::Box {
+        children: Vec::new(),
+        fg: Color::Default,
+        bg: Color::Default,
+        style: super::style::BoxStyle {
+            flex_direction: super::style::FlexDirection::Row,
+            gap: 1,
+            ..Default::default()
+        },
+    });
+    for (i, label) in tabs.iter().enumerate() {
+        let style = if i == active_idx {
+            super::cell::Style(super::cell::Style::REVERSE)
+        } else {
+            super::cell::Style::default()
+        };
+        let tab_widget = super::tree::register(Node::Text {
+            content: label.clone(),
+            fg: Color::Default,
+            bg: Color::Default,
+            style,
+        });
+        super::tree::box_add_child(bar, tab_widget);
+    }
+    super::tree::box_add_child(outer, bar);
+
+    // Body — only the active tab's widget is mounted. Out-of-range
+    // active index just shows the bar with no body (matches React's
+    // null-render fallback for missing keys).
+    if let Some(body) = bodies.get(active_idx) {
+        super::tree::box_add_child(outer, *body);
+    }
+
+    outer
 }
 
 // ---------------------------------------------------------------------------
