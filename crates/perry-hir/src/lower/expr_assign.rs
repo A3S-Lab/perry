@@ -231,6 +231,16 @@ pub(super) fn lower_assign(ctx: &mut LoweringContext, assign: &ast::AssignExpr) 
             let name = ident.id.sym.to_string();
             if let Some(id) = ctx.lookup_local(&name) {
                 Ok(Expr::LocalSet(id, value))
+            } else if ctx.lookup_class(&name).is_some() || ctx.lookup_func(&name).is_some() {
+                // v0.5.757: don't shadow a class/function binding with an
+                // implicit local for `<Name> = X` patterns. Drizzle's
+                // sql.js uses `((sql2) => { ... })(sql || (sql = {}))`
+                // (and the same for SQL) — since the binding exists
+                // (truthy), the OR short-circuits and the assignment is
+                // dead. Pre-fix the implicit local hid the original
+                // binding from later reads. Just evaluate the RHS for
+                // side effects. Refs #420.
+                Ok(*value)
             } else {
                 // Variable not found in scope — likely a closure capture that wasn't
                 // properly tracked. Create an implicit local to avoid hard failure.

@@ -3358,7 +3358,16 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // Look up CLASS_DYNAMIC_PROPS via the runtime get-by-name fn,
             // which now detects INT32-tagged class refs at entry. Pass
             // `obj_bits` unmasked so the tag survives.
-            if matches!(object.as_ref(), Expr::ClassRef(_)) {
+            //
+            // v0.5.757: also handle `Expr::ExternFuncRef` for IMPORTED classes
+            // (drizzle's `import { SQL } from "drizzle-orm"`) so
+            // `SQL.Aliased` reads via the same dynamic-props path. Without
+            // this, the read fell through to the PIC fast path, which
+            // discards the INT32 tag during the unbox and ends up returning
+            // undefined.
+            let is_class_ref_object = matches!(object.as_ref(), Expr::ClassRef(_))
+                || matches!(object.as_ref(), Expr::ExternFuncRef { name, .. } if ctx.class_ids.contains_key(name));
+            if is_class_ref_object {
                 let obj_box = lower_expr(ctx, object)?;
                 let key_idx = ctx.strings.intern(property);
                 let key_handle_global = format!("@{}", ctx.strings.entry(key_idx).handle_global);
