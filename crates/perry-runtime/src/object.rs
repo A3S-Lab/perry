@@ -387,6 +387,17 @@ struct ShapeCacheEntry {
 }
 
 thread_local! {
+    /// Issue #618-followup / drizzle SQL.Aliased: dynamic properties added
+    /// via the IIFE pattern `((SQL2) => { SQL2.Aliased = Aliased; })(SQL)`
+    /// to imported classes (which Perry stores as INT32-tagged class ids).
+    /// Pre-fix `js_object_set_field_by_name` saw the receiver as an INT32
+    /// "small handle" and silently dropped the assignment. Now route through
+    /// this side-table keyed by class_id.
+    pub(crate) static CLASS_DYNAMIC_PROPS: std::cell::RefCell<std::collections::HashMap<u32, std::collections::HashMap<String, f64>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+thread_local! {
     /// Direct-mapped inline cache. Empty entries have shape_id == 0
     /// and keys_array == null.
     static SHAPE_INLINE_CACHE: std::cell::UnsafeCell<[ShapeCacheEntry; SHAPE_INLINE_CACHE_SIZE]> =
@@ -2524,6 +2535,33 @@ pub extern "C" fn js_object_get_field_by_name(
     obj: *const ObjectHeader,
     key: *const crate::StringHeader,
 ) -> JSValue {
+    // Issue #618-followup: read INT32-tagged class ref's dynamic property
+    // from the side-table (mirror of the set-side intercept). For drizzle's
+    // `SQL.Aliased` lookup pattern.
+    {
+        let bits = obj as u64;
+        if (bits >> 48) == 0x7FFE && !key.is_null() {
+            let class_id = (bits & 0xFFFF_FFFF) as u32;
+            unsafe {
+                let name_ptr =
+                    (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
+                let name_len = (*key).byte_len as usize;
+                let name = std::str::from_utf8(std::slice::from_raw_parts(name_ptr, name_len))
+                    .unwrap_or("");
+                if !name.is_empty() {
+                    let result = CLASS_DYNAMIC_PROPS.with(|m| {
+                        m.borrow()
+                            .get(&class_id)
+                            .and_then(|props| props.get(name).copied())
+                    });
+                    if let Some(v) = result {
+                        return JSValue::from_bits(v.to_bits());
+                    }
+                }
+            }
+            return JSValue::undefined();
+        }
+    }
     // SSO property access (v0.5.213 Step 1 gate). The codegen inline
     // `.length` path routes SHORT_STRING_TAG receivers here because
     // it doesn't yet know about the SSO tag. Handle `.length` by
@@ -3386,6 +3424,35 @@ pub extern "C" fn js_object_set_field_by_name(
     key: *const crate::StringHeader,
     value: f64,
 ) {
+    // Issue #618-followup: detect INT32-tagged class ref (top16 == 0x7FFE).
+    // Drizzle's `((SQL2) => { SQL2.Aliased = Aliased; })(SQL)` pattern sets
+    // a static property on an imported class — Perry stores classes as
+    // INT32-tagged class ids, so the receiver here is e.g. 0x7FFE_0000_0000_002A
+    // not a real ObjectHeader. Route to the CLASS_DYNAMIC_PROPS side-table
+    // so a later `SQL.Aliased` read can find it.
+    {
+        let bits = obj as u64;
+        if (bits >> 48) == 0x7FFE && !key.is_null() {
+            let class_id = (bits & 0xFFFF_FFFF) as u32;
+            unsafe {
+                let name_ptr =
+                    (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
+                let name_len = (*key).byte_len as usize;
+                let name = std::str::from_utf8(std::slice::from_raw_parts(name_ptr, name_len))
+                    .unwrap_or("")
+                    .to_string();
+                if !name.is_empty() {
+                    CLASS_DYNAMIC_PROPS.with(|m| {
+                        m.borrow_mut()
+                            .entry(class_id)
+                            .or_insert_with(std::collections::HashMap::new)
+                            .insert(name, value);
+                    });
+                }
+            }
+            return;
+        }
+    }
     // Strip NaN-boxing tags if present (defensive: handle POINTER_TAG, UNDEFINED, NULL, etc.)
     let obj = {
         let bits = obj as u64;

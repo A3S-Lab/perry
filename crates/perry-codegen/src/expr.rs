@@ -3310,13 +3310,20 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let key_handle_global = format!("@{}", ctx.strings.entry(key_idx).handle_global);
             let blk = ctx.block();
             let obj_bits = blk.bitcast_double_to_i64(&obj_box);
-            let obj_handle = blk.and(I64, &obj_bits, POINTER_MASK_I64);
+            // Issue #618-followup: pass the FULL bits (including NaN-box
+            // tag) so the runtime can detect INT32-tagged class refs
+            // (`SQL.Aliased = Aliased` IIFE-static-property pattern from
+            // drizzle-orm). Pre-fix the AND-with-POINTER_MASK_I64 stripped
+            // the 0x7FFE tag, leaving the runtime with a small integer
+            // (the class id) — which fell into the small-handle dispatch
+            // path and silently dropped the assignment. The runtime now
+            // checks for top16 == 0x7FFE and routes to CLASS_DYNAMIC_PROPS.
             let key_box = blk.load(DOUBLE, &key_handle_global);
             let key_bits = blk.bitcast_double_to_i64(&key_box);
             let key_raw = blk.and(I64, &key_bits, POINTER_MASK_I64);
             blk.call_void(
                 "js_object_set_field_by_name",
-                &[(I64, &obj_handle), (I64, &key_raw), (DOUBLE, &val_double)],
+                &[(I64, &obj_bits), (I64, &key_raw), (DOUBLE, &val_double)],
             );
             // Gen-GC Phase C2 (per docs/generational-gc-plan.md §C):
             // see emit_write_barrier — gated PERRY_WRITE_BARRIERS=1.
@@ -3345,6 +3352,26 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     let g_ref = format!("@{}", global_name);
                     return Ok(ctx.block().load(DOUBLE, &g_ref));
                 }
+            }
+            // Issue #618-followup: dynamic property access on a local class
+            // ref (`SQL.Aliased` after `((SQL2) => { SQL2.Aliased = ...; })(SQL)`).
+            // Look up CLASS_DYNAMIC_PROPS via the runtime get-by-name fn,
+            // which now detects INT32-tagged class refs at entry. Pass
+            // `obj_bits` unmasked so the tag survives.
+            if matches!(object.as_ref(), Expr::ClassRef(_)) {
+                let obj_box = lower_expr(ctx, object)?;
+                let key_idx = ctx.strings.intern(property);
+                let key_handle_global = format!("@{}", ctx.strings.entry(key_idx).handle_global);
+                let blk = ctx.block();
+                let obj_bits = blk.bitcast_double_to_i64(&obj_box);
+                let key_box = blk.load(DOUBLE, &key_handle_global);
+                let key_bits = blk.bitcast_double_to_i64(&key_box);
+                let key_raw = blk.and(I64, &key_bits, POINTER_MASK_I64);
+                return Ok(blk.call(
+                    DOUBLE,
+                    "js_object_get_field_by_name_f64",
+                    &[(I64, &obj_bits), (I64, &key_raw)],
+                ));
             }
             // Scalar replacement fast path: if the receiver is a scalar-replaced
             // local, load directly from the field's alloca — no heap access.
