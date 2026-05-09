@@ -360,9 +360,14 @@ fn emit_own_method_override_check(
 
     // Override path: spill the user args (skip lowered_args[0] which is
     // `this`) into a fresh alloca and call js_native_call_value. The
-    // override is invoked WITHOUT a receiver — it's typically an arrow
-    // function or `.bind(...)`-bound function whose `this` is already
-    // captured/bound, matching JS semantics for assignment-to-instance.
+    // override may be an arrow / `.bind(...)`-bound function whose
+    // `this` is captured/bound — but it can also be a regular function
+    // assigned via `this.method = fn` or `class X { method = fn; }`
+    // (hono's RegExpRouter uses this exact shape — `match = match;`
+    // assigns the imported standalone `match` function as an instance
+    // own-property; its body reads `this.buildAllMatchers()`). Bind
+    // `IMPLICIT_THIS` to the receiver around the call so non-arrow
+    // function bodies see the right `this` (issue #632 / #519 pattern).
     ctx.current_block = override_idx;
     let user_arg_count = lowered_args.len().saturating_sub(1);
     let (args_ptr, args_len) = if user_arg_count == 0 {
@@ -382,6 +387,12 @@ fn emit_own_method_override_check(
         ));
         (ptr_reg, user_arg_count.to_string())
     };
+    let recv_for_this = lowered_args.first().cloned().unwrap_or_else(|| {
+        double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+    });
+    let prev_this = ctx
+        .block()
+        .call(DOUBLE, "js_implicit_this_set", &[(DOUBLE, &recv_for_this)]);
     let v_override = ctx.block().call(
         DOUBLE,
         "js_native_call_value",
@@ -391,6 +402,8 @@ fn emit_own_method_override_check(
             (I64, &args_len),
         ],
     );
+    ctx.block()
+        .call(DOUBLE, "js_implicit_this_set", &[(DOUBLE, &prev_this)]);
     let after_override = ctx.block().label.clone();
     if !ctx.block().is_terminated() {
         ctx.block().br(&merge_label);
@@ -1703,6 +1716,20 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                     ));
                     (ptr_reg, user_arg_count_probe.to_string())
                 };
+                // Issue #632: bind IMPLICIT_THIS to the receiver around
+                // the override call. The stored function may be a class
+                // field assigning a non-arrow function (`class X { match
+                // = match; }` — hono RegExpRouter — where the imported
+                // `match` body reads `this.buildAllMatchers()`). Without
+                // the bind, the body sees stale IMPLICIT_THIS and reads
+                // garbage. Mirrors `lower_call.rs:2607` for the closure-
+                // call fallthrough pattern (#519).
+                let recv_for_this_probe = recv_box.clone();
+                let prev_this_probe = ctx.block().call(
+                    DOUBLE,
+                    "js_implicit_this_set",
+                    &[(DOUBLE, &recv_for_this_probe)],
+                );
                 let v_override_probe = ctx.block().call(
                     DOUBLE,
                     "js_native_call_value",
@@ -1711,6 +1738,11 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                         (crate::types::PTR, &probe_args_ptr),
                         (I64, &probe_args_len_str),
                     ],
+                );
+                ctx.block().call(
+                    DOUBLE,
+                    "js_implicit_this_set",
+                    &[(DOUBLE, &prev_this_probe)],
                 );
                 let after_override_probe = ctx.block().label.clone();
                 if !ctx.block().is_terminated() {
