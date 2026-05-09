@@ -7588,9 +7588,28 @@ pub extern "C" fn js_object_is_extensible(obj_value: f64) -> f64 {
     }
 }
 
-/// Object.getPrototypeOf(obj) — Perry doesn't have a prototype chain, returns null.
+/// Object.getPrototypeOf(obj):
+/// - For an INT32-tagged class ref (top16 == 0x7FFE) — return the parent
+///   class ref via CLASS_REGISTRY's parent_class_id chain, or null at
+///   the root. Drizzle's `is(value, type)` chain walks this. Pre-fix the
+///   helper unconditionally returned null; the codegen wrapper returned
+///   the operand unchanged (infinite loop in `cur = getPrototypeOf(cur)`).
+/// - For other receiver shapes — null. Perry doesn't synthesize a real
+///   prototype chain for instances.
+/// Refs #420 / #618 followup.
 #[no_mangle]
-pub extern "C" fn js_object_get_prototype_of(_obj_value: f64) -> f64 {
+pub extern "C" fn js_object_get_prototype_of(obj_value: f64) -> f64 {
     const TAG_NULL: u64 = 0x7FFC_0000_0000_0002;
+    let bits = obj_value.to_bits();
+    let top16 = bits >> 48;
+    if top16 == 0x7FFE {
+        let class_id = (bits & 0xFFFF_FFFF) as u32;
+        if let Some(parent_id) = get_parent_class_id(class_id) {
+            if parent_id != 0 {
+                let parent_bits = 0x7FFE_0000_0000_0000u64 | (parent_id as u64);
+                return f64::from_bits(parent_bits);
+            }
+        }
+    }
     f64::from_bits(TAG_NULL)
 }

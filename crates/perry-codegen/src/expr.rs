@@ -7913,7 +7913,18 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 .call_void("js_process_exit", &[(DOUBLE, &code_val)]);
             Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)))
         }
-        Expr::ObjectGetPrototypeOf(o) => lower_expr(ctx, o),
+        Expr::ObjectGetPrototypeOf(o) => {
+            // v0.5.751: route through the runtime helper which walks
+            // the class registry's parent_class_id chain for INT32-tagged
+            // class refs. Pre-fix this returned the operand unchanged,
+            // causing infinite loops in `cur = Object.getPrototypeOf(cur);
+            // while (cur) {...}` walks (drizzle's is() chain). Refs
+            // #420 / #618 followup.
+            let v = lower_expr(ctx, o)?;
+            Ok(ctx
+                .block()
+                .call(DOUBLE, "js_object_get_prototype_of", &[(DOUBLE, &v)]))
+        }
         Expr::MathExpm1(o) => {
             // expm1(x) = exp(x) - 1. No llvm.expm1 intrinsic; use llvm.exp.f64
             // and subtract 1.0.
