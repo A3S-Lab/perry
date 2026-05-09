@@ -639,6 +639,60 @@ pub extern "C" fn js_array_set_f64_extend(
     }
 }
 
+/// `arr[stringKey] = value` — handles the JS spec rule that numeric-string
+/// keys on arrays are coerced to integer indices. Pre-fix the codegen's
+/// IndexSet array fast-path applied `fptosi(double, i32)` directly to the
+/// NaN-boxed string value, producing garbage indices that all collapsed
+/// onto slot 0 (every iteration overwrote the previous).
+///
+/// Spec: an "array index" is a string whose canonical numeric form is a
+/// non-negative integer < 2^32-1. Such writes update the array's element
+/// storage; non-numeric string keys fall through to the object-property
+/// path on the array's expando map (rare).
+#[no_mangle]
+pub extern "C" fn js_array_set_string_key(
+    arr: *mut ArrayHeader,
+    key: *const crate::StringHeader,
+    value: f64,
+) -> *mut ArrayHeader {
+    if arr.is_null() || key.is_null() {
+        return arr;
+    }
+    // Read the key as a Rust &str via the standard StringHeader layout.
+    let key_str = unsafe {
+        let len = (*key).byte_len as usize;
+        if len == 0 {
+            return arr;
+        }
+        let data = (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
+        let bytes = std::slice::from_raw_parts(data, len);
+        match std::str::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => return arr,
+        }
+    };
+    // Try parse as a non-negative integer in array-index range.
+    if let Ok(idx) = key_str.parse::<u32>() {
+        // Reject leading zeros / signs that would round-trip differently
+        // (e.g. "01" -> 1, but the canonical form is "1"; per spec only
+        // "1" is a valid array index, "01" is a generic property).
+        let canonical = idx.to_string();
+        if canonical == key_str && idx < u32::MAX {
+            return js_array_set_f64_extend(arr, idx, value);
+        }
+    }
+    // Non-numeric string key — fall through to object-property set on the
+    // array's expando map. Arrays with named properties are rare but spec-
+    // legal. Use the standard object setter; arrays don't have keys_array
+    // by default but `js_object_set_field_by_name` will allocate one.
+    crate::object::js_object_set_field_by_name(
+        arr as *mut crate::object::ObjectHeader,
+        key,
+        value,
+    );
+    arr
+}
+
 /// Grow the array to at least the given capacity
 /// Returns a new pointer (the old one may be invalid after this)
 #[no_mangle]

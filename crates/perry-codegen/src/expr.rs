@@ -2853,6 +2853,32 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 );
                 return Ok(val_double);
             }
+            // Issue #637 / hono r2 followup: `arr[stringKey] = val` where
+            // the index is statically string-typed (e.g. `for (const i in
+            // sparseArr)` produces string i; then `out[i] = val`). Pre-fix
+            // the array fast path below ran `fptosi(double, i32)` on the
+            // NaN-boxed string, producing garbage indices that collapsed
+            // every iteration's write onto slot 0. Route to the runtime
+            // helper which parses the string as an integer and dispatches
+            // to `js_array_set_f64_extend`, falling back to object-property
+            // set on non-numeric keys per spec.
+            if is_array_expr(ctx, object) && is_string_expr(ctx, index) {
+                let arr_box = lower_expr(ctx, object)?;
+                let key_box = lower_expr(ctx, index)?;
+                let val_double = lower_expr(ctx, value)?;
+                let blk = ctx.block();
+                let arr_handle = unbox_to_i64(blk, &arr_box);
+                let key_handle = unbox_str_handle(blk, &key_box);
+                blk.call(
+                    I64,
+                    "js_array_set_string_key",
+                    &[(I64, &arr_handle), (I64, &key_handle), (DOUBLE, &val_double)],
+                );
+                let val_bits = ctx.block().bitcast_double_to_i64(&val_double);
+                let arr_bits = ctx.block().bitcast_double_to_i64(&arr_box);
+                emit_write_barrier(ctx, &arr_bits, &val_bits);
+                return Ok(val_double);
+            }
             // Same dispatch tree as IndexGet: known array → fast inline,
             // string key on dynamic receiver → object field set, otherwise
             // bail with a clear error.
@@ -2935,16 +2961,27 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         emit_write_barrier(ctx, &arr_bits, &val_bits);
                     } else {
                         // Closure-captured array, or local without a
-                        // stack slot (rare). Keep the bounded path —
-                        // realloc-extend can't be wired without a
-                        // writeback target, and these patterns
-                        // typically pre-size or use .push().
+                        // stack slot (rare). Issue #637 followup / hono r2:
+                        // pre-fix this called `js_array_set_f64` (non-
+                        // extending), which silently returned when `index
+                        // >= length` (matching `js_array_set_f64`'s in-
+                        // bounds gate at array.rs:571). For an empty
+                        // captured array (common pattern: closure body
+                        // does `arr[++i] = X` to populate from outer
+                        // scope), this dropped every write. Switch to
+                        // `js_array_set_f64_extend` — the forwarding-
+                        // pointer mechanism (issue #233) handles realloc
+                        // visibility for the caller, so we don't need a
+                        // writeback target here. Discard the returned
+                        // pointer; downstream reads via clean_arr_ptr
+                        // follow the forwarding chain to the new head.
                         let blk = ctx.block();
                         let arr_bits = blk.bitcast_double_to_i64(&arr_box);
                         let arr_handle = blk.and(I64, &arr_bits, POINTER_MASK_I64);
                         let idx_i32 = blk.fptosi(DOUBLE, &idx_double, I32);
-                        blk.call_void(
-                            "js_array_set_f64",
+                        blk.call(
+                            I64,
+                            "js_array_set_f64_extend",
                             &[(I64, &arr_handle), (I32, &idx_i32), (DOUBLE, &val_double)],
                         );
                         // Gen-GC Phase C2: write barrier on array element store.
@@ -2956,8 +2993,20 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     let arr_bits = blk.bitcast_double_to_i64(&arr_box);
                     let arr_handle = blk.and(I64, &arr_bits, POINTER_MASK_I64);
                     let idx_i32 = blk.fptosi(DOUBLE, &idx_double, I32);
-                    blk.call_void(
-                        "js_array_set_f64",
+                    // Issue #637 followup / hono r2: use the extend variant
+                    // so `arr[i] = X` for i >= length grows the array per
+                    // JS spec, instead of silently no-op'ing (which the
+                    // non-extend `js_array_set_f64` did via `if index >=
+                    // length { return; }`). The hono Trie's
+                    // `indexReplacementMap[++captureIndex] = N` pattern
+                    // (sparse-extend from a closure capturing the array)
+                    // was the load-bearing site — pre-fix the array stayed
+                    // length 0 inside the closure, so `for (const i in
+                    // indexReplacementMap)` outside the closure iterated
+                    // zero times and `handlerMap` ended up empty.
+                    blk.call(
+                        I64,
+                        "js_array_set_f64_extend",
                         &[(I64, &arr_handle), (I32, &idx_i32), (DOUBLE, &val_double)],
                     );
                     // Gen-GC Phase C2: write barrier on array element store.
