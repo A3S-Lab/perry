@@ -4497,6 +4497,28 @@ pub extern "C" fn js_instanceof(value: f64, class_id: u32) -> f64 {
 
 /// Apply form for method calls with spread arguments on dynamically-typed
 /// receivers (refs #421). Reads `args_array_handle` (a JS array containing
+/// v0.5.754: dispatch `obj[strKey](args)` — computed-key method call.
+/// `name_handle` is a StringHeader pointer (already-unboxed). Extracts
+/// the bytes/length from the header and forwards to
+/// `js_native_call_method`. Refs #420 / drizzle's
+/// `this.session[isOneTimeQuery ? "prepareOneTimeQuery" :
+/// "prepareQuery"](...)` chain.
+#[no_mangle]
+pub unsafe extern "C" fn js_native_call_method_str_key(
+    object: f64,
+    name_handle: i64,
+    args_ptr: *const f64,
+    args_len: usize,
+) -> f64 {
+    if name_handle == 0 {
+        return f64::from_bits(crate::value::TAG_UNDEFINED);
+    }
+    let str_ptr = name_handle as *const crate::StringHeader;
+    let bytes_ptr = (str_ptr as *const i8).add(std::mem::size_of::<crate::StringHeader>());
+    let bytes_len = (*str_ptr).byte_len as usize;
+    js_native_call_method(object, bytes_ptr, bytes_len, args_ptr, args_len)
+}
+
 /// every regular + spread arg already concatenated by codegen), materialises
 /// the f64 elements into a temporary `Vec<f64>`, and forwards to
 /// `js_native_call_method`. Lets the caller use a single uniform shape for

@@ -1065,6 +1065,13 @@ pub fn declare_phase_b_strings(module: &mut LlModule) {
         DOUBLE,
         &[DOUBLE, PTR, I64, I64],
     );
+    // v0.5.754: dispatch obj[strKey](args) — computed-key method call.
+    // Takes a StringHeader pointer (already-unboxed) for the method name.
+    module.declare_function(
+        "js_native_call_method_str_key",
+        DOUBLE,
+        &[DOUBLE, I64, PTR, I64],
+    );
     module.declare_function("js_promise_resolve", VOID, &[I64, DOUBLE]);
     module.declare_function("js_promise_reject", VOID, &[I64, DOUBLE]);
     module.declare_function("js_promise_resolved", I64, &[DOUBLE]);

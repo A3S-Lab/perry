@@ -432,6 +432,60 @@ fn emit_own_method_override_check(
 /// 2. `console.log(expr)` where `expr` lowers to a double — emits a
 ///    `js_console_log_number` call and returns `0.0` as the statement value.
 pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> Result<String> {
+    // v0.5.754: `obj[strKey](args)` computed-key method call. Drizzle's
+    // `this.session[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](...)`
+    // lowers as Call { callee: IndexGet { object, index }, args }. Pre-fix
+    // this fell through to the generic call path that read obj[index] as
+    // a value (returning undefined for class methods) and then tried to
+    // call undefined. Route through `js_native_call_method_str_key` which
+    // walks the class vtable chain (parent inheritance included). Refs
+    // #420 / #618 followup.
+    if let Expr::IndexGet { object, index } = callee {
+        if matches!(index.as_ref(), Expr::String(_))
+            || crate::type_analysis::is_string_expr(ctx, index)
+            || crate::type_analysis::is_definitely_string_expr(ctx, index)
+        {
+            let recv_box = lower_expr(ctx, object)?;
+            let name_box = lower_expr(ctx, index)?;
+            let mut lowered_args: Vec<String> = Vec::with_capacity(args.len());
+            for a in args {
+                lowered_args.push(lower_expr(ctx, a)?);
+            }
+            let n = lowered_args.len();
+            let name_handle = {
+                let blk = ctx.block();
+                crate::expr::unbox_str_handle(blk, &name_box)
+            };
+            let (args_ptr, args_len) = if n == 0 {
+                ("null".to_string(), "0".to_string())
+            } else {
+                let buf_reg = ctx.func.alloca_entry_array(DOUBLE, n);
+                for (i, v) in lowered_args.iter().enumerate() {
+                    let slot = ctx
+                        .block()
+                        .gep(DOUBLE, &buf_reg, &[(I64, &format!("{}", i))]);
+                    ctx.block().store(DOUBLE, v, &slot);
+                }
+                let ptr_reg = ctx.block().next_reg();
+                ctx.block().emit_raw(format!(
+                    "{} = getelementptr [{} x double], ptr {}, i64 0, i64 0",
+                    ptr_reg, n, buf_reg
+                ));
+                (ptr_reg, n.to_string())
+            };
+            return Ok(ctx.block().call(
+                DOUBLE,
+                "js_native_call_method_str_key",
+                &[
+                    (DOUBLE, &recv_box),
+                    (I64, &name_handle),
+                    (crate::types::PTR, &args_ptr),
+                    (I64, &args_len),
+                ],
+            ));
+        }
+    }
+
     // Closure-typed local call: `counter()` where `counter` is a
     // local of `Type::Function(...)`. Dispatch through the runtime
     // `js_closure_call<N>` family — the runtime extracts the function
