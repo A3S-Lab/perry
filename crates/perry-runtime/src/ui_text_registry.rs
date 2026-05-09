@@ -268,6 +268,7 @@ pub extern "C" fn js_state_set(id_handle: f64, value: f64) {
     #[cfg(feature = "ohos-napi")]
     crate::arkts_callbacks::perry_arkts_set_text(id_handle, value);
     navstack_dispatch_state_change(&id, value);
+    foreach_dispatch_state_change(&id, value);
 }
 
 // =============================================================================
@@ -393,6 +394,118 @@ fn navstack_dispatch_state_change(_synth_id: &str, _new_value: f64) {
     // No-op on harmonyos; the arkts harvest does its own setVisibility
     // dispatch through ArkUI's `@State` mechanism.
 }
+
+// =============================================================================
+// Issue #610 — `perry/ui` `ForEach(state<number>, render)` runtime registry.
+//
+// Mirrors NAVSTACK_REGISTRY but for dynamic-list re-rendering. When the bound
+// `State<number>` fires `.set(n)`, the platform UI crate re-invokes the user
+// `render(i)` callback for each `i in [0..n)` and replaces the host
+// container's children. The handler itself lives in the platform crate
+// (perry-ui-macos / perry-ui-gtk4 / etc.) and is set via
+// `js_register_foreach_render_handler` at app startup; before registration
+// the handler stays null and dispatch silently no-ops (the binding is still
+// recorded so a later-registered handler picks up subsequent changes).
+// =============================================================================
+
+#[derive(Clone)]
+struct ForEachBinding {
+    container_handle: i64,
+    /// NaN-boxed closure pointer — the `(i: number) => Widget` callback.
+    render_closure: f64,
+}
+
+static FOREACH_REGISTRY: Mutex<Option<std::collections::HashMap<String, Vec<ForEachBinding>>>> =
+    Mutex::new(None);
+
+/// Render-handler signature. UI crates implement this on the main thread:
+/// clears the host's existing children, calls `render_closure(i)` for each
+/// `i in [0..count)`, and inserts each returned widget. `count` is the
+/// new state value (truncated to a non-negative integer).
+pub type ForEachRenderHandler =
+    extern "C" fn(container_handle: i64, render_closure: f64, count: f64);
+
+#[cfg(not(feature = "ohos-napi"))]
+static FOREACH_RENDER_HANDLER: AtomicPtr<()> = AtomicPtr::new(null_mut());
+
+#[cfg(not(feature = "ohos-napi"))]
+#[no_mangle]
+pub extern "C" fn js_register_foreach_render_handler(f: ForEachRenderHandler) {
+    FOREACH_RENDER_HANDLER.store(f as *mut (), Ordering::Release);
+}
+
+#[cfg(feature = "ohos-napi")]
+#[no_mangle]
+pub extern "C" fn js_register_foreach_render_handler(_f: ForEachRenderHandler) {
+    // No-op on harmonyos — ArkUI's `ForEach` directive uses the state
+    // value through the `@State` decorator's automatic re-render path.
+}
+
+/// `__foreach_register("synth_id", container_handle, render_closure)` —
+/// records one ForEach binding. Called once at App-build time when the
+/// state_desugar pass rewrites `ForEach(stateBinding, render)` to its
+/// register-and-paint IIFE form. Also paints the initial children
+/// (matching the current count value).
+#[no_mangle]
+pub extern "C" fn js_foreach_register(
+    synth_id_handle: f64,
+    container_handle: i64,
+    render_closure: f64,
+) {
+    let synth_id = decode_jsvalue_string(synth_id_handle);
+    {
+        let mut guard = FOREACH_REGISTRY.lock().expect("FOREACH_REGISTRY poisoned");
+        let map = guard.get_or_insert_with(std::collections::HashMap::new);
+        map.entry(synth_id.clone())
+            .or_insert_with(Vec::new)
+            .push(ForEachBinding {
+                container_handle,
+                render_closure,
+            });
+    }
+    // Initial paint — match current state value (set by __state_init
+    // earlier in the same module init order, so always populated by the
+    // time ForEach registration fires).
+    let current_value = with_state_values(|m| m.get(&synth_id).copied());
+    if let Some(value_f64) = current_value {
+        #[cfg(not(feature = "ohos-napi"))]
+        {
+            let raw = FOREACH_RENDER_HANDLER.load(Ordering::Acquire);
+            if !raw.is_null() {
+                let func: ForEachRenderHandler = unsafe { std::mem::transmute(raw) };
+                func(container_handle, render_closure, value_f64);
+            }
+        }
+    }
+}
+
+/// Called by `js_state_set` after every state write. Walks any ForEach
+/// bindings registered for `synth_id`, invoking each one's render handler
+/// with the new count value.
+#[cfg(not(feature = "ohos-napi"))]
+fn foreach_dispatch_state_change(synth_id: &str, new_value: f64) {
+    let bindings: Vec<ForEachBinding> = {
+        let guard = match FOREACH_REGISTRY.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        match guard.as_ref().and_then(|m| m.get(synth_id)) {
+            Some(v) => v.clone(),
+            None => return,
+        }
+    };
+    let raw = FOREACH_RENDER_HANDLER.load(Ordering::Acquire);
+    if raw.is_null() {
+        return;
+    }
+    let func: ForEachRenderHandler = unsafe { std::mem::transmute(raw) };
+    for b in &bindings {
+        func(b.container_handle, b.render_closure, new_value);
+    }
+}
+
+#[cfg(feature = "ohos-napi")]
+fn foreach_dispatch_state_change(_synth_id: &str, _new_value: f64) {}
 
 /// Cross-platform widget-id registration. Codegen at
 /// `lower_call/native.rs` emits a call to this immediately after

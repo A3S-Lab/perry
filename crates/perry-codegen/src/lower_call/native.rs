@@ -581,6 +581,35 @@ pub(crate) fn lower_native_method_call(
         return Ok(result);
     }
 
+    // Issue #610 — `__foreach_register(synth_id, host, render_closure)`
+    // synthetic method emitted by state_desugar's `ForEach(stateBinding,
+    // render)` rewrite. Forwards (synth_id, host_handle, render_closure)
+    // to the runtime registry. The runtime walks this map on every
+    // js_state_set for the matching synth id, calling the platform's
+    // foreach-render handler with the new count value — the platform
+    // crate (perry-ui-macos / perry-ui-gtk4 / etc.) clears the host's
+    // children, calls render_closure(i) for each i in [0..count), and
+    // adds each returned widget.
+    if module == "perry/ui" && method == "__foreach_register" && object.is_none() {
+        if args.len() != 3 {
+            return Ok(double_literal(f64::from_bits(0x7FFC_0000_0000_0001)));
+        }
+        let synth_id_d = lower_expr(ctx, &args[0])?;
+        let host_d = lower_expr(ctx, &args[1])?;
+        let host_i64 = unbox_to_i64(ctx.block(), &host_d);
+        let render_d = lower_expr(ctx, &args[2])?;
+        ctx.pending_declares.push((
+            "js_foreach_register".to_string(),
+            crate::types::VOID,
+            vec![DOUBLE, I64, DOUBLE],
+        ));
+        ctx.block().call_void(
+            "js_foreach_register",
+            &[(DOUBLE, &synth_id_d), (I64, &host_i64), (DOUBLE, &render_d)],
+        );
+        return Ok(double_literal(f64::from_bits(0x7FFC_0000_0000_0001)));
+    }
+
     // Issue #535 Layer 2 — `__navstack_register_route(synth_id, name, body)`
     // synthetic method emitted by state_desugar's NavStack(state, routes)
     // rewrite. Lowers `body` to a widget handle (NaN-boxed pointer →

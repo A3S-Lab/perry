@@ -564,9 +564,125 @@ fn rewrite_expr(e: &mut Expr, bindings: &HashMap<LocalId, StateBinding>, fresh: 
         return;
     }
 
+    if let Some(replacement) = try_rewrite_foreach(e, bindings, fresh) {
+        *e = replacement;
+        return;
+    }
+
     if let Some(replacement) = try_rewrite_state_access(e, bindings) {
         *e = replacement;
     }
+}
+
+/// Issue #610. Detect `ForEach(LocalGet(state_id), render)` where
+/// `state_id` is one of our state bindings. Lower the call to an IIFE
+/// (closure-as-Call with empty args) whose body:
+///   1. Allocates a host VStack via the existing 0-arg `VStack()` form.
+///   2. Calls `__foreach_register(synth_id, host, render)` which records
+///      the binding + paints the initial children (matching the current
+///      `state(synth_id)` value) via the platform's render handler.
+///   3. Returns the host.
+///
+/// Same IIFE shape as `try_rewrite_navstack`. When the bound state
+/// changes via `state.set(n)`, the runtime's `js_state_set` walks
+/// `FOREACH_REGISTRY` and re-fires the platform render handler, which
+/// clears the host's children and re-invokes `render(i)` for each
+/// `i in [0..n)`.
+///
+/// Bails (returns None) for shapes other than the canonical
+/// `ForEach(stateBinding, closureExpr)` — those fall through to the
+/// existing codegen which has its own handling for the non-state
+/// integer-handle form.
+fn try_rewrite_foreach(
+    e: &Expr,
+    bindings: &HashMap<LocalId, StateBinding>,
+    fresh: &mut FreshIds,
+) -> Option<Expr> {
+    let (state_id, render_closure) = match e {
+        Expr::NativeMethodCall {
+            module,
+            method,
+            object: None,
+            args,
+            ..
+        } if module == "perry/ui" && method == "ForEach" && args.len() == 2 => {
+            let state_id = match &args[0] {
+                Expr::LocalGet(id) => *id,
+                _ => return None,
+            };
+            // Render arg can be a Closure literal or a LocalGet of a
+            // closure-typed local. Anything else (a stored function ref
+            // through some other shape) bails to existing codegen.
+            let render = match &args[1] {
+                Expr::Closure { .. } | Expr::LocalGet(_) => args[1].clone(),
+                _ => return None,
+            };
+            (state_id, render)
+        }
+        _ => return None,
+    };
+    let binding = bindings.get(&state_id)?;
+    let synth_id = binding.synth_id.clone();
+
+    let host_id = fresh.fresh_local();
+    let render_id = fresh.fresh_local();
+    let mut body_stmts: Vec<Stmt> = Vec::with_capacity(4);
+
+    // let __fe_host = VStack(0);
+    body_stmts.push(Stmt::Let {
+        id: host_id,
+        name: format!("__fe_host_{}", host_id),
+        ty: Type::Any,
+        mutable: false,
+        init: Some(Expr::NativeMethodCall {
+            module: "perry/ui".to_string(),
+            class_name: None,
+            object: None,
+            method: "VStack".to_string(),
+            args: vec![Expr::Number(0.0), Expr::Array(vec![])],
+        }),
+    });
+    // let __fe_render = <render>; — hoist into a let so the
+    // __foreach_register call site sees the same SSA name as we'd want
+    // to capture (avoids re-evaluating the closure construction expr).
+    body_stmts.push(Stmt::Let {
+        id: render_id,
+        name: format!("__fe_render_{}", render_id),
+        ty: Type::Any,
+        mutable: false,
+        init: Some(render_closure),
+    });
+    // __foreach_register("synth_id", __fe_host, __fe_render);
+    body_stmts.push(Stmt::Expr(Expr::NativeMethodCall {
+        module: "perry/ui".to_string(),
+        class_name: None,
+        object: None,
+        method: "__foreach_register".to_string(),
+        args: vec![
+            Expr::String(synth_id),
+            Expr::LocalGet(host_id),
+            Expr::LocalGet(render_id),
+        ],
+    }));
+    body_stmts.push(Stmt::Return(Some(Expr::LocalGet(host_id))));
+
+    let func_id = fresh.fresh_func();
+    let closure = Expr::Closure {
+        func_id,
+        params: Vec::<Param>::new(),
+        return_type: Type::Any,
+        body: body_stmts,
+        captures: Vec::new(),
+        mutable_captures: Vec::new(),
+        captures_this: false,
+        enclosing_class: None,
+        is_async: false,
+    };
+    Some(Expr::Call {
+        callee: Box::new(closure),
+        args: vec![],
+        type_args: vec![],
+    })
 }
 
 /// Detect `NavStack(LocalGet(state_id), Array([{name, body}, ...]))` where

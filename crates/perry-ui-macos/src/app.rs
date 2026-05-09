@@ -1727,6 +1727,14 @@ extern "C" {
     /// route bound to the changed state's synth id. Defined in
     /// `perry-runtime/src/ui_text_registry.rs`'s `NAVSTACK_REGISTRY` block.
     fn js_register_widget_hidden_handler(f: extern "C" fn(widget_handle: i64, hidden: i32));
+    /// Issue #610 — `js_state_set` calls this for every ForEach binding
+    /// when the bound `State<number>`'s value changes. The handler clears
+    /// the host's children, calls `render_closure(i)` for each
+    /// `i in [0..count)`, and adds each returned widget. Defined in
+    /// `perry-runtime/src/ui_text_registry.rs`'s `FOREACH_REGISTRY` block.
+    fn js_register_foreach_render_handler(
+        f: extern "C" fn(container_handle: i64, render_closure: f64, count: f64),
+    );
 }
 
 extern "C" fn navstack_set_widget_hidden(widget_handle: i64, hidden: i32) {
@@ -1739,5 +1747,6 @@ fn register_cross_platform_text_handlers() {
         js_register_set_text_handler(widgets::text_registry::set_text_handler);
         js_register_text_id_handler(widgets::text_registry::register_text_id_handler);
         js_register_widget_hidden_handler(navstack_set_widget_hidden);
+        js_register_foreach_render_handler(widgets::foreach_registry::render_handler);
     }
 }

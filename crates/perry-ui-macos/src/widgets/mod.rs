@@ -28,6 +28,7 @@ pub mod spacer;
 pub mod table;
 pub mod text;
 pub mod text_registry;
+pub mod foreach_registry;
 pub mod textarea;
 pub mod textfield;
 pub mod toast;
