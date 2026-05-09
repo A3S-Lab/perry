@@ -2646,6 +2646,15 @@ pub extern "C" fn js_object_get_field_by_name(
                 let name_len = (*key).byte_len as usize;
                 let name = std::str::from_utf8(std::slice::from_raw_parts(name_ptr, name_len))
                     .unwrap_or("");
+                // v0.5.752: class_ref.constructor synthesizes back to the
+                // same class ref so drizzle's
+                // `Object.getPrototypeOf(value).constructor === Class` chain
+                // collapses correctly (with v0.5.751's getPrototypeOf
+                // returning the class ref for instance receivers). Refs
+                // #420 / #618 followup.
+                if name == "constructor" && class_id != 0 && is_class_id_registered(class_id) {
+                    return JSValue::from_bits(bits);
+                }
                 if !name.is_empty() {
                     let result = CLASS_DYNAMIC_PROPS.with(|m| {
                         m.borrow()
@@ -7591,11 +7600,15 @@ pub extern "C" fn js_object_is_extensible(obj_value: f64) -> f64 {
 /// Object.getPrototypeOf(obj):
 /// - For an INT32-tagged class ref (top16 == 0x7FFE) — return the parent
 ///   class ref via CLASS_REGISTRY's parent_class_id chain, or null at
-///   the root. Drizzle's `is(value, type)` chain walks this. Pre-fix the
-///   helper unconditionally returned null; the codegen wrapper returned
-///   the operand unchanged (infinite loop in `cur = getPrototypeOf(cur)`).
-/// - For other receiver shapes — null. Perry doesn't synthesize a real
-///   prototype chain for instances.
+///   the root. Drizzle's `is(value, type)` chain walks this.
+/// - For an object instance with a registered class_id — return the
+///   class ref. Conceptually JS returns `Class.prototype`; Perry doesn't
+///   maintain prototype objects, but drizzle's chain consumes
+///   `Object.getPrototypeOf(value).constructor`, and class_ref's
+///   `.constructor` synthesizes back to the same class ref via the
+///   constructor intercept (v0.5.746). So returning the class ref here
+///   makes that chain produce `value.constructor` as Node would.
+/// - Other receivers — null.
 /// Refs #420 / #618 followup.
 #[no_mangle]
 pub extern "C" fn js_object_get_prototype_of(obj_value: f64) -> f64 {
@@ -7609,6 +7622,35 @@ pub extern "C" fn js_object_get_prototype_of(obj_value: f64) -> f64 {
                 let parent_bits = 0x7FFE_0000_0000_0000u64 | (parent_id as u64);
                 return f64::from_bits(parent_bits);
             }
+        }
+        return f64::from_bits(TAG_NULL);
+    }
+    // Heap-pointer receiver — return the input value itself. For
+    // class-id-tagged instances, `.constructor` then returns the class
+    // ref (via the constructor intercept in js_object_get_field_by_name,
+    // v0.5.746), making `getPrototypeOf(v).constructor === v.constructor`.
+    // For object literals / arrays / other non-class-tagged heap values,
+    // `.constructor` returns undefined, which collapses drizzle's
+    // `if (cls)` chain to false safely (instead of throwing on
+    // `null.constructor` if we returned null). Drizzle's
+    // `is(value, type)` chain calls this on every chunk including
+    // arrays of values, so the array case is load-bearing.
+    //
+    // Two NaN-shapes cover the heap-pointer case:
+    //  - top16 == 0x7FFD: NaN-boxed POINTER_TAG (typical function-local).
+    //  - top16 == 0x0000 with raw_addr large enough: module-level object
+    //    literals get stored as raw I64 pointers (no NaN-boxing) per the
+    //    "Module-level variables" note in CLAUDE.md, so we accept that
+    //    form here too.
+    if top16 == 0x7FFD {
+        let raw_addr = bits & 0x0000_FFFF_FFFF_FFFF;
+        if raw_addr != 0 && raw_addr >= (crate::gc::GC_HEADER_SIZE as u64) + 0x1000 {
+            return obj_value;
+        }
+    }
+    if top16 == 0 {
+        if bits >= (crate::gc::GC_HEADER_SIZE as u64) + 0x1000 {
+            return obj_value;
         }
     }
     f64::from_bits(TAG_NULL)
