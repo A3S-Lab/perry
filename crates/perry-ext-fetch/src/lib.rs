@@ -262,6 +262,7 @@ pub unsafe extern "C" fn js_fetch_get_with_auth(
     let promise = JsPromise::new();
     let raw = promise.as_raw();
     let Some(url) = read_str(url_ptr) else {
+        eprintln!("[ext-fetch GET-auth] url_ptr null/invalid (ptr={:?})", url_ptr);
         promise.reject_string("Invalid URL");
         return raw;
     };
@@ -271,6 +272,7 @@ pub unsafe extern "C" fn js_fetch_get_with_auth(
             headers.insert("Authorization".to_string(), auth);
         }
     }
+    eprintln!("[ext-fetch GET-auth] url='{}' headers.len={}", &url[..url.len().min(80)], headers.len());
     do_fetch("GET".to_string(), url, headers, None, promise);
     raw
 }
@@ -358,12 +360,10 @@ pub unsafe extern "C" fn js_fetch_with_options(
 #[no_mangle]
 pub extern "C" fn js_fetch_response_status(handle: f64) -> f64 {
     let id = handle_id(handle);
-    FETCH_RESPONSES
-        .lock()
-        .unwrap()
-        .get(&id)
-        .map(|r| r.status as f64)
-        .unwrap_or(0.0)
+    let map = FETCH_RESPONSES.lock().unwrap();
+    let result = map.get(&id).map(|r| r.status as f64).unwrap_or(0.0);
+    eprintln!("[ext-fetch resp.status] handle={} bits=0x{:016x} id={} keys={:?} -> {}", handle, handle.to_bits(), id, map.keys().collect::<Vec<_>>(), result);
+    result
 }
 
 #[no_mangle]
@@ -1137,7 +1137,7 @@ mod tests {
 
     #[test]
     fn response_status_invalid_handle() {
-        assert_eq!(js_fetch_response_status(99_999_999), 0.0);
+        assert_eq!(js_fetch_response_status(99_999_999.0), 0.0);
     }
 
     #[test]
@@ -1176,7 +1176,7 @@ mod tests {
         let url = alloc_string("https://example.com");
         let method = alloc_string("POST");
         let body = alloc_string(r#"{"x":1}"#);
-        let h = unsafe { js_request_new(url.as_raw(), method.as_raw(), body.as_raw()) };
+        let h = unsafe { js_request_new(url.as_raw(), method.as_raw(), body.as_raw(), 0.0) };
         assert!(h > 0.0);
         let url_ptr = js_request_get_url(h);
         let url_str =
@@ -1193,7 +1193,7 @@ mod tests {
         let v = JsValue::from_string_ptr(alloc_string("hello").as_raw());
         let resp = unsafe { js_response_static_json(f64::from_bits(v.bits())) };
         assert!(resp > 0.0);
-        let status = js_fetch_response_status(resp as i64);
+        let status = js_fetch_response_status(resp);
         assert_eq!(status, 200.0);
     }
 }

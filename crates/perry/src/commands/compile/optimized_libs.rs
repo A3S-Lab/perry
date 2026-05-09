@@ -167,7 +167,11 @@ pub(super) fn build_optimized_libs(
             // missing the wrapper).
             if !needs_shared_tokio {
                 let Some(lib_path) =
-                    super::well_known::bundled_staticlib_path(workspace_root, binding)
+                    super::well_known::bundled_staticlib_path_for_target(
+                        workspace_root,
+                        binding,
+                        rust_target_triple(target),
+                    )
                 else {
                     if matches!(format, OutputFormat::Text) && verbose > 0 {
                         eprintln!(
@@ -280,6 +284,16 @@ pub(super) fn build_optimized_libs(
             // `#[cfg]`-gated off and tokio events stay queued forever.
             if original_features.contains(&"bundled-net") {
                 features.insert("external-net-pump");
+            }
+            // Closes #606 — same shape for ws. When the well-known flip
+            // strips `bundled-ws` and routes to perry-ext-ws, activate
+            // `external-ws-pump` so perry-stdlib's main-thread pump and
+            // active-handles gate know to call into perry-ext-ws's
+            // queue. Without this, perry-ext-ws's accept loop pushes
+            // events that nobody drains, and the program exits or hangs
+            // before any handler fires.
+            if original_features.contains(&"bundled-ws") {
+                features.insert("external-ws-pump");
             }
         }
     }
@@ -557,15 +571,32 @@ pub(super) fn build_optimized_libs(
     for (krate, lib, _tracking) in &tokio_using_bindings {
         let lib_path = release_dir.join(format!("lib{}.a", lib));
         if !lib_path.exists() {
-            // Fall back to the workspace `target/release/` copy. The
-            // linker will still produce a working binary for this
-            // wrapper if the user code path doesn't actually exercise
-            // the tokio CONTEXT — useful as a safety net rather than
-            // hard-failing.
-            let fallback = workspace_root
-                .join("target")
-                .join("release")
-                .join(format!("lib{}.a", lib));
+            // Fall back to the workspace target copy. The linker will
+            // still produce a working binary for this wrapper if the
+            // user code path doesn't actually exercise the tokio
+            // CONTEXT — useful as a safety net rather than hard-failing.
+            // Prefer the target-specific dir when cross-compiling so we
+            // don't link host-platform Mach-O into a Linux ELF.
+            let fallback = if let Some(triple) = rust_target_triple(target) {
+                let triple_path = workspace_root
+                    .join("target")
+                    .join(triple)
+                    .join("release")
+                    .join(format!("lib{}.a", lib));
+                if triple_path.exists() {
+                    triple_path
+                } else {
+                    workspace_root
+                        .join("target")
+                        .join("release")
+                        .join(format!("lib{}.a", lib))
+                }
+            } else {
+                workspace_root
+                    .join("target")
+                    .join("release")
+                    .join(format!("lib{}.a", lib))
+            };
             if fallback.exists() {
                 if matches!(format, OutputFormat::Text) {
                     eprintln!(

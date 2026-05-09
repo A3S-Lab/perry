@@ -527,11 +527,33 @@ pub(super) fn build_and_run_link(
         c
     } else if is_linux {
         // Linux target: when running on Linux natively, just use "cc".
-        // When cross-compiling from macOS, pass -target for clang.
+        // When cross-compiling from macOS, use clang + ld.lld + a glibc
+        // sysroot pointed to by PERRY_LINUX_SYSROOT (matching the
+        // PERRY_IOS_SYSROOT/PERRY_WINDOWS_SYSROOT builder pattern).
         let mut c = Command::new("cc");
         #[cfg(not(target_os = "linux"))]
         {
             c.arg("-target").arg("x86_64-unknown-linux-gnu");
+            c.arg("-fuse-ld=lld");
+            if let Ok(sysroot) = std::env::var("PERRY_LINUX_SYSROOT") {
+                c.arg(format!("--sysroot={}", sysroot));
+                c.arg(format!("-L{}/usr/lib/x86_64-linux-gnu", sysroot));
+                c.arg(format!("-L{}/lib/x86_64-linux-gnu", sysroot));
+                let gcc_root = format!("{}/usr/lib/gcc/x86_64-linux-gnu", sysroot);
+                if let Ok(entries) = std::fs::read_dir(&gcc_root) {
+                    if let Some(version) = entries
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.file_name().into_string().unwrap_or_default())
+                        .filter(|n| n.chars().all(|c| c.is_ascii_digit()))
+                        .max()
+                    {
+                        let gcc_dir = format!("{}/{}", gcc_root, version);
+                        c.arg(format!("-L{}", gcc_dir));
+                        c.arg(format!("-B{}", gcc_dir));
+                    }
+                }
+                c.arg("-Wl,-dynamic-linker=/lib64/ld-linux-x86-64.so.2");
+            }
         }
         // Unresolved symbols are now link errors (not warnings). The
         // v0.5.0→0.5.18 Fastify/MySQL segfault (#28) was caused by
@@ -819,7 +841,7 @@ pub(super) fn build_and_run_link(
     // as a fallback — the linker only pulls object files from the .a that
     // resolve still-undefined symbols (first-definition-wins on macOS).
     let skip_runtime = (is_android || is_watchos || is_visionos)
-        && ctx.needs_ui
+        && (ctx.needs_ui || is_watchos)
         && find_ui_library(target).is_some();
     if !skip_runtime {
         if let Some(ref jsruntime) = jsruntime_lib {
@@ -1271,8 +1293,18 @@ pub(super) fn build_and_run_link(
         }
     }
 
-    // Link perry/ui library and platform frameworks if needed
-    if ctx.needs_ui {
+    // Issue #607 — watchOS targets always link the UI lib regardless of
+    // `ctx.needs_ui`. The watchOS Swift template (`PerryWatchApp.swift`)
+    // unconditionally references four `@_silgen_name`'d Rust symbols
+    // (`perry_watchos_tree_version` / `perry_watchos_toggle_changed` /
+    // `perry_watchos_toast_seq` / `perry_watchos_toast_dismiss`) that
+    // live in `libperry_ui_watchos.a`. A console-only TS program has
+    // `needs_ui = false`, so the UI lib was previously not added to the
+    // link line — leaving those four symbols undefined and the link
+    // failing. Forcing the UI lib for watchOS adds ~MBs but unblocks
+    // `console.log("ok")`-only programs from compiling.
+    let force_ui = is_watchos;
+    if ctx.needs_ui || force_ui {
         // When geisterhand is enabled, prefer the geisterhand-enabled UI lib
         // (it contains widget registration calls that the normal lib doesn't have)
         let ui_lib_option = if ctx.needs_geisterhand {

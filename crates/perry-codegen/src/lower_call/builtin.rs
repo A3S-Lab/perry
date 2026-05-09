@@ -27,6 +27,29 @@ pub(super) fn lower_builtin_new(
     class_name: &str,
     args: &[Expr],
 ) -> Result<Option<String>> {
+    // Issue #602: ambiguously-named built-in constructors (Client / Pool /
+    // Database / Redis / MongoClient / Decimal) collide with default-import
+    // aliases from unrelated packages — `import Client from "better-sqlite3"`
+    // would otherwise dispatch through pg's Client arm and emit an undefined
+    // `js_pg_client_new` reference at link time. When `class_name` matches an
+    // ambiguous arm AND we know the import source is NOT the package the arm
+    // is for, return `None` so `lower_new` falls through to the generic path.
+    // Names without a recorded import source (top-level globals, locally-
+    // defined classes already filtered upstream, etc.) keep their pre-#602
+    // behavior — the arm still fires.
+    let import_src = ctx.imported_class_sources.get(class_name).map(|s| s.as_str());
+    let arm_mismatches_source = match (class_name, import_src) {
+        ("Client", Some(src)) => src != "pg",
+        ("Pool", Some(src)) => src != "pg",
+        ("Database", Some(src)) => src != "better-sqlite3",
+        ("Redis", Some(src)) => src != "ioredis" && src != "redis",
+        ("MongoClient", Some(src)) => src != "mongodb",
+        ("Decimal", Some(src)) => src != "decimal.js",
+        _ => false,
+    };
+    if arm_mismatches_source {
+        return Ok(None);
+    }
     match class_name {
         // `new RegExp(pattern)` / `new RegExp(pattern, flags)` — call
         // js_regexp_new directly so the resulting object is a real
@@ -676,6 +699,36 @@ pub(super) fn lower_builtin_new(
             let blk = ctx.block();
             let handle = blk.call(I64, "js_ws_server_new", &[(DOUBLE, &opts)]);
             Ok(Some(nanbox_pointer_inline(blk, &handle)))
+        }
+        // Issue #606 — `new WebSocket(url)` from `import { WebSocket } from
+        // "ws"`. npm ws's API is sync-ctor: returns the client handle
+        // immediately and connects in the background; the user's
+        // `client.on("open", cb)` then registers a listener that fires
+        // once the connect completes. The previous lower path treated
+        // `new WebSocket(...)` as a no-op `Expr::New` and let the
+        // method-dispatch tower invoke `js_ws_connect` (which returns a
+        // Promise, not a handle), so `client.on(...)` was being called
+        // against a promise pointer and silently no-op'd. Routing
+        // through `js_ws_connect_start` returns the handle synchronously
+        // and the connect runs as a sibling tokio task that pushes an
+        // Open / Error event when complete.
+        "WebSocket" => {
+            let url_box = if !args.is_empty() {
+                lower_expr(ctx, &args[0])?
+            } else {
+                double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
+            };
+            ctx.pending_declares
+                .push(("js_ws_connect_start".to_string(), DOUBLE, vec![DOUBLE]));
+            let blk = ctx.block();
+            // js_ws_connect_start returns the ws_id as a plain f64
+            // (1.0, 2.0, …). Convert to i64 then NaN-box with
+            // POINTER_TAG so the standard `unbox_to_i64` receiver
+            // contract recovers the right ws_id at every method call
+            // site (`client.on(...)`, `.send(...)`, `.close()`).
+            let raw_f64 = blk.call(DOUBLE, "js_ws_connect_start", &[(DOUBLE, &url_box)]);
+            let raw_i64 = blk.fptosi(DOUBLE, &raw_f64, I64);
+            Ok(Some(nanbox_pointer_inline(blk, &raw_i64)))
         }
 
         _ => Ok(None),

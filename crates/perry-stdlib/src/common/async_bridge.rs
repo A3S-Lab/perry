@@ -230,8 +230,11 @@ pub extern "C" fn js_stdlib_process_pending() -> i32 {
     }
 
 
-    // Process pending WebSocket events (server/client listener callbacks)
-    #[cfg(feature = "websocket")]
+    // Process pending WebSocket events (server/client listener callbacks).
+    // Gate fires for either `bundled-ws` (perry-stdlib's own impl) or
+    // `external-ws-pump` (well-known flip → perry-ext-ws provides the
+    // symbol). Mirrors net's gate above. Closes #606 follow-up.
+    #[cfg(any(feature = "websocket", feature = "external-ws-pump"))]
     {
         extern "C" {
             fn js_ws_process_pending() -> i32;
@@ -320,6 +323,22 @@ pub extern "C" fn js_stdlib_has_active_handles() -> i32 {
         // (we don't drain here — just check)
         let has_ws = crate::ws::js_ws_has_active_handles();
         if has_ws != 0 {
+            return 1;
+        }
+    }
+    // External (perry-ext-ws) path — when the well-known flip strips
+    // `bundled-ws` and routes `import 'ws'` to perry-ext-ws, the
+    // wrapper's `js_ws_has_pending` reports active servers / open
+    // connections / queued events. Without this gate, a TS program
+    // running an in-process WebSocketServer would have its event loop
+    // exit before the listener task can dispatch any event. Closes
+    // #606 follow-up. Mirrors the `external-net-pump` arm above.
+    #[cfg(all(feature = "external-ws-pump", not(feature = "websocket")))]
+    {
+        extern "C" {
+            fn js_ws_has_pending() -> i32;
+        }
+        if unsafe { js_ws_has_pending() } != 0 {
             return 1;
         }
     }

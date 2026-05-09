@@ -102,6 +102,18 @@ bundled-streams = []
 websocket = ["bundled-ws"]
 bundled-ws = ["dep:tokio-tungstenite", "dep:futures-util", "async-runtime"]
 
+# Activated by `optimized_libs::build_optimized_libs` when the
+# well-known flip strips `bundled-ws` and routes `import 'ws'` to
+# perry-ext-ws. Tells perry-stdlib's `js_stdlib_process_pending`
+# to call `js_ws_process_pending` even though `pub mod ws` isn't
+# compiled in — the symbol is provided by perry-ext-ws at link
+# time. Mirrors `external-net-pump` (v0.5.579). Closes #606's
+# follow-up: without this, perry-ext-ws's accept-loop tokio task
+# pushes `Listening` / `Connection` / `Message` events to its
+# event queue but the main thread never drains them, so handlers
+# never fire and the program hangs after the SIGABRT fix.
+external-ws-pump = ["async-runtime"]
+
 # Raw TCP sockets (`net.Socket` — Postgres wire driver, custom protocols).
 # `net` umbrella retained for backwards-compat; v0.5.571's
 # well-known flip toggles `bundled-net` instead so `import 'net'`
@@ -271,7 +283,7 @@ md-5 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 hmac = { version = "0.12", optional = true }
 bcrypt = { version = "0.15", optional = true }
-jsonwebtoken = { version = "10.3", optional = true }
+jsonwebtoken = { version = "10.3", optional = true, default-features = false, features = ["rust_crypto", "use_pem"] }
 aes = { version = "0.8", optional = true }
 cbc = { version = "0.1", optional = true }
 scrypt = { version = "0.11", optional = true }

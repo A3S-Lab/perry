@@ -308,6 +308,10 @@ pub(crate) struct FnCtx<'a> {
     /// Imported function parameter counts, keyed by function name.
     /// Used for rest-param bundling on cross-module calls.
     pub imported_func_param_counts: &'a std::collections::HashMap<String, usize>,
+    /// Issue #608 — imported function names with a trailing `...rest`
+    /// parameter. The cross-module call site uses this to pack trailing
+    /// args into a real rest array before the call.
+    pub imported_func_has_rest: &'a std::collections::HashSet<String>,
     /// Imported function return types, keyed by local function name.
     /// Used for type-aware dispatch on cross-module call results.
     pub imported_func_return_types: &'a std::collections::HashMap<String, perry_types::Type>,
@@ -335,6 +339,10 @@ pub(crate) struct FnCtx<'a> {
     /// reads the C ABI's `x0` register. Without it, the call defaults to
     /// `double` (reads `d0`) and observes 0 instead of the real handle.
     pub ffi_signatures: &'a std::collections::HashMap<String, (Vec<String>, String)>,
+    /// Per-module map: local class/binding name → import source spec.
+    /// Used by `lower_builtin_new` to disambiguate ambiguously-named
+    /// built-in constructors. See issue #602.
+    pub imported_class_sources: &'a std::collections::HashMap<String, String>,
     /// Number of currently-open `try { ... }` blocks at the current
     /// lowering position. Incremented before lowering a try body,
     /// decremented after. `Stmt::Return` emits `js_try_end()` this many

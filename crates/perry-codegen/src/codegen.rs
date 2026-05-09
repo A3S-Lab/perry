@@ -89,6 +89,12 @@ pub struct CompileOptions {
     pub type_aliases: std::collections::HashMap<String, perry_types::Type>,
     /// Imported function parameter counts, keyed by function name.
     pub imported_func_param_counts: std::collections::HashMap<String, usize>,
+    /// Issue #608 — imported function names whose source-side signature
+    /// has a trailing `...rest` parameter. Used by the cross-module call
+    /// site in `lower_call.rs` to pack trailing args into a `js_array_alloc`
+    /// rest array before the call so the callee's rest binding is a real
+    /// array, not the raw arg in disguise. Sparse set (only `true` entries).
+    pub imported_func_has_rest: std::collections::HashSet<String>,
     /// Imported function return types, keyed by local function name.
     pub imported_func_return_types: std::collections::HashMap<String, perry_types::Type>,
     /// Names of imports that are exported VARIABLES (not functions). When an
@@ -244,6 +250,10 @@ pub(crate) struct CrossModuleCtx {
     pub local_async_funcs: std::collections::HashSet<u32>,
     pub type_aliases: std::collections::HashMap<String, perry_types::Type>,
     pub imported_func_param_counts: std::collections::HashMap<String, usize>,
+    /// Issue #608 — imported function names whose source-side signature
+    /// has a trailing `...rest` parameter. Used by the cross-module call
+    /// site in `lower_call.rs` to pack trailing args into a rest array.
+    pub imported_func_has_rest: std::collections::HashSet<String>,
     pub imported_func_return_types: std::collections::HashMap<String, perry_types::Type>,
     /// Per-method explicit param counts, keyed by `(class_name, method_name)`.
     /// Built once in `compile_module` from BOTH local `hir.classes` AND
@@ -330,6 +340,16 @@ pub(crate) struct CrossModuleCtx {
     /// the pointer in `x0`, not `d0`. The manifest tells us when to use
     /// `i64`/`I64` so the LLVM declaration matches the platform C ABI.
     pub ffi_signatures: std::collections::HashMap<String, (Vec<String>, String)>,
+    /// Per-module mapping: local class/binding name → import source spec.
+    /// Built once in `compile_module` from `hir.imports`. Used by
+    /// `lower_builtin_new` to disambiguate ambiguously-named built-in
+    /// constructors. Without this, `import Client from "better-sqlite3"`
+    /// (where `Client` is a default-import alias for the sqlite Database
+    /// class) silently dispatches through the pg `Client` arm and emits
+    /// an undefined `_js_pg_client_new` reference. With this map, the
+    /// "Client" arm only fires when the local `Client` was imported from
+    /// "pg" (named or default). See issue #602.
+    pub imported_class_sources: std::collections::HashMap<String, String>,
 }
 
 /// Compile a Perry HIR module to an object file via LLVM IR.
@@ -950,6 +970,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         local_async_funcs,
         type_aliases: opts.type_aliases,
         imported_func_param_counts: opts.imported_func_param_counts,
+        imported_func_has_rest: opts.imported_func_has_rest,
         imported_func_return_types: opts.imported_func_return_types,
         method_param_counts,
         method_has_rest,
@@ -1094,6 +1115,29 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             .iter()
             .map(|(name, params, ret)| (name.clone(), (params.clone(), ret.clone())))
             .collect(),
+        // Per-module local-name → import-source map. Walks `hir.imports`
+        // and records every named/default import binding's source spec.
+        // `lower_builtin_new` consults this to gate ambiguously-named
+        // built-in arms (Client / Pool / Database / Redis / MongoClient /
+        // Decimal) on the import source — `import Client from
+        // "better-sqlite3"` should not dispatch through pg's Client arm.
+        // See issue #602.
+        imported_class_sources: {
+            let mut map: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for import in &hir.imports {
+                for spec in &import.specifiers {
+                    match spec {
+                        perry_hir::ImportSpecifier::Named { local, .. }
+                        | perry_hir::ImportSpecifier::Default { local } => {
+                            map.insert(local.clone(), import.source.clone());
+                        }
+                        perry_hir::ImportSpecifier::Namespace { .. } => {}
+                    }
+                }
+            }
+            map
+        },
     };
 
     // Module-level globals registry. Pre-walk:
@@ -2726,10 +2770,12 @@ fn compile_function(
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
         imported_func_param_counts: &cross_module.imported_func_param_counts,
+        imported_func_has_rest: &cross_module.imported_func_has_rest,
         method_param_counts: &cross_module.method_param_counts,
         method_has_rest: &cross_module.method_has_rest,
         imported_func_return_types: &cross_module.imported_func_return_types,
         ffi_signatures: &cross_module.ffi_signatures,
+        imported_class_sources: &cross_module.imported_class_sources,
         try_depth: 0,
         pending_declares: Vec::new(),
         integer_locals: &integer_locals,
@@ -3100,10 +3146,12 @@ fn compile_closure(
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
         imported_func_param_counts: &cross_module.imported_func_param_counts,
+        imported_func_has_rest: &cross_module.imported_func_has_rest,
         method_param_counts: &cross_module.method_param_counts,
         method_has_rest: &cross_module.method_has_rest,
         imported_func_return_types: &cross_module.imported_func_return_types,
         ffi_signatures: &cross_module.ffi_signatures,
+        imported_class_sources: &cross_module.imported_class_sources,
         try_depth: 0,
         pending_declares: Vec::new(),
         integer_locals: &integer_locals,
@@ -3319,10 +3367,12 @@ fn compile_method(
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
         imported_func_param_counts: &cross_module.imported_func_param_counts,
+        imported_func_has_rest: &cross_module.imported_func_has_rest,
         method_param_counts: &cross_module.method_param_counts,
         method_has_rest: &cross_module.method_has_rest,
         imported_func_return_types: &cross_module.imported_func_return_types,
         ffi_signatures: &cross_module.ffi_signatures,
+        imported_class_sources: &cross_module.imported_class_sources,
         try_depth: 0,
         pending_declares: Vec::new(),
         integer_locals: &integer_locals,
@@ -3745,10 +3795,12 @@ fn compile_module_entry(
             local_async_funcs: &cross_module.local_async_funcs,
             type_aliases: &cross_module.type_aliases,
             imported_func_param_counts: &cross_module.imported_func_param_counts,
+        imported_func_has_rest: &cross_module.imported_func_has_rest,
             method_param_counts: &cross_module.method_param_counts,
             method_has_rest: &cross_module.method_has_rest,
             imported_func_return_types: &cross_module.imported_func_return_types,
             ffi_signatures: &cross_module.ffi_signatures,
+            imported_class_sources: &cross_module.imported_class_sources,
             try_depth: 0,
             pending_declares: Vec::new(),
             integer_locals: &main_integer_locals,
@@ -4001,10 +4053,12 @@ fn compile_module_entry(
             local_async_funcs: &cross_module.local_async_funcs,
             type_aliases: &cross_module.type_aliases,
             imported_func_param_counts: &cross_module.imported_func_param_counts,
+        imported_func_has_rest: &cross_module.imported_func_has_rest,
             method_param_counts: &cross_module.method_param_counts,
             method_has_rest: &cross_module.method_has_rest,
             imported_func_return_types: &cross_module.imported_func_return_types,
             ffi_signatures: &cross_module.ffi_signatures,
+            imported_class_sources: &cross_module.imported_class_sources,
             try_depth: 0,
             pending_declares: Vec::new(),
             integer_locals: &init_integer_locals,
@@ -4652,10 +4706,12 @@ fn compile_static_method(
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
         imported_func_param_counts: &cross_module.imported_func_param_counts,
+        imported_func_has_rest: &cross_module.imported_func_has_rest,
         method_param_counts: &cross_module.method_param_counts,
         method_has_rest: &cross_module.method_has_rest,
         imported_func_return_types: &cross_module.imported_func_return_types,
         ffi_signatures: &cross_module.ffi_signatures,
+        imported_class_sources: &cross_module.imported_class_sources,
         try_depth: 0,
         pending_declares: Vec::new(),
         integer_locals: &integer_locals,

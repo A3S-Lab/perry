@@ -1893,6 +1893,15 @@ pub fn run_with_parse_cache(
     let mut exported_var_names: BTreeSet<(String, String)> = BTreeSet::new();
     // Build a map of all exported functions with their param counts from all modules
     let mut exported_func_param_counts: BTreeMap<(String, String), usize> = BTreeMap::new();
+    // Issue #608 — parallel map: which exported functions have a trailing
+    // `...rest` parameter. Cross-module call sites consult this to bundle
+    // trailing args into a `js_array_alloc(n)` rest array before the call,
+    // mirroring the same-module fast path that uses `func_signatures`'s
+    // has_rest bit. Without this map, `import { sql } from "pkg"` followed
+    // by `sql\`hello ${x}\`` (which the HIR desugars to `sql(stringsArr, x)`)
+    // emits a 2-arg call whose callee reads `params` as the raw 2nd arg
+    // instead of `[x]`. Sparse map (only `true` entries stored).
+    let mut exported_func_has_rest: BTreeMap<(String, String), bool> = BTreeMap::new();
     // Build a map of all exported functions with their return types from all modules
     let mut exported_func_return_types: BTreeMap<(String, String), perry_types::Type> =
         BTreeMap::new();
@@ -1914,6 +1923,10 @@ pub fn run_with_parse_cache(
                 if func.is_async {
                     exported_async_funcs.insert((path_str.clone(), func.name.clone()));
                 }
+                if func.params.last().is_some_and(|p| p.is_rest) {
+                    exported_func_has_rest
+                        .insert((path_str.clone(), func.name.clone()), true);
+                }
             }
         }
         // Also register exported_functions aliases (e.g., "default" → actual function)
@@ -1928,7 +1941,10 @@ pub fn run_with_parse_cache(
                     .entry(key.clone())
                     .or_insert_with(|| func.return_type.clone());
                 if func.is_async {
-                    exported_async_funcs.insert(key);
+                    exported_async_funcs.insert(key.clone());
+                }
+                if func.params.last().is_some_and(|p| p.is_rest) {
+                    exported_func_has_rest.entry(key).or_insert(true);
                 }
             }
         }
@@ -1974,6 +1990,10 @@ pub fn run_with_parse_cache(
                             .insert((path_str.clone(), name.clone()), return_type.clone());
                         if *is_async {
                             exported_async_funcs.insert((path_str.clone(), name.clone()));
+                        }
+                        if params.last().is_some_and(|p| p.is_rest) {
+                            exported_func_has_rest
+                                .insert((path_str.clone(), name.clone()), true);
                         }
                     }
                 }
@@ -2702,6 +2722,14 @@ pub fn run_with_parse_cache(
                 std::collections::HashMap::new();
             let mut imported_return_types: std::collections::HashMap<String, perry_types::Type> =
                 std::collections::HashMap::new();
+            // Issue #608 — set of imported function names whose source-side
+            // signature has a trailing `...rest` parameter. Built alongside
+            // `imported_param_counts` from the source module's
+            // `exported_func_has_rest` table; consulted by the cross-module
+            // call site in `lower_call.rs` to bundle trailing args into a
+            // single rest array. Sparse set (only `true` entries stored).
+            let mut imported_has_rest: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             let mut imported_vars: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
 
@@ -2739,6 +2767,9 @@ pub fn run_with_parse_cache(
                                 let key = (origin_path.clone(), export_name.clone());
                                 if let Some(&param_count) = exported_func_param_counts.get(&key) {
                                     imported_param_counts.insert(export_name.clone(), param_count);
+                                }
+                                if exported_func_has_rest.get(&key).copied().unwrap_or(false) {
+                                    imported_has_rest.insert(export_name.clone());
                                 }
                                 if let Some(class) = exported_classes.get(&key) {
                                     imported_classes.push(perry_codegen::ImportedClass {
@@ -2861,6 +2892,9 @@ pub fn run_with_parse_cache(
                                     {
                                         imported_param_counts
                                             .insert(export_name.clone(), param_count);
+                                    }
+                                    if exported_func_has_rest.get(&key).copied().unwrap_or(false) {
+                                        imported_has_rest.insert(export_name.clone());
                                     }
                                     if let Some(class) = exported_classes.get(&key) {
                                         imported_classes.push(perry_codegen::ImportedClass {
@@ -3038,6 +3072,16 @@ pub fn run_with_parse_cache(
                         imported_param_counts.insert(exported_name.clone(), param_count);
                         if local_name != exported_name {
                             imported_param_counts.insert(local_name.clone(), param_count);
+                        }
+                    }
+
+                    // Issue #608 — propagate has_rest alongside the param
+                    // count so the cross-module call site can pack the
+                    // trailing args into a rest array.
+                    if exported_func_has_rest.get(&key).copied().unwrap_or(false) {
+                        imported_has_rest.insert(exported_name.clone());
+                        if local_name != exported_name {
+                            imported_has_rest.insert(local_name.clone());
                         }
                     }
 
@@ -3610,6 +3654,7 @@ pub fn run_with_parse_cache(
                 imported_async_funcs: imported_async_set,
                 type_aliases: type_alias_map,
                 imported_func_param_counts: imported_param_counts,
+                imported_func_has_rest: imported_has_rest,
                 imported_func_return_types: imported_return_types,
                 imported_vars,
 

@@ -18,6 +18,7 @@ extern "C" {
     pub fn js_promise_reason(ptr: *mut Promise) -> f64;
     pub fn js_json_stringify(value: f64, type_hint: u32) -> *mut StringHeader;
     pub fn js_gc_enter_unsafe_zone();
+    pub fn js_gc_exit_unsafe_zone();
 }
 
 /// Opaque marker for the runtime's Promise struct — pass pointers

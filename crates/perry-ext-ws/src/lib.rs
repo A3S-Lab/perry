@@ -83,6 +83,11 @@ enum PendingWsEvent {
     Error(usize, String),
     ServerError(Handle, String),
     Listening(Handle),
+    /// Issue #606 — fired when an outbound client connection succeeds
+    /// so `client.on("open", cb)` callbacks fire. Without this, code that
+    /// awaits `new Promise(r => client.on("open", () => r()))` hangs
+    /// forever even though `is_open=true` was set.
+    Open(usize),
 }
 
 lazy_static! {
@@ -148,16 +153,20 @@ pub unsafe extern "C" fn js_ws_connect(url_ptr: *const StringHeader) -> *mut per
         promise.reject_string("Invalid URL");
         return raw;
     };
+    // Issue #606 — `spawn_blocking_with_reactor` runs the closure inside
+    // a tokio worker task; `Handle::current().block_on` panics in that
+    // context. Use `tokio::spawn` so the connect awaits as a sibling task.
     spawn_blocking(move || {
-        let result =
-            tokio::runtime::Handle::current().block_on(async move { connect_async(&url).await });
-        match result {
-            Ok((ws_stream, _resp)) => {
-                let id = setup_client_io(ws_stream);
-                promise.resolve(JsValue::from_number(id as f64));
+        tokio::spawn(async move {
+            match connect_async(&url).await {
+                Ok((ws_stream, _resp)) => {
+                    let id = setup_client_io(ws_stream);
+                    push_ws_event(PendingWsEvent::Open(id));
+                    promise.resolve(JsValue::from_number(id as f64));
+                }
+                Err(e) => promise.reject_string(&format!("WebSocket connect error: {}", e)),
             }
-            Err(e) => promise.reject_string(&format!("WebSocket connect error: {}", e)),
-        }
+        });
     });
     raw
 }
@@ -199,23 +208,27 @@ pub extern "C" fn js_ws_connect_start(url_nanboxed: f64) -> f64 {
             listeners: HashMap::new(),
         },
     );
+    // Issue #606 — same fix as js_ws_connect: tokio::spawn instead of
+    // block_on so the connect+IO loop runs as a sibling task on the
+    // existing runtime.
     spawn_blocking(move || {
-        let outcome =
-            tokio::runtime::Handle::current().block_on(async move { connect_async(&url).await });
-        match outcome {
-            Ok((ws_stream, _)) => {
-                if let Some(c) = WS_CONNECTIONS.lock().unwrap().get_mut(&ws_id) {
-                    c.is_open = true;
+        tokio::spawn(async move {
+            match connect_async(&url).await {
+                Ok((ws_stream, _)) => {
+                    if let Some(c) = WS_CONNECTIONS.lock().unwrap().get_mut(&ws_id) {
+                        c.is_open = true;
+                    }
+                    push_ws_event(PendingWsEvent::Open(ws_id));
+                    drive_client_io(ws_id, ws_stream, rx);
                 }
-                drive_client_io(ws_id, ws_stream, rx);
+                Err(e) => {
+                    push_ws_event(PendingWsEvent::Error(
+                        ws_id,
+                        format!("WebSocket connect error: {}", e),
+                    ));
+                }
             }
-            Err(e) => {
-                push_ws_event(PendingWsEvent::Error(
-                    ws_id,
-                    format!("WebSocket connect error: {}", e),
-                ));
-            }
-        }
+        });
     });
     ws_id as f64
 }
@@ -255,8 +268,12 @@ fn drive_client_io<S>(
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    // Issue #606 — `spawn_blocking_with_reactor` runs the closure inside
+    // a tokio worker task; `Handle::current().block_on` panics in that
+    // context. Spawn the IO loop as a sibling task on the existing
+    // runtime instead.
     spawn_blocking(move || {
-        tokio::runtime::Handle::current().block_on(async move {
+        tokio::spawn(async move {
             let (mut write, mut read) = ws_stream.split();
             loop {
                 tokio::select! {
@@ -541,15 +558,49 @@ pub unsafe extern "C" fn js_ws_on(
     if callback_ptr == 0 {
         return handle;
     }
-    if let Some(server) = get_handle_mut::<WsServerHandle>(handle) {
-        server
-            .listeners
-            .entry(event_name)
-            .or_insert_with(Vec::new)
-            .push(callback_ptr);
-        return handle;
-    }
+    // Issue #606: client ws_ids (NEXT_WS_ID counter) and server handle
+    // ids (perry-ffi NEXT_HANDLE counter) live in disjoint registries
+    // but their numeric ranges collide — both start near 1. If we look
+    // up the server registry first, a client id that happens to also
+    // be a registered server handle id would route through the server
+    // arm and the user's `client.on("open", cb)` would land on the
+    // server's listeners. Check the client registry first so client
+    // dispatch is correct regardless of allocation order.
     let ws_id = handle as usize;
+    let is_client = WS_CONNECTIONS.lock().unwrap().contains_key(&ws_id);
+    if !is_client {
+        if let Some(server) = get_handle_mut::<WsServerHandle>(handle) {
+            // If the server has already bound by the time the user
+            // registers a "listening" handler, re-emit the event so the
+            // late-registered callback fires on the next event-loop pump.
+            // Without this, the accept-loop task races the JS-side `wss.on(
+            // "listening", cb)` registration — `push_ws_event(Listening)`
+            // happens immediately after the bind succeeds, and any pump
+            // tick that drains it before the user's listener registers
+            // discards the event silently.
+            let already_listening = event_name == "listening" && server.is_listening;
+            server
+                .listeners
+                .entry(event_name)
+                .or_insert_with(Vec::new)
+                .push(callback_ptr);
+            if already_listening {
+                push_ws_event(PendingWsEvent::Listening(handle));
+            }
+            return handle;
+        }
+    }
+    // Issue #606: same race fix as listening — if the client has
+    // already opened by the time the user registers an "open"
+    // handler, re-emit the event so the late-registered callback
+    // fires on the next pump tick.
+    let already_open = event_name == "open"
+        && WS_CONNECTIONS
+            .lock()
+            .unwrap()
+            .get(&ws_id)
+            .map(|c| c.is_open)
+            .unwrap_or(false);
     let mut g = WS_CLIENT_LISTENERS.lock().unwrap();
     let entry = g.entry(ws_id).or_insert_with(|| WsClientListeners {
         listeners: HashMap::new(),
@@ -559,6 +610,10 @@ pub unsafe extern "C" fn js_ws_on(
         .entry(event_name)
         .or_default()
         .push(callback_ptr);
+    drop(g);
+    if already_open {
+        push_ws_event(PendingWsEvent::Open(ws_id));
+    }
     handle
 }
 
@@ -579,8 +634,15 @@ pub extern "C" fn js_ws_server_new(opts_f64: f64) -> Handle {
     });
     WS_ACTIVE_SERVERS.fetch_add(1, Ordering::Relaxed);
     let handle_id = server_handle;
+    // Issue #606 — `spawn_blocking_with_reactor` already runs the closure
+    // inside a tokio worker task, so `Handle::current().block_on(fut)` panics
+    // with "Cannot start a runtime from within a runtime". Schedule the
+    // accept loop as a sibling task on the existing runtime instead.
+    // (Same root cause as the v0.5.691 sweep that fixed perry-ext-http's
+    // server.rs / https_server.rs / http2_server.rs and perry-ext-ws's
+    // `drive_server_client_io` — this site was missed in that sweep.)
     spawn_blocking(move || {
-        tokio::runtime::Handle::current().block_on(async move {
+        tokio::spawn(async move {
             let addr = format!("0.0.0.0:{}", port);
             let listener = match tokio::net::TcpListener::bind(&addr).await {
                 Ok(l) => l,
@@ -592,10 +654,10 @@ pub extern "C" fn js_ws_server_new(opts_f64: f64) -> Handle {
                     return;
                 }
             };
-            push_ws_event(PendingWsEvent::Listening(handle_id));
             if let Some(s) = get_handle_mut::<WsServerHandle>(handle_id) {
                 s.is_listening = true;
             }
+            push_ws_event(PendingWsEvent::Listening(handle_id));
             loop {
                 tokio::select! {
                     accept_result = listener.accept() => {
@@ -907,6 +969,16 @@ pub extern "C" fn js_ws_process_pending() -> i32 {
             }
             PendingWsEvent::Listening(server_handle) => {
                 let listeners = listeners_on_server(server_handle, "listening");
+                for cb in listeners {
+                    if cb != 0 {
+                        let closure = unsafe { JsClosure::from_raw(cb as *const RawClosureHeader) };
+                        let _ = unsafe { closure.call0() };
+                        fired += 1;
+                    }
+                }
+            }
+            PendingWsEvent::Open(ws_id) => {
+                let listeners = listeners_on_client(ws_id, "open");
                 for cb in listeners {
                     if cb != 0 {
                         let closure = unsafe { JsClosure::from_raw(cb as *const RawClosureHeader) };

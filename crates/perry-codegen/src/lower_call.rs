@@ -764,24 +764,67 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         // the missing args (and can apply its defaults). Without this,
         // the d-registers for the missing params hold stale data and
         // the function reads garbage (e.g. alpha = -3e-5 instead of 1).
-        let target_arity = ctx
+        let declared_count = ctx
             .imported_func_param_counts
             .get(name)
             .copied()
-            .unwrap_or(args.len())
-            .max(args.len());
+            .unwrap_or(args.len());
+        let has_rest = ctx.imported_func_has_rest.contains(name);
+        // Issue #608: when the imported callee declares a trailing
+        // `...rest` parameter, the LLVM signature has exactly
+        // `declared_count` doubles (rest counts as one slot — a
+        // NaN-boxed array pointer). Bundle every arg at and beyond the
+        // rest position into a single `js_array_alloc` array; that
+        // array is what the callee's rest binding sees. Without this
+        // bundling, `tag\`hello ${x}\`` lowers to `tag([…], x)` and
+        // the cross-module callee reads `params` as `x` directly
+        // (`undefined` when no interp args, or the raw arg value
+        // when one).
+        let target_arity = if has_rest {
+            declared_count.max(1)
+        } else {
+            declared_count.max(args.len())
+        };
         let param_types: Vec<crate::types::LlvmType> =
             std::iter::repeat_n(DOUBLE, target_arity).collect();
         ctx.pending_declares
             .push((fname.clone(), DOUBLE, param_types));
         let mut lowered: Vec<String> = Vec::with_capacity(target_arity);
-        for a in args {
-            lowered.push(lower_expr(ctx, a)?);
-        }
-        // Pad with TAG_UNDEFINED for the missing trailing args.
-        let undefined_lit = double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
-        while lowered.len() < target_arity {
-            lowered.push(undefined_lit.clone());
+        if has_rest {
+            // Fixed (non-rest) params: pass through.
+            let fixed_count = declared_count.saturating_sub(1);
+            for a in args.iter().take(fixed_count) {
+                lowered.push(lower_expr(ctx, a)?);
+            }
+            // Pad fixed params if the caller passed too few.
+            let undefined_lit =
+                double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+            while lowered.len() < fixed_count {
+                lowered.push(undefined_lit.clone());
+            }
+            // Materialize the rest array (always — even when zero
+            // trailing args, the callee's rest binding must be `[]`).
+            let rest_count = args.len().saturating_sub(fixed_count);
+            let cap = (rest_count as u32).to_string();
+            let mut current = ctx.block().call(I64, "js_array_alloc", &[(I32, &cap)]);
+            for a in args.iter().skip(fixed_count) {
+                let v = lower_expr(ctx, a)?;
+                let blk = ctx.block();
+                current =
+                    blk.call(I64, "js_array_push_f64", &[(I64, &current), (DOUBLE, &v)]);
+            }
+            let rest_box = nanbox_pointer_inline(ctx.block(), &current);
+            lowered.push(rest_box);
+        } else {
+            for a in args {
+                lowered.push(lower_expr(ctx, a)?);
+            }
+            // Pad with TAG_UNDEFINED for the missing trailing args.
+            let undefined_lit =
+                double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+            while lowered.len() < target_arity {
+                lowered.push(undefined_lit.clone());
+            }
         }
         let arg_slices: Vec<(crate::types::LlvmType, &str)> =
             lowered.iter().map(|s| (DOUBLE, s.as_str())).collect();
@@ -5673,6 +5716,31 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         args: &[],
         ret: NR_PTR,
     },
+    // Issue #605 — npm `redis`'s `client.connect()` is async. ioredis
+    // auto-connects in `new Redis()` and exposes `connect()` as a no-op
+    // resolved-promise that the runtime returns. Without this row,
+    // `await client.connect()` from `import { createClient } from
+    // "redis"` dispatches against `undefined` and raises the user-
+    // facing TypeError ("Cannot read properties of undefined …").
+    NativeModSig {
+        module: "ioredis",
+        has_receiver: true,
+        method: "connect",
+        class_filter: None,
+        runtime: "js_ioredis_connect",
+        args: &[],
+        ret: NR_PTR,
+    },
+    // npm `redis`'s `client.disconnect()` — alias for `.quit()`.
+    NativeModSig {
+        module: "ioredis",
+        has_receiver: true,
+        method: "disconnect",
+        class_filter: None,
+        runtime: "js_ioredis_quit",
+        args: &[],
+        ret: NR_PTR,
+    },
     // ========== MongoDB ==========
     // `new MongoClient(uri)` is dispatched by `lower_builtin_new` (sync ctor
     // that stores the URI). `client.connect()` opens the connection on the
@@ -6681,8 +6749,12 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         method: "verify",
         class_filter: None,
         runtime: "js_jwt_verify",
-        args: &[NA_F64, NA_F64],
-        ret: NR_F64,
+        // js_jwt_verify(token_ptr: *const StringHeader, secret_ptr: *const StringHeader)
+        // -> *mut StringHeader (JSON of claims). NA_F64/NR_F64 caused
+        // calling-convention mismatch on both args and return; NA_STR/NR_STR
+        // matches the actual Rust ABI. Caller must JSON.parse the result.
+        args: &[NA_STR, NA_STR],
+        ret: NR_STR,
     },
     NativeModSig {
         module: "jsonwebtoken",
@@ -6690,8 +6762,9 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         method: "decode",
         class_filter: None,
         runtime: "js_jwt_decode",
-        args: &[NA_F64],
-        ret: NR_F64,
+        // js_jwt_decode(token_ptr) -> *mut StringHeader (JSON). Same fix.
+        args: &[NA_STR],
+        ret: NR_STR,
     },
     // ========== nodemailer ==========
     NativeModSig {
@@ -8460,9 +8533,21 @@ pub(super) fn native_module_lookup(
     method: &str,
     class_name: Option<&str>,
 ) -> Option<&'static NativeModSig> {
+    // Issue #605: `redis` (the npm `redis` package) and `ioredis` route
+    // to the same perry-ext-ioredis staticlib via well-known bindings,
+    // but the dispatch table only has `module: "ioredis"` rows. Without
+    // normalization, `import { createClient } from "redis"` falls
+    // through every lookup arm and the user's `client.connect()`
+    // dispatches against `undefined`. Mirror the well-known aliasing
+    // here so call-site lookups find the right runtime fns regardless
+    // of which alias the user imported from.
+    let normalized = match module {
+        "redis" => "ioredis",
+        m => m,
+    };
     // First pass: look for an exact class_filter match.
     let exact = NATIVE_MODULE_TABLE.iter().find(|sig| {
-        sig.module == module
+        sig.module == normalized
             && sig.has_receiver == has_receiver
             && sig.method == method
             && sig.class_filter.is_some()
@@ -8473,7 +8558,7 @@ pub(super) fn native_module_lookup(
     }
     // Second pass: generic (class_filter == None) entries.
     NATIVE_MODULE_TABLE.iter().find(|sig| {
-        sig.module == module
+        sig.module == normalized
             && sig.has_receiver == has_receiver
             && sig.method == method
             && sig.class_filter.is_none()

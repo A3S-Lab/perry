@@ -28,7 +28,8 @@ use crate::request::{
 };
 use crate::response::{alloc_server_response, HyperResponseShape, ServerResponse};
 use crate::types::{
-    extract_host, extract_port, js_gc_enter_unsafe_zone, js_is_promise, js_promise_run_microtasks,
+    extract_host, extract_port, js_gc_enter_unsafe_zone, js_gc_exit_unsafe_zone, js_is_promise,
+    js_promise_run_microtasks,
     js_promise_state, js_promise_value, jsvalue_to_owned_string, read_string_header, wait_for_promise,
     Promise, POINTER_TAG, PTR_MASK, TAG_NULL, TAG_UNDEFINED,
 };
@@ -497,6 +498,20 @@ fn event_loop(server_handle: i64) {
         fn js_ws_process_pending() -> i32;
     }
     loop {
+        // Issue #604 — `server.close()` flips `listening` to false and
+        // drops the shutdown_tx. Without this gate the main-thread
+        // event_loop spins forever on an infinite `loop {}` even after
+        // close, so a perry-compiled program that does request →
+        // handle → close → exit never reaches the exit. Check the
+        // listening flag at the top of every tick and break out when
+        // close has fired so control returns to the caller of
+        // `js_node_http_server_listen`.
+        let still_listening = get_handle::<HttpServer>(server_handle)
+            .map(|s| s.listening)
+            .unwrap_or(false);
+        if !still_listening {
+            break;
+        }
         unsafe {
             js_promise_run_microtasks();
             js_ws_process_pending();
@@ -516,6 +531,12 @@ fn event_loop(server_handle: i64) {
             None => continue,
         };
         process_pending(pending);
+    }
+    // Match the `js_gc_enter_unsafe_zone` call from
+    // `js_node_http_server_listen` — without the matching exit, the GC
+    // would stay suppressed even after the server shuts down.
+    unsafe {
+        js_gc_exit_unsafe_zone();
     }
 }
 
