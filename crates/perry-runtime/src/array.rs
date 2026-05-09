@@ -625,10 +625,17 @@ pub extern "C" fn js_array_set_f64_extend(
             arr
         };
 
-        // Fill any gap with 0.0 (undefined coerced to number)
+        // Fill any gap with TAG_HOLE so subsequent reads / iteration /
+        // JSON.stringify treat them as holes (per ECMA-262 §22.1.3.30
+        // step 5.b: holes serialize to "null"). Pre-fix this wrote 0.0
+        // which was indistinguishable from a real numeric 0 — sparse
+        // arrays serialized as `[0, 0, ...]` instead of `[null, null,
+        // ...]`. Read paths translate TAG_HOLE → TAG_UNDEFINED via
+        // `js_array_get_f64`'s post-#323 hole handling.
         let elements_ptr = (arr as *mut u8).add(std::mem::size_of::<ArrayHeader>()) as *mut f64;
+        let hole = f64::from_bits(crate::value::TAG_HOLE);
         for i in length..index {
-            ptr::write(elements_ptr.add(i as usize), 0.0);
+            ptr::write(elements_ptr.add(i as usize), hole);
         }
 
         // Set the value
