@@ -51,6 +51,13 @@ pub struct AxiosResponseHandle {
     pub status: u16,
     pub status_text: String,
     pub data: String,
+    /// Issue #627: lower-cased Content-Type header value (without
+    /// charset suffix), or empty string if absent. `js_axios_response_data_parsed`
+    /// consults this to decide whether to JSON-parse the body — matches
+    /// npm axios's content-type-based behavior, replacing v0.5.714's
+    /// body-shape heuristic which would incorrectly parse a JSON-shaped
+    /// string body served with `text/plain`.
+    pub content_type: String,
 }
 
 unsafe fn read_str(ptr: *const StringHeader) -> Option<String> {
@@ -98,6 +105,22 @@ where
                     .canonical_reason()
                     .unwrap_or("")
                     .to_string();
+                // Issue #627: capture Content-Type before consuming the
+                // body. Lower-case + take the part before `;` so
+                // `application/json; charset=utf-8` reduces to
+                // `application/json` for the JSON-parse decision.
+                let content_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| {
+                        s.split(';')
+                            .next()
+                            .unwrap_or(s)
+                            .trim()
+                            .to_ascii_lowercase()
+                    })
+                    .unwrap_or_default();
                 let data = response
                     .text()
                     .await
@@ -106,6 +129,7 @@ where
                     status,
                     status_text,
                     data,
+                    content_type,
                 })
             });
         match result {
@@ -250,23 +274,25 @@ pub extern "C" fn js_axios_response_data(handle: Handle) -> *mut StringHeader {
 /// #604 followup — only surfaced once the listen() hang was fixed.
 #[no_mangle]
 pub extern "C" fn js_axios_response_data_parsed(handle: Handle) -> f64 {
-    let body = match with_handle::<AxiosResponseHandle, _, _>(handle, |r| r.data.clone()) {
-        Some(b) => b,
+    // Issue #627: snapshot body + content-type in one with_handle pass to
+    // avoid two registry lookups + leaking the lock across the FFI call to
+    // js_json_parse below.
+    let snapshot = with_handle::<AxiosResponseHandle, _, _>(handle, |r| {
+        (r.data.clone(), r.content_type.clone())
+    });
+    let (body, content_type) = match snapshot {
+        Some(s) => s,
         None => return f64::from_bits(0x7FFC_0000_0000_0001), // TAG_UNDEFINED
     };
-    let trimmed = body.trim_start();
-    let looks_like_json = trimmed.starts_with('{')
-        || trimmed.starts_with('[')
-        || trimmed.starts_with('"')
-        || trimmed.starts_with("true")
-        || trimmed.starts_with("false")
-        || trimmed.starts_with("null")
-        || trimmed
-            .chars()
-            .next()
-            .map(|c| c == '-' || c.is_ascii_digit())
-            .unwrap_or(false);
-    if looks_like_json {
+    // Issue #627: npm axios parses JSON only when content-type starts with
+    // `application/json` (with optional `; charset=...`). Pre-fix, perry
+    // used a body-shape heuristic which would incorrectly parse a JSON-
+    // looking string body served with `text/plain`. The `+json` suffix
+    // form (e.g. `application/vnd.api+json`) also gets parsed by npm
+    // axios per the standard, so accept either shape.
+    let is_json_ct =
+        content_type == "application/json" || content_type.ends_with("+json");
+    if is_json_ct {
         // Cross the FFI boundary into the runtime's JSON parser. The
         // runtime returns `undefined` (TAG_UNDEFINED) on parse error,
         // which we detect and fall through to the raw-string path so
