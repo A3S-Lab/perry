@@ -9957,6 +9957,21 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 let addr_i64 = blk.ptrtoint(&global_ref, I64);
                 return Ok(nanbox_pointer_inline(blk, &addr_i64));
             }
+            // Issue #629: namespace imports for unresolved modules
+            // (`import * as fsp from "node:fs/promises"`) — when the
+            // module isn't backed by perry-stdlib bindings or compiled
+            // sources, the binding lands here. Pre-fix the catch-all
+            // returned TAG_TRUE so `typeof fsp === "boolean"` and every
+            // property access produced the confusing "(boolean).X is
+            // not a function" error. Route to the runtime stub which
+            // returns an empty-object pointer (typeof "object", every
+            // property reads undefined). Namespace bindings registered
+            // in `ctx.namespace_imports` already short-circuit via
+            // dedicated arms above; this catch-all only fires for
+            // names with no resolution at all.
+            if ctx.namespace_imports.contains(name) {
+                return Ok(ctx.block().call(DOUBLE, "js_unresolved_namespace_stub", &[]));
+            }
             Ok(double_literal(f64::from_bits(crate::nanbox::TAG_TRUE)))
         }
 

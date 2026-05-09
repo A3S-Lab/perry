@@ -346,6 +346,21 @@ struct NullObjectBytes {
 // Safety: this is a read-only zero-initialized struct with no interior mutability
 unsafe impl Sync for NullObjectBytes {}
 
+/// Issue #629: namespace imports for unresolved modules
+/// (`import * as fsp from "node:fs/promises"` when the module isn't
+/// implemented) used to fall back to `TAG_TRUE` at the codegen
+/// catch-all, which made `typeof fsp === "boolean"` and every
+/// `fsp.method` access return undefined silently — confusing because
+/// the user sees `(boolean).method is not a function`. Returning a
+/// stable empty-object stub makes `typeof === "object"` (matches
+/// Node's module-namespace shape) and property access cleanly returns
+/// undefined via the existing object-field path.
+#[no_mangle]
+pub extern "C" fn js_unresolved_namespace_stub() -> f64 {
+    let null_obj_ptr = &NULL_OBJECT_BYTES as *const NullObjectBytes as *mut u8;
+    f64::from_bits(crate::JSValue::pointer(null_obj_ptr).bits())
+}
+
 static NULL_OBJECT_BYTES: NullObjectBytes = NullObjectBytes {
     object_type: 1,
     class_id: 0,

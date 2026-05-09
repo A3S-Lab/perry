@@ -785,6 +785,11 @@ pub fn declare_phase_b_strings(module: &mut LlModule) {
         DOUBLE,
         &[DOUBLE, PTR, I64],
     );
+    // Issue #629: stub for unresolved namespace imports — returns a stable
+    // empty-object pointer so `typeof ns === "object"` and `ns.method`
+    // cleanly resolves to undefined (instead of TAG_TRUE → "boolean" /
+    // "(boolean).method is not a function").
+    module.declare_function("js_unresolved_namespace_stub", DOUBLE, &[]);
     // Refs #420: register a static computed-key Symbol field on a class.
     // Called from `init_static_fields` for each `static [Symbol.X] = init`.
     module.declare_function(

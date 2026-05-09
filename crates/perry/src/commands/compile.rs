@@ -2733,6 +2733,27 @@ pub fn run_with_parse_cache(
             let mut imported_vars: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
 
+            // Issue #629: register namespace imports BEFORE the main
+            // resolution loop so unresolved-source bindings still flow
+            // to the codegen's `namespace_imports` set. Without this,
+            // the early `continue` for unresolved imports below means
+            // `import * as fsp from "node:fs/promises"` (when
+            // fs/promises has no perry-stdlib backing) leaves `fsp`
+            // off the namespace list — the catch-all in
+            // `Expr::ExternFuncRef` then returns TAG_TRUE and
+            // `typeof fsp === "boolean"`. Registering here lets the
+            // catch-all route through `js_unresolved_namespace_stub`
+            // (typeof "object", missing properties → undefined).
+            for import in &hir_module.imports {
+                for spec in &import.specifiers {
+                    if let perry_hir::ImportSpecifier::Namespace { local } = spec {
+                        if !namespace_imports.contains(local) {
+                            namespace_imports.push(local.clone());
+                        }
+                    }
+                }
+            }
+
             for import in &hir_module.imports {
                 if import.module_kind != perry_hir::ModuleKind::NativeCompiled {
                     continue;
