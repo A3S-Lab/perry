@@ -24,16 +24,36 @@ declare module "perry/tui" {
     }
 
     /**
-     * Single-line text node.
+     * Single-line text node. The 2-arg form applies fg / bg colors and
+     * style flags (bold / italic / underline / reverse).
      */
     export function Text(content: string): Widget;
+    export function Text(content: string, opts: TextStyle): Widget;
+
+    /**
+     * Per-side cell counts. Used for `padding`. Missing fields default
+     * to 0 cells.
+     */
+    export interface Edges {
+        top?: number;
+        right?: number;
+        bottom?: number;
+        left?: number;
+    }
+
+    /**
+     * A length expressed as integer cells (number) or as a percentage
+     * of the parent's equivalent dimension (string `"50%"`). Phase 3.5
+     * (#405) added the percentage form.
+     */
+    export type Dim = number | string;
 
     /**
      * Style options for a Box. Maps to Taffy's flexbox solver — the
-     * v0.3 surface (#358 Phase 3) supports flexDirection /
-     * justifyContent / alignItems, integer-cell gap and uniform
-     * padding, and explicit width / height. flex-grow / flex-shrink /
-     * flex-basis / per-side padding land in Phase 3.5.
+     * Phase 3.5 (#405) surface adds 24-bit truecolor on Text, per-side
+     * padding, flex-shrink, flex-basis, and percentage units for
+     * width / height / flexBasis on top of the v1.0 (#358 Phase 3)
+     * surface.
      */
     export interface BoxStyle {
         flexDirection?: "row" | "column";
@@ -46,11 +66,34 @@ declare module "perry/tui" {
             | "space-around";
         alignItems?: "start" | "center" | "end" | "flex-end" | "stretch";
         gap?: number;
-        padding?: number;
-        width?: number;
-        height?: number;
+        /** Cells of padding — uniform (number) or per-side ({ top, right, bottom, left }). */
+        padding?: number | Edges;
+        /** Width in cells (number) or percentage of parent (string `"50%"`). */
+        width?: Dim;
+        height?: Dim;
         /** CSS flex-grow factor. 0 = no grow (default); 1 = fill remaining space. */
         flexGrow?: number;
+        /** CSS flex-shrink factor. 0 = don't shrink (default); 1 = shrink at default rate. */
+        flexShrink?: number;
+        /** CSS flex-basis. Cells (number) or percentage (string `"30%"`). */
+        flexBasis?: Dim;
+    }
+
+    /**
+     * Style options for `Text(content, opts)`. Colors accept the named
+     * 16-color palette (`"red"`, `"bright-blue"`, …), CSS hex
+     * (`"#ff8800"` / `"#fa0"`), or empty string for the terminal
+     * default. (#405 Phase 3.5.)
+     */
+    export interface TextStyle {
+        fg?: string;
+        color?: string; // alias for fg (matches the CSS-style naming on Box)
+        bg?: string;
+        backgroundColor?: string; // alias for bg
+        bold?: boolean;
+        italic?: boolean;
+        underline?: boolean;
+        reverse?: boolean;
     }
 
     /**
@@ -107,10 +150,13 @@ declare module "perry/tui" {
      * `_` cursor character. Wire keypresses via `useInput` and
      * mutate the value state — the widget itself is purely visual.
      *
-     * v1 limitation: cursor is always at the end. Cursor
-     * repositioning lands in v1.5.
+     * The 2-arg form positions the cursor at an arbitrary index
+     * inside the value (left/right arrow inside text). Cursor at the
+     * value's length renders a trailing reverse-video space (matching
+     * most terminal text editors' end-of-line cursor). (#404.)
      */
     export function Input(value: string): Widget;
+    export function Input(value: string, cursor: number): Widget;
 
     /**
      * Vertical list of items as a Box of Text children. The
@@ -131,6 +177,44 @@ declare module "perry/tui" {
      * via `useInput` to edit.
      */
     export function TextArea(value: string): Widget;
+
+    /**
+     * Animated spinner whose frame index is driven by an internal
+     * timer — no `setInterval` wiring required. Defaults to a 100 ms
+     * cycle through `["-", "\\", "|", "/"]`. Inside `run()`, the global
+     * timer flips `STATE_DIRTY` every ~50 ms so the loop re-renders
+     * cleanly; outside `run()` (one-shot `render()`), only the
+     * snapshot prints. (#403.)
+     */
+    export function AnimatedSpinner(opts?: {
+        interval?: number;
+        frames?: string[];
+    }): Widget;
+
+    /**
+     * Render a 2D grid as a column-stacked Box. Header row is bold;
+     * the optional `selected` row index (default -1 = none) is drawn
+     * with reverse video. Column widths auto-fit the longest header
+     * or cell. (#402.)
+     */
+    export function Table(opts: {
+        headers: string[];
+        rows: string[][];
+        selected?: number;
+    }): Widget;
+
+    /**
+     * Horizontal tab bar (active label drawn with reverse video)
+     * followed by the active tab's body widget. `body[i]` is mounted
+     * only when `active === i` — non-active bodies aren't rendered
+     * at all (matches React's null-render fallback for missing
+     * keys). (#402.)
+     */
+    export function Tabs(opts: {
+        tabs: string[];
+        active: number;
+        body: Widget[];
+    }): Widget;
 
     /**
      * Allocate a reactive state slot with the given initial value.

@@ -60,6 +60,14 @@ mimalloc = { version = "0.1", default-features = false }
 # We'll add GC bindings later
 # For now, use a simple bump allocator or leak memory for MVP
 
+# Windows raw-mode for perry/tui input (#406). The Unix path uses
+# libc tcsetattr; Windows uses SetConsoleMode via windows-sys.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_System_Console",
+    "Win32_Foundation",
+] }
+
 # build.rs auto-generates no-op `perry_ui_*` FFI stubs for the harmonyos
 # build (cfg(feature = "ohos-napi")) by reading the dispatch tables here.
 # See `build.rs` and issue #395 for the rationale.

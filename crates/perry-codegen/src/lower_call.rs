@@ -8490,6 +8490,72 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         args: &[NA_PTR, NA_F64],
         ret: NR_VOID,
     },
+    // perry/tui Phase 3.5 — per-side padding, flex-shrink/basis,
+    // percentage units. (#405.) Codegen-emitted from the Box-options
+    // path; not normally called directly from user code.
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "boxSetPaddingEach",
+        class_filter: None,
+        runtime: "js_perry_tui_box_set_padding_each",
+        args: &[NA_PTR, NA_F64, NA_F64, NA_F64, NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "boxSetFlexShrink",
+        class_filter: None,
+        runtime: "js_perry_tui_box_set_flex_shrink",
+        args: &[NA_PTR, NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "boxSetFlexBasis",
+        class_filter: None,
+        runtime: "js_perry_tui_box_set_flex_basis",
+        args: &[NA_PTR, NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "boxSetFlexBasisPct",
+        class_filter: None,
+        runtime: "js_perry_tui_box_set_flex_basis_pct",
+        args: &[NA_PTR, NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "boxSetWidthPct",
+        class_filter: None,
+        runtime: "js_perry_tui_box_set_width_pct",
+        args: &[NA_PTR, NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "boxSetHeightPct",
+        class_filter: None,
+        runtime: "js_perry_tui_box_set_height_pct",
+        args: &[NA_PTR, NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "TextStyled",
+        class_filter: None,
+        runtime: "js_perry_tui_text_styled",
+        args: &[NA_STR, NA_STR, NA_STR, NA_F64],
+        ret: NR_PTR,
+    },
     // perry/tui Phase 4 — Spacer + ProgressBar widgets.
     NativeModSig {
         module: "perry/tui",
@@ -8553,6 +8619,52 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         class_filter: None,
         runtime: "js_perry_tui_text_area",
         args: &[NA_STR],
+        ret: NR_PTR,
+    },
+    // perry/tui Phase 4.6 — Table + Tabs widgets. Direct-FFI shapes
+    // (positional args); object-literal `Table({headers, rows, selected})`
+    // is unpacked at the codegen level (lower_call/native.rs).
+    // (#402.)
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "Table",
+        class_filter: None,
+        runtime: "js_perry_tui_table",
+        args: &[NA_PTR, NA_PTR, NA_F64],
+        ret: NR_PTR,
+    },
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "Tabs",
+        class_filter: None,
+        runtime: "js_perry_tui_tabs",
+        args: &[NA_PTR, NA_F64, NA_PTR],
+        ret: NR_PTR,
+    },
+    // perry/tui Phase 4.7 — Input(value, cursor). Direct-call shape;
+    // codegen also dispatches to this from the 2-arg form so the
+    // table acts as a fallback for hand-emitted calls. (#404.)
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "InputAt",
+        class_filter: None,
+        runtime: "js_perry_tui_input_at",
+        args: &[NA_STR, NA_F64],
+        ret: NR_PTR,
+    },
+    // perry/tui Phase 4.7 — AnimatedSpinner. Bare `AnimatedSpinner()`
+    // hits this row with both args defaulted; object-literal opts
+    // form is unpacked at the codegen level. (#403.)
+    NativeModSig {
+        module: "perry/tui",
+        has_receiver: false,
+        method: "AnimatedSpinner",
+        class_filter: None,
+        runtime: "js_perry_tui_animated_spinner",
+        args: &[NA_F64, NA_PTR],
         ret: NR_PTR,
     },
     // ========== readline (#347 Phase 1) ==========

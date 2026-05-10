@@ -348,8 +348,15 @@ clap = { version = "4.4", features = ["derive"] }
 # `import 'decimal.js'` resolves to perry-ext-decimal instead.
 rust_decimal = { version = "1.33", features = ["maths"], optional = true }
 
-# libc — termios for readline's raw-mode toggle (#347 Phase 2). No-op
-# stub on non-Unix platforms (Windows raw mode goes via the windows
-# crate; iOS/Android stdlibs are stubbed entirely).
+# libc — termios for readline's raw-mode toggle (#347 Phase 2). The
+# Unix path uses tcsetattr/cfmakeraw; Windows uses SetConsoleMode via
+# the windows-sys crate (#406). iOS/Android stdlibs are stubbed
+# entirely (no terminal surface on those platforms).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_System_Console",
+    "Win32_Foundation",
+] }
