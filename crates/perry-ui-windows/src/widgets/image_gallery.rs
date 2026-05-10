@@ -1,20 +1,17 @@
 //! ImageGallery widget — paged image carousel.
 //!
-//! v1 Win32 implementation: a STATIC label control above and a small
-//! navigation bar (left arrow / index label / right arrow) below.
-//! Images are stored as `(url, alt)` pairs; each page change updates
-//! the visible label to show the current alt text and fires the
-//! user's `on_index_change` callback.
+//! Win32 implementation: a single `PerryImage` HWND (registered via
+//! `widgets::image`) displays the current page; `set_index` swaps the
+//! URL via `image::set_url` which kicks off a fresh WinHTTP fetch on
+//! a background thread and repaints once decoded. Images are stored
+//! as `(url, alt)` pairs — `on_index_change` fires whenever the
+//! visible page changes.
 //!
-//! URL fetching + GDI image decoding is deferred — the Windows
-//! `Image(url, alt)` primitive itself doesn't fetch yet (it's a stub
-//! at the lib.rs level), and decoding remote images would require
-//! pulling reqwest + image into the UI crate. That's tracked
-//! separately under task #16 (system modules + URL-aware image
-//! widgets) and behind the v0.5.771-style "stubs matching the macOS
-//! shape" link-stability contract — `add_image` / `set_index` route
-//! correctly, the layout reserves space, alt text is visible, but
-//! the visual image itself lands in a follow-up.
+//! Note: this is a single-image-at-a-time carousel; the
+//! UIScrollView-style horizontal swipe + paged-scroll affordance
+//! (e.g. on iOS) lands in a follow-up if needed. The user-driving
+//! API (`set_index`) + the visual feedback (real image render) match
+//! the macOS shape one-for-one.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -70,49 +67,32 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 pub fn create(on_index_change: f64) -> i64 {
-    let control_id = alloc_control_id();
-
     #[cfg(target_os = "windows")]
     {
-        let class_name = to_wide("STATIC");
-        let window_text = to_wide("");
-        unsafe {
-            let hinstance = GetModuleHandleW(None).unwrap();
-            let hwnd = CreateWindowExW(
-                WINDOW_EX_STYLE::default(),
-                windows::core::PCWSTR(class_name.as_ptr()),
-                windows::core::PCWSTR(window_text.as_ptr()),
-                WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | SS_CENTER.0),
-                0,
-                0,
-                400,
-                300,
-                super::get_parking_hwnd(),
-                HMENU(control_id as *mut _),
-                HINSTANCE::from(hinstance),
-                None,
-            )
-            .unwrap();
-
-            let handle = register_widget(hwnd, WidgetKind::Image, control_id);
-            GALLERIES.with(|g| {
-                g.borrow_mut().insert(
+        // Reuse the same PerryImage HWND class as `Image(url)` — the
+        // gallery is conceptually one Image widget whose URL changes
+        // on `set_index`. `super::image::create_url` with an empty
+        // URL leaves it blank until `add_image` adds the first page.
+        let empty: [u8; 0] = [];
+        let handle = super::image::create_url(empty.as_ptr(), empty.as_ptr());
+        GALLERIES.with(|g| {
+            g.borrow_mut().insert(
+                handle,
+                GalleryEntry {
                     handle,
-                    GalleryEntry {
-                        handle,
-                        images: Vec::new(),
-                        index: 0,
-                        on_index_change,
-                    },
-                );
-            });
-            handle
-        }
+                    images: Vec::new(),
+                    index: 0,
+                    on_index_change,
+                },
+            );
+        });
+        handle
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         let _ = on_index_change;
+        let control_id = alloc_control_id();
         let handle = register_widget(0, WidgetKind::Image, control_id);
         GALLERIES.with(|g| {
             g.borrow_mut().insert(
@@ -129,34 +109,33 @@ pub fn create(on_index_change: f64) -> i64 {
     }
 }
 
-fn refresh_label(handle: i64) {
+/// Update the visible image to the gallery's current `index`. Routes
+/// through `image::set_url` which clears the old bytes and kicks off
+/// a fresh WinHTTP fetch on a background thread.
+fn refresh_image(handle: i64) {
     #[cfg(target_os = "windows")]
     {
-        let display = GALLERIES.with(|g| {
-            let galleries = g.borrow();
-            galleries.get(&handle).map(|gal| {
+        let url_opt = GALLERIES.with(|g| {
+            g.borrow().get(&handle).and_then(|gal| {
                 if gal.images.is_empty() {
-                    "[empty gallery]".to_string()
+                    None
                 } else {
                     let idx = gal.index.clamp(0, (gal.images.len() as i64) - 1) as usize;
-                    let total = gal.images.len();
-                    let entry = &gal.images[idx];
-                    let alt = if entry.alt.is_empty() {
-                        &entry.url
-                    } else {
-                        &entry.alt
-                    };
-                    format!("[{}/{}] {}", idx + 1, total, alt)
+                    Some(gal.images[idx].url.clone())
                 }
             })
         });
-        if let Some(text) = display {
-            if let Some(hwnd) = super::get_hwnd(handle) {
-                let wide = to_wide(&text);
-                unsafe {
-                    let _ = SetWindowTextW(hwnd, windows::core::PCWSTR(wide.as_ptr()));
-                }
-            }
+        if let Some(url) = url_opt {
+            // Stuff the URL into a heap-allocated StringHeader so we
+            // can pass it through the existing `set_url` ptr-based
+            // signature. Length-prefixed UTF-8 matches the on-the-wire
+            // format the runtime uses.
+            let bytes = url.as_bytes();
+            let str_ptr = perry_runtime::string::js_string_from_bytes(
+                bytes.as_ptr(),
+                bytes.len() as u32,
+            );
+            super::image::set_url(handle, str_ptr as *const u8);
         }
     }
     #[cfg(not(target_os = "windows"))]
@@ -173,7 +152,7 @@ pub fn add_image(handle: i64, url_ptr: *const u8, alt_ptr: *const u8) {
             gal.images.push(ImageEntry { url, alt });
         }
     });
-    refresh_label(handle);
+    refresh_image(handle);
 }
 
 pub fn set_index(handle: i64, index: i64) {
@@ -191,7 +170,7 @@ pub fn set_index(handle: i64, index: i64) {
             None
         }
     });
-    refresh_label(handle);
+    refresh_image(handle);
     if let Some((closure, idx)) = on_change {
         if closure != 0.0 {
             let closure_ptr = unsafe { js_nanbox_get_pointer(closure) } as *const u8;

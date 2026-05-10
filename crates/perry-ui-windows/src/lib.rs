@@ -1380,11 +1380,13 @@ pub extern "C" fn perry_ui_image_create_symbol(name_ptr: i64) -> i64 {
     widgets::image::create_symbol(name_ptr as *const u8)
 }
 
-/// #635 stub: remote URL images aren't fetched on Windows yet —
-/// register an empty image widget so layout still works.
+/// #635 — Image(url, alt). Fetches the URL on a background thread via
+/// WinHTTP, decodes via GDI+ GdipLoadImageFromStream from a
+/// SHCreateMemStream-backed IStream, and repaints once the bytes
+/// arrive (PostMessage + InvalidateRect from the worker).
 #[no_mangle]
-pub extern "C" fn perry_ui_image_create_url(_url_ptr: i64, _alt_ptr: i64) -> i64 {
-    widgets::image::create_symbol(0 as *const u8)
+pub extern "C" fn perry_ui_image_create_url(url_ptr: i64, alt_ptr: i64) -> i64 {
+    widgets::image::create_url(url_ptr as *const u8, alt_ptr as *const u8)
 }
 
 /// Set the size of an image.

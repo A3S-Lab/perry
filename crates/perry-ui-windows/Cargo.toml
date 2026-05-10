@@ -55,4 +55,11 @@ windows = { version = "0.58", features = [
     # (#367 — volume HUD media tile, headphone media keys, Edge Now Playing).
     "Media",
     "Storage_Streams",
+    # WinHTTP — URL-fetched images on Windows (Image(url, alt) +
+    # ImageGallery URLs). Mirrors the macOS NSURL/NSData path: native
+    # OS HTTP client, no extra Rust deps. WinHttpOpen / Connect /
+    # OpenRequest / SendRequest / ReceiveResponse / ReadData chain
+    # runs on a background thread; bytes are decoded via GDI+
+    # GdipLoadImageFromStream on the main thread during WM_PAINT.
+    "Win32_Networking_WinHttp",
 ] }
