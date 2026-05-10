@@ -2127,25 +2127,30 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                 let mut found_params: Vec<perry_hir::Param> = Vec::new();
                 let mut cur = class.extends_name.clone();
                 while let Some(pname) = cur {
+                    // v0.5.760: also consult `opts.imported_classes` for
+                    // cross-module parent ctors. Pre-fix the loop fell
+                    // through to the next ancestor when `class_table`'s
+                    // entry for an imported class returned a stub with
+                    // `constructor: None` (stubs always have None) — even
+                    // though the source module did have a real ctor with
+                    // params. Result: `class Child extends Parent { x =
+                    // "y" }` (no own ctor, parent in another module) had
+                    // its synthesized ctor with ZERO params, so the user's
+                    // `new Child("arg")` lost the arg before reaching
+                    // Parent_constructor. Refs #420.
+                    let imported_ctor_params = opts
+                        .imported_classes
+                        .iter()
+                        .find(|i| i.local_alias.as_deref().unwrap_or(&i.name) == pname.as_str())
+                        .map(|ic| ic.constructor_param_count)
+                        .unwrap_or(0);
                     if let Some(pclass) = class_table.get(pname.as_str()) {
                         if let Some(pctor) = &pclass.constructor {
                             found_params = pctor.params.clone();
                             break;
                         }
-                        cur = pclass.extends_name.clone();
-                    } else if let Some(stub) = imported_class_stubs.iter().find(|c| c.name == pname)
-                    {
-                        // Imported stub — params not in HIR; use its ctor
-                        // param count as a synthetic count of unnamed args.
-                        if let Some(ic) = opts
-                            .imported_classes
-                            .iter()
-                            .find(|i| i.local_alias.as_deref().unwrap_or(&i.name) == pname.as_str())
-                        {
-                            // Synthesize N untyped params named arg0..argN-1
-                            // with fresh local ids in a high range to avoid
-                            // collisions.
-                            for i in 0..ic.constructor_param_count {
+                        if imported_ctor_params > 0 {
+                            for i in 0..imported_ctor_params {
                                 found_params.push(perry_hir::Param {
                                     id: 0xFFFF_0000 + i as u32,
                                     name: format!("__forward_arg{}", i),
@@ -2154,6 +2159,26 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
                                     is_rest: false,
                                 });
                             }
+                            break;
+                        }
+                        cur = pclass.extends_name.clone();
+                    } else if let Some(stub) = imported_class_stubs.iter().find(|c| c.name == pname)
+                    {
+                        // Imported stub — params not in HIR; use its ctor
+                        // param count as a synthetic count of unnamed args.
+                        if imported_ctor_params > 0 {
+                            for i in 0..imported_ctor_params {
+                                found_params.push(perry_hir::Param {
+                                    id: 0xFFFF_0000 + i as u32,
+                                    name: format!("__forward_arg{}", i),
+                                    ty: perry_types::Type::Any,
+                                    default: None,
+                                    is_rest: false,
+                                });
+                            }
+                        } else {
+                            cur = stub.extends_name.clone();
+                            continue;
                         }
                         break;
                     } else {
