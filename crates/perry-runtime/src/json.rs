@@ -1417,6 +1417,55 @@ unsafe fn gc_obj_type(ptr: *const u8) -> u8 {
     *(ptr.sub(crate::gc::GC_HEADER_SIZE))
 }
 
+/// Issue #639: emit a Buffer / Uint8Array as JSON in the Node-compatible shape.
+///
+/// `Buffer.from(...)` returns `{"type":"Buffer","data":[b0,b1,...]}` (Node's
+/// `Buffer.prototype.toJSON()` output). `new Uint8Array(...)` returns
+/// `{"0":b0,"1":b1,...}` (the typed-array shape Node falls through to with
+/// no custom `toJSON`). Distinguished via `is_uint8array_buffer`, which the
+/// Uint8Array constructor path explicitly marks (see `buffer.rs::js_uint8array_*`).
+///
+/// Must be called BEFORE `gc_obj_type(ptr)` — `BufferHeader` has no `GcHeader`,
+/// so reading 8 bytes before the header reads unrelated memory and would
+/// dispatch to the wrong arm (or panic when `is_object_pointer` deref's a
+/// bogus `keys_array` pointer).
+unsafe fn stringify_buffer(ptr: *const u8, buf: &mut String) {
+    let buf_ptr = ptr as *const crate::buffer::BufferHeader;
+    if buf_ptr.is_null() {
+        buf.push_str("null");
+        return;
+    }
+    let len = (*buf_ptr).length as usize;
+    let data = (buf_ptr as *const u8).add(std::mem::size_of::<crate::buffer::BufferHeader>());
+    let bytes = std::slice::from_raw_parts(data, len);
+
+    if crate::buffer::is_uint8array_buffer(ptr as usize) {
+        buf.push('{');
+        for (i, b) in bytes.iter().enumerate() {
+            if i > 0 {
+                buf.push(',');
+            }
+            buf.push('"');
+            let mut idx_buf = itoa::Buffer::new();
+            buf.push_str(idx_buf.format(i));
+            buf.push_str("\":");
+            let mut byte_buf = itoa::Buffer::new();
+            buf.push_str(byte_buf.format(*b));
+        }
+        buf.push('}');
+    } else {
+        buf.push_str(r#"{"type":"Buffer","data":["#);
+        for (i, b) in bytes.iter().enumerate() {
+            if i > 0 {
+                buf.push(',');
+            }
+            let mut byte_buf = itoa::Buffer::new();
+            buf.push_str(byte_buf.format(*b));
+        }
+        buf.push_str("]}");
+    }
+}
+
 #[inline]
 unsafe fn is_object_pointer(ptr: *const u8) -> bool {
     let obj = ptr as *const crate::ObjectHeader;
@@ -1646,6 +1695,15 @@ unsafe fn stringify_value(value: f64, type_hint: u32, buf: &mut String) {
             return;
         }
 
+        // Issue #639: Buffer/Uint8Array detection BEFORE gc_obj_type —
+        // BufferHeader has no GcHeader, so the gc-tag read would read
+        // unrelated memory and the resulting dispatch could segfault on
+        // is_object_pointer's `keys_array` deref.
+        if crate::buffer::is_registered_buffer(ptr as usize) {
+            stringify_buffer(ptr, buf);
+            return;
+        }
+
         // Prefer the GC header's obj_type tag for dispatch — the old
         // capacity heuristic (`cap < 10000`) misidentified legitimate
         // arrays that had grown past 10k as strings, panicking on
@@ -1762,6 +1820,12 @@ unsafe fn stringify_value_depth(value: f64, type_hint: u32, buf: &mut String, de
         }
         if type_hint == TYPE_ARRAY {
             stringify_array_depth(ptr, buf, depth);
+            return;
+        }
+        // Issue #639: Buffer/Uint8Array detection BEFORE gc_obj_type — see
+        // the matching branch in `stringify_value`.
+        if crate::buffer::is_registered_buffer(ptr as usize) {
+            stringify_buffer(ptr, buf);
             return;
         }
         match gc_obj_type(ptr) {
@@ -2052,6 +2116,13 @@ unsafe fn build_shape_prefix_template(first_elem_bits: u64) -> Option<ShapeTempl
     } else {
         return None;
     };
+    // Issue #639: Buffer / Uint8Array have no GcHeader, so `gc_obj_type`
+    // would read 8 bytes before the BufferHeader (unrelated memory) and
+    // could randomly return GC_TYPE_OBJECT. Bail to the per-element
+    // slow path which dispatches via `is_registered_buffer`.
+    if crate::buffer::is_registered_buffer(first_ptr as usize) {
+        return None;
+    }
     if gc_obj_type(first_ptr) != crate::gc::GC_TYPE_OBJECT {
         return None;
     }
@@ -2345,6 +2416,12 @@ unsafe fn stringify_array_depth(ptr: *const u8, buf: &mut String, depth: u32) {
             } else {
                 elem_bits as *const u8
             };
+            // Issue #639: Buffer/Uint8Array detection BEFORE gc_obj_type — see
+            // the matching branch in `stringify_value`.
+            if crate::buffer::is_registered_buffer(elem_ptr as usize) {
+                stringify_buffer(elem_ptr, buf);
+                continue;
+            }
             match gc_obj_type(elem_ptr) {
                 crate::gc::GC_TYPE_OBJECT => stringify_object_inner(elem_ptr, buf, depth),
                 crate::gc::GC_TYPE_ARRAY => stringify_array_depth(elem_ptr, buf, depth),
