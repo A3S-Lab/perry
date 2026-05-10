@@ -3461,19 +3461,28 @@ pub(crate) fn lower_new(ctx: &mut FnCtx<'_>, class_name: &str, args: &[Expr]) ->
             if has_real_ctor {
                 break;
             }
-            // v0.5.758: stop walking if this class has its own synthesized
-            // ctor symbol — the synthesized ctor (from compile_method's
-            // no-own-ctor path) applies SelfOnly fields and forwards
-            // super() to the parent's ctor, so the chain is handled
-            // correctly. Walking past would skip the leaf's field
-            // initializers (arrow fields, default-value fields). Stubs
-            // have `init: None` so checking class.fields here doesn't
-            // help. Refs #420 / #618 followup.
-            let has_imported_ctor_symbol = ctx
-                .imported_class_ctors
-                .contains_key(&effective_class_name);
-            if has_imported_ctor_symbol {
-                break;
+            // v0.5.759: stop walking ONLY for the leaf class (the user's
+            // `new X(...)` target) when it has its own synthesized
+            // imported_class_ctor symbol AND its stub has fields. The
+            // synthesized ctor applies SelfOnly + forwards super(), so
+            // it handles the leaf's field inits (arrow fields,
+            // default-value fields). Skipping the walk on the LEAF
+            // (effective == lookup) doesn't break the drizzle PgSerial
+            // → PgColumn → Column chain because that walks past
+            // intermediate empty-stub classes; only the leaf gets the
+            // walk-stop. Refs #420 / #618 followup.
+            if effective_class_name == lookup_class {
+                let leaf_has_synth_ctor = ctx
+                    .imported_class_ctors
+                    .contains_key(&effective_class_name);
+                let leaf_has_fields = ctx
+                    .classes
+                    .get(&effective_class_name)
+                    .map(|c| !c.fields.is_empty())
+                    .unwrap_or(false);
+                if leaf_has_synth_ctor && leaf_has_fields {
+                    break;
+                }
             }
             let Some(parent) = effective_extends.clone() else {
                 break;
