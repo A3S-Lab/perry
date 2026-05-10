@@ -193,21 +193,7 @@ pub extern "C" fn perry_geisterhand_register(
     closure_f64: f64,
     label_ptr: *const u8,
 ) {
-    let label = if label_ptr.is_null() {
-        String::new()
-    } else {
-        // Read StringHeader: first 8 bytes are header (length at offset 0 as u32),
-        // followed by UTF-8 data bytes
-        unsafe {
-            let len = *(label_ptr as *const u32) as usize;
-            let data = label_ptr.add(std::mem::size_of::<[u64; 1]>()); // skip 8-byte GcHeader+length
-            if len > 0 && len < 10000 {
-                String::from_utf8_lossy(std::slice::from_raw_parts(data, len)).into_owned()
-            } else {
-                String::new()
-            }
-        }
-    };
+    let label = decode_label_from_string_header(label_ptr);
     if let Ok(mut reg) = REGISTRY.lock() {
         reg.push(RegisteredWidget {
             handle,
@@ -217,6 +203,35 @@ pub extern "C" fn perry_geisterhand_register(
             label,
             shortcut: String::new(),
         });
+    }
+}
+
+/// Decode a Perry `StringHeader`-pointed UTF-8 string into an owned `String`.
+///
+/// `label_ptr` is the **user pointer** to the start of the StringHeader (the
+/// GcHeader sits at `label_ptr - 8`, but is irrelevant for this read). The
+/// data payload starts past the 5-`u32` StringHeader at `label_ptr + 20`;
+/// `byte_len` lives at offset 4 (offset 0 is `utf16_len`, which equals
+/// `byte_len` for pure-ASCII strings — relevant because the prior
+/// implementation read offset 0 + a `mem::size_of::<[u64; 1]>()` (8-byte)
+/// data offset, so `data` actually pointed into the `capacity`/`refcount`
+/// fields of the StringHeader rather than the payload. Result: every label
+/// in `/widgets` JSON came back as a few bytes of internal-bookkeeping
+/// noise (often whitespace because `capacity`'s lo-byte typically falls in
+/// the 0x10–0x40 range), masking which widget a handle pointed at when
+/// triaging issues like #640's multi-route TextField repro.
+fn decode_label_from_string_header(label_ptr: *const u8) -> String {
+    if label_ptr.is_null() {
+        return String::new();
+    }
+    unsafe {
+        let header = label_ptr as *const crate::string::StringHeader;
+        let len = (*header).byte_len as usize;
+        if len == 0 || len >= 10000 {
+            return String::new();
+        }
+        let data = label_ptr.add(std::mem::size_of::<crate::string::StringHeader>());
+        String::from_utf8_lossy(std::slice::from_raw_parts(data, len)).into_owned()
     }
 }
 
@@ -232,19 +247,7 @@ pub extern "C" fn perry_geisterhand_register_with_shortcut(
     shortcut_ptr: *const u8,
     shortcut_len: usize,
 ) {
-    let label = if label_ptr.is_null() {
-        String::new()
-    } else {
-        unsafe {
-            let len = *(label_ptr as *const u32) as usize;
-            let data = label_ptr.add(std::mem::size_of::<[u64; 1]>());
-            if len > 0 && len < 10000 {
-                String::from_utf8_lossy(std::slice::from_raw_parts(data, len)).into_owned()
-            } else {
-                String::new()
-            }
-        }
-    };
+    let label = decode_label_from_string_header(label_ptr);
     let shortcut = if shortcut_ptr.is_null() || shortcut_len == 0 {
         String::new()
     } else {
