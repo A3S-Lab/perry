@@ -2198,3 +2198,93 @@ pub extern "C" fn perry_ui_image_gallery_add_image(handle: i64, url_ptr: i64, al
 pub extern "C" fn perry_ui_image_gallery_set_index(handle: i64, index: i64) {
     widgets::image_gallery::set_index(handle, index)
 }
+
+// =============================================================================
+// FFI parity stubs / impls — symbols that exist on macOS / Windows / Android /
+// iOS so codegen-emitted programs link uniformly. Without these, a Linux user
+// who calls `Button({image: "..."})`, `TextField({onSubmit, onFocus})`, `TabBar`,
+// `QRCode`, `FrameSplit`, etc. would hit `Undefined symbols: ...` at link time.
+// Mirrors the macOS pattern of stubbing iOS-only widgets (tabbar / vbox /
+// frame_split / scrollview pull-to-refresh) for link stability.
+// =============================================================================
+
+/// Set an icon on a button (e.g. `Button({label, image})`). GTK4: maps the icon
+/// name to GtkButton::set_icon_name (icon-naming-spec / SF-Symbols-style names).
+#[no_mangle]
+pub extern "C" fn perry_ui_button_set_image(handle: i64, name_ptr: i64) {
+    widgets::button::set_image(handle, name_ptr as *const u8);
+}
+
+/// Wire onSubmit (Enter key → callback with current text). Real GTK4 impl.
+#[no_mangle]
+pub extern "C" fn perry_ui_textfield_set_on_submit(handle: i64, on_submit: f64) {
+    widgets::textfield::set_on_submit(handle, on_submit);
+}
+
+/// Wire onFocus (gain keyboard focus → callback). Real GTK4 impl via
+/// EventControllerFocus.
+#[no_mangle]
+pub extern "C" fn perry_ui_textfield_set_on_focus(handle: i64, on_focus: f64) {
+    widgets::textfield::set_on_focus(handle, on_focus);
+}
+
+/// Drop focus from every registered text field (mirrors macOS `blurAll()`).
+#[no_mangle]
+pub extern "C" fn perry_ui_textfield_blur_all() {
+    widgets::textfield::blur_all();
+}
+
+/// QRCode widget — stub on GTK4 (mirrors macOS pre-real-impl shape on iOS-only
+/// widgets). Returns 0 for "not supported"; perry's widget chain handles a 0
+/// handle gracefully. Real impl pending qrcodegen + GdkPixbuf wiring.
+#[no_mangle]
+pub extern "C" fn perry_ui_qrcode_create(_data_ptr: i64, _size: f64) -> i64 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn perry_ui_qrcode_set_data(_handle: i64, _data_ptr: i64) {}
+
+/// TabBar — iOS-shaped widget (UITabBarController equivalent). Stub on
+/// desktop; matches macOS / Windows shape exactly. A real GTK4 impl would
+/// use GtkStackSwitcher; tracked as a follow-up.
+#[no_mangle]
+pub extern "C" fn perry_ui_tabbar_create(_on_change: f64) -> i64 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn perry_ui_tabbar_add_tab(_handle: i64, _label_ptr: i64) {}
+
+#[no_mangle]
+pub extern "C" fn perry_ui_tabbar_set_selected(_handle: i64, _index: i64) {}
+
+/// ScrollView pull-to-refresh — iOS / Android idiom, no native GTK4 equivalent.
+/// Stub mirrors macOS (which also stubs because AppKit has no pull-to-refresh).
+#[no_mangle]
+pub extern "C" fn perry_ui_scrollview_set_refresh_control(_handle: i64, _callback: f64) {}
+
+#[no_mangle]
+pub extern "C" fn perry_ui_scrollview_end_refreshing(_handle: i64) {}
+
+/// VBox / FrameSplit — iOS-internal helpers (UIStackView vertical / split-view
+/// layout primitive). Other desktops stub these and route real layout through
+/// VStack / SplitView. Same here.
+#[no_mangle]
+pub extern "C" fn perry_ui_vbox_create() -> i64 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn perry_ui_vbox_add_child(_parent: i64, _child: i64, _slot: i64) {}
+
+#[no_mangle]
+pub extern "C" fn perry_ui_vbox_finalize(_parent: i64) {}
+
+#[no_mangle]
+pub extern "C" fn perry_ui_frame_split_create(_left_width: f64) -> i64 {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn perry_ui_frame_split_add_child(_parent: i64, _child: i64) {}

@@ -107,7 +107,11 @@ pub fn add_image(handle: i64, url_ptr: *const u8, alt_ptr: *const u8) {
         let pic = gtk4::Picture::new();
         pic.set_size_request(PAGE_PX, PAGE_PX);
         pic.set_can_shrink(true);
-        pic.set_content_fit(gtk4::ContentFit::Contain);
+        // Picture's default keep-aspect-ratio + can_shrink gives us
+        // ContentFit::Contain semantics on GTK 4.6 (jammy / Ubuntu 22.04).
+        // The explicit set_content_fit call requires v4_8 feature, but the
+        // crate's gtk4-rs feature is pinned to v4_6 to keep CI's Ubuntu 22.04
+        // glibc build working — release-packages.yml uses libgtk-4-dev 4.6.9.
 
         if !alt.is_empty() {
             pic.set_tooltip_text(Some(alt));
