@@ -1505,6 +1505,18 @@ pub extern "C" fn js_array_sort_default(arr: *mut ArrayHeader) -> *mut ArrayHead
         if arr.is_null() {
             return arr;
         }
+        // Issue #654: route typed-array receivers (compiler statically
+        // typed `arr` as `Float64Array | Int32Array | …` and emitted the
+        // ArraySort lowering) through the typed-array sorter so element
+        // bytes are read by the right per-kind accessor instead of as
+        // raw f64. Without this, `Int8Array.sort()` produced 4 i8 cells
+        // re-interpreted as 8-byte f64s — garbage values + occasional
+        // OOB reads.
+        if crate::typedarray::lookup_typed_array_kind(arr as usize).is_some() {
+            return crate::typedarray::js_typed_array_sort_default(
+                arr as *mut crate::typedarray::TypedArrayHeader,
+            ) as *mut ArrayHeader;
+        }
         let length = (*arr).length as usize;
         if length <= 1 {
             return arr;
@@ -1821,6 +1833,16 @@ pub extern "C" fn js_array_sort_with_comparator(
         let arr = clean_arr_ptr(arr as *const ArrayHeader) as *mut ArrayHeader;
         if arr.is_null() {
             return arr;
+        }
+        // Issue #654: same routing as `js_array_sort_default` — when
+        // codegen statically typed the receiver as a typed array but
+        // chose the generic ArraySort HIR lowering, dispatch through
+        // the typed-array helper instead of treating the buffer as f64s.
+        if crate::typedarray::lookup_typed_array_kind(arr as usize).is_some() {
+            return crate::typedarray::js_typed_array_sort_with_comparator(
+                arr as *mut crate::typedarray::TypedArrayHeader,
+                comparator,
+            ) as *mut ArrayHeader;
         }
         let length = (*arr).length as usize;
         if length <= 1 {

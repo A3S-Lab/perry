@@ -4767,6 +4767,106 @@ pub unsafe extern "C" fn js_native_call_method(
         return f64::from_bits(0x7FF8_0000_0000_0001); // undefined
     }
 
+    // Issue #654: typed-array method dispatch. The codegen for
+    // `new Float64Array(...)` (and the other typed-array constructors)
+    // returns the raw heap pointer bitcast to f64 — no POINTER_TAG —
+    // so neither `is_pointer()` nor the handle dispatch above catches
+    // it. Detect via the `TYPED_ARRAY_REGISTRY` side table and route
+    // common methods (`sort`, `at`, `toSorted`, `toReversed`, `with`,
+    // `findLast`, `findLastIndex`) to their `js_typed_array_*` runtime
+    // helpers. Without this arm `(a: Float64Array).sort()` reached the
+    // `(number).sort is not a function` catch-all because raw pointer
+    // bits classify as `is_number()` (top16 outside the tagged range).
+    {
+        let top16 = raw_bits >> 48;
+        if top16 == 0 && raw_bits >= 0x10000 {
+            let addr = raw_bits as usize;
+            if crate::typedarray::lookup_typed_array_kind(addr).is_some() {
+                let ta = addr as *mut crate::typedarray::TypedArrayHeader;
+                let arg0 = || -> f64 {
+                    if args_len >= 1 && !args_ptr.is_null() {
+                        unsafe { *args_ptr }
+                    } else {
+                        f64::NAN
+                    }
+                };
+                let arg_closure = |i: usize| -> *const crate::closure::ClosureHeader {
+                    if i < args_len && !args_ptr.is_null() {
+                        let v = unsafe { *args_ptr.add(i) };
+                        let bits = v.to_bits();
+                        let tag = (bits >> 48) as u16;
+                        if tag == 0x7FFD {
+                            (bits & 0x0000_FFFF_FFFF_FFFF) as *const crate::closure::ClosureHeader
+                        } else {
+                            std::ptr::null()
+                        }
+                    } else {
+                        std::ptr::null()
+                    }
+                };
+                match method_name {
+                    "length" => {
+                        return crate::typedarray::js_typed_array_length(ta) as f64;
+                    }
+                    "at" => {
+                        return crate::typedarray::js_typed_array_at(ta, arg0());
+                    }
+                    "sort" => {
+                        let cmp = arg_closure(0);
+                        let result = if cmp.is_null() {
+                            crate::typedarray::js_typed_array_sort_default(ta)
+                        } else {
+                            crate::typedarray::js_typed_array_sort_with_comparator(ta, cmp)
+                        };
+                        return f64::from_bits(result as u64);
+                    }
+                    "toSorted" => {
+                        let cmp = arg_closure(0);
+                        let result = if cmp.is_null() {
+                            crate::typedarray::js_typed_array_to_sorted_default(ta)
+                        } else {
+                            crate::typedarray::js_typed_array_to_sorted_with_comparator(ta, cmp)
+                        };
+                        return f64::from_bits(result as u64);
+                    }
+                    "toReversed" => {
+                        let result = crate::typedarray::js_typed_array_to_reversed(ta);
+                        return f64::from_bits(result as u64);
+                    }
+                    "with" => {
+                        let idx = arg0();
+                        let val = if args_len >= 2 && !args_ptr.is_null() {
+                            unsafe { *args_ptr.add(1) }
+                        } else {
+                            f64::NAN
+                        };
+                        let result = crate::typedarray::js_typed_array_with(ta, idx, val);
+                        return f64::from_bits(result as u64);
+                    }
+                    "findLast" => {
+                        let cb = arg_closure(0);
+                        if cb.is_null() {
+                            return f64::from_bits(crate::value::TAG_UNDEFINED);
+                        }
+                        return crate::typedarray::js_typed_array_find_last(ta, cb);
+                    }
+                    "findLastIndex" => {
+                        let cb = arg_closure(0);
+                        if cb.is_null() {
+                            return -1.0;
+                        }
+                        return crate::typedarray::js_typed_array_find_last_index(ta, cb);
+                    }
+                    _ => {
+                        // Fall through. Other methods aren't handled here
+                        // yet; they hit the primitive-method catch-all
+                        // below — better than silent no-op.
+                    }
+                }
+            }
+        }
+    }
+
     // Issue #514 followup: string method dispatch on any-typed receivers.
     // When `(s: any).at(-1)` / `.slice(1)` / etc. lower through the
     // dispatch tower and `s` actually holds a string, we need to route

@@ -1224,6 +1224,21 @@ pub extern "C" fn js_value_typeof(value: f64) -> *mut StringHeader {
             get_cached(&TYPEOF_NUMBER, "number")
         }
     } else {
+        // Issue #654: typed-array pointers arrive as a raw `i64 → f64`
+        // bitcast (no NaN-box tag) per the codegen for `new Float64Array(...)`
+        // et al. Without this arm, `typeof a` returned "number" because the
+        // raw pointer bits flow through the `is_pointer()` check above
+        // (POINTER_TAG fails) and land in this fallthrough. Match against
+        // the typed-array registry — addresses recorded by `typed_array_alloc`
+        // — so `typeof` reports "object" per JS spec.
+        let bits = value.to_bits();
+        let top16 = bits >> 48;
+        if top16 == 0 && bits >= 0x10000 {
+            let addr = bits as usize;
+            if crate::typedarray::lookup_typed_array_kind(addr).is_some() {
+                return get_cached(&TYPEOF_OBJECT, "object");
+            }
+        }
         // Regular f64 number
         get_cached(&TYPEOF_NUMBER, "number")
     }

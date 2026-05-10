@@ -339,6 +339,18 @@ pub extern "C" fn js_typed_array_new(kind: i32, val: f64) -> *mut TypedArrayHead
     if top16 == 0x7FFD {
         // POINTER_TAG — existing array pointer; copy its elements.
         let arr = (bits & 0x0000_FFFF_FFFF_FFFF) as *const crate::array::ArrayHeader;
+        // Issue #654: a NaN-boxed pointer can also point at a registered
+        // typed array (e.g. when the source flowed through a path that
+        // re-applied POINTER_TAG). Detect via the registry and copy
+        // through `typed_array_to_typed_array` so element values stay
+        // numeric instead of being read as f64-NaN-boxed bits.
+        let raw_addr = (bits & 0x0000_FFFF_FFFF_FFFF) as usize;
+        if lookup_typed_array_kind(raw_addr).is_some() {
+            return typed_array_copy_from_typed_array(
+                kind as u8,
+                raw_addr as *const TypedArrayHeader,
+            );
+        }
         return js_typed_array_new_from_array(kind, arr);
     }
     if top16 == 0x7FFE {
@@ -347,6 +359,21 @@ pub extern "C" fn js_typed_array_new(kind: i32, val: f64) -> *mut TypedArrayHead
         return typed_array_alloc(kind as u8, n.max(0) as u32);
     }
     if !(0x7FFC..=0x7FFF).contains(&top16) {
+        // Issue #654: typed-array sources (`new Float64Array(otherTA)`)
+        // arrive as raw `i64 → f64` bitcasts (no NaN-box tag) per the
+        // typed-array constructor codegen. Without this arm the address
+        // was treated as a numeric length and the result was an empty
+        // array. Detect via the registry first; only fall back to the
+        // numeric-length interpretation for genuine doubles.
+        if top16 == 0 && bits >= 0x10000 {
+            let addr = bits as usize;
+            if lookup_typed_array_kind(addr).is_some() {
+                return typed_array_copy_from_typed_array(
+                    kind as u8,
+                    addr as *const TypedArrayHeader,
+                );
+            }
+        }
         // Plain IEEE double (including negative, NaN, ±Inf).
         let len = if val.is_finite() && val >= 0.0 {
             val as i32
@@ -357,6 +384,31 @@ pub extern "C" fn js_typed_array_new(kind: i32, val: f64) -> *mut TypedArrayHead
     }
     // Undefined / null / bool / string → empty typed array.
     typed_array_alloc(kind as u8, 0)
+}
+
+/// Copy elements from one typed array into a new typed array of `dst_kind`,
+/// reading via `load_at` (so source-element semantics stay correct) and
+/// writing via `store_at` (which clamps / truncates / sign-extends per
+/// `dst_kind`). Used by both `js_typed_array_new` (constructor copy) and
+/// `js_typed_array_new_from_array` when it discovers the source is a
+/// typed array rather than an `ArrayHeader`.
+fn typed_array_copy_from_typed_array(
+    dst_kind: u8,
+    src: *const TypedArrayHeader,
+) -> *mut TypedArrayHeader {
+    let src = clean_ta_ptr(src);
+    if src.is_null() {
+        return typed_array_alloc(dst_kind, 0);
+    }
+    unsafe {
+        let len = (*src).length;
+        let out = typed_array_alloc(dst_kind, len);
+        for i in 0..len as usize {
+            let v = load_at(src, i);
+            store_at(out, i, v);
+        }
+        out
+    }
 }
 
 /// Allocate a typed array from a Perry array (each element coerced to the
@@ -378,6 +430,13 @@ pub extern "C" fn js_typed_array_new_from_array(
     };
     if arr.is_null() || (arr as usize) < 0x1000 {
         return typed_array_alloc(kind, 0);
+    }
+    // Issue #654: caller may have handed us a typed-array pointer
+    // misaddressed as `*const ArrayHeader`. The two headers differ in
+    // layout, so reading element data as raw f64 produces garbage.
+    // Detect via the registry and route through the typed-array copy.
+    if lookup_typed_array_kind(arr as usize).is_some() {
+        return typed_array_copy_from_typed_array(kind, arr as *const TypedArrayHeader);
     }
     unsafe {
         let len = (*arr).length;
@@ -496,6 +555,63 @@ pub extern "C" fn js_typed_array_to_reversed(ta: *const TypedArrayHeader) -> *mu
             store_at(out, i, v);
         }
         out
+    }
+}
+
+/// `ta.sort()` — default ascending numeric sort, **in place**. Per the
+/// JS spec, the same typed-array reference is returned. Issue #654.
+#[no_mangle]
+pub extern "C" fn js_typed_array_sort_default(
+    ta: *mut TypedArrayHeader,
+) -> *mut TypedArrayHeader {
+    let ta_clean = clean_ta_ptr(ta as *const TypedArrayHeader) as *mut TypedArrayHeader;
+    if ta_clean.is_null() {
+        return ta_clean;
+    }
+    unsafe {
+        let len = (*ta_clean).length as usize;
+        if len <= 1 {
+            return ta_clean;
+        }
+        let mut buf: Vec<f64> = (0..len).map(|i| load_at(ta_clean, i)).collect();
+        buf.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        for (i, v) in buf.into_iter().enumerate() {
+            store_at(ta_clean, i, v);
+        }
+        ta_clean
+    }
+}
+
+/// `ta.sort(cmp)` — in-place sort with comparator. Issue #654.
+#[no_mangle]
+pub extern "C" fn js_typed_array_sort_with_comparator(
+    ta: *mut TypedArrayHeader,
+    comparator: *const ClosureHeader,
+) -> *mut TypedArrayHeader {
+    let ta_clean = clean_ta_ptr(ta as *const TypedArrayHeader) as *mut TypedArrayHeader;
+    if ta_clean.is_null() {
+        return ta_clean;
+    }
+    unsafe {
+        let len = (*ta_clean).length as usize;
+        if len <= 1 {
+            return ta_clean;
+        }
+        let mut buf: Vec<f64> = (0..len).map(|i| load_at(ta_clean, i)).collect();
+        buf.sort_by(|a, b| {
+            let r = crate::closure::js_closure_call2(comparator, *a, *b);
+            if r < 0.0 {
+                std::cmp::Ordering::Less
+            } else if r > 0.0 {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        });
+        for (i, v) in buf.into_iter().enumerate() {
+            store_at(ta_clean, i, v);
+        }
+        ta_clean
     }
 }
 
