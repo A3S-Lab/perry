@@ -5,6 +5,79 @@
 
 use std::cell::RefCell;
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Return true iff `value`'s NaN-box tag indicates it cannot possibly
+/// be a Promise pointer or a thenable object — i.e. a number,
+/// undefined, null, true, false, or a non-pointer-tagged f64. The
+/// async-to-generator transform emits `Promise.resolve(x).then(...)`
+/// per `await`; in the common case `x` is one of these primitives.
+/// Skipping the `is_promise` + `assimilate_thenable` probes for them
+/// removes ~600 ns of work from every await steady-state iteration.
+#[inline(always)]
+fn is_definitely_primitive(value: f64) -> bool {
+    const POINTER_TAG: u64 = 0x7FFD_0000_0000_0000;
+    const TAG_MASK: u64 = 0xFFFF_0000_0000_0000;
+    let bits = value.to_bits();
+    let tag = bits & TAG_MASK;
+    // Only POINTER_TAG-tagged values can be promises or thenable
+    // objects. Strings (STRING_TAG), bigints (BIGINT_TAG), int32s
+    // (INT32_TAG), bool/null/undefined (TAG_xxx), and raw f64
+    // numbers (no special tag) are all primitives in spec terms.
+    tag != POINTER_TAG
+}
+
+// Instrumentation counters (set PERRY_MT_PROFILE=1 to print at exit).
+pub static MT_RUN_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static MT_THENABLE_PROBE_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static MT_PROMISE_NEW_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static MT_PROMISE_THEN_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static MT_PROMISE_RESOLVED_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static MT_INNER_PROMISE_UNWRAP_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static MT_TIME_NS_QUEUE: AtomicU64 = AtomicU64::new(0);
+pub static MT_TIME_NS_CALLBACK: AtomicU64 = AtomicU64::new(0);
+pub static MT_TIME_NS_RESOLVE: AtomicU64 = AtomicU64::new(0);
+pub static MT_FAST_PATH_HIT: AtomicU64 = AtomicU64::new(0);
+pub static MT_FAST_PATH_MISS: AtomicU64 = AtomicU64::new(0);
+
+extern "C" fn mt_profile_atexit() {
+    if std::env::var_os("PERRY_MT_PROFILE").is_none() {
+        return;
+    }
+    eprintln!(
+        "[mt-profile] runs={} resolved={} then={} new={} unwrap={} thenable_probe={}",
+        MT_RUN_COUNT.load(Ordering::Relaxed),
+        MT_PROMISE_RESOLVED_COUNT.load(Ordering::Relaxed),
+        MT_PROMISE_THEN_COUNT.load(Ordering::Relaxed),
+        MT_PROMISE_NEW_COUNT.load(Ordering::Relaxed),
+        MT_INNER_PROMISE_UNWRAP_COUNT.load(Ordering::Relaxed),
+        MT_THENABLE_PROBE_COUNT.load(Ordering::Relaxed),
+    );
+    let q = MT_TIME_NS_QUEUE.load(Ordering::Relaxed);
+    let cb = MT_TIME_NS_CALLBACK.load(Ordering::Relaxed);
+    let rs = MT_TIME_NS_RESOLVE.load(Ordering::Relaxed);
+    eprintln!(
+        "[mt-profile] time(ms): queue={:.1} callback={:.1} resolve={:.1}",
+        q as f64 / 1e6,
+        cb as f64 / 1e6,
+        rs as f64 / 1e6,
+    );
+    eprintln!(
+        "[mt-profile] fast_path: hit={} miss={}",
+        MT_FAST_PATH_HIT.load(Ordering::Relaxed),
+        MT_FAST_PATH_MISS.load(Ordering::Relaxed),
+    );
+}
+
+static MT_PROFILE_REG: std::sync::Once = std::sync::Once::new();
+fn mt_profile_register() {
+    MT_PROFILE_REG.call_once(|| unsafe {
+        extern "C" {
+            fn atexit(cb: extern "C" fn()) -> i32;
+        }
+        atexit(mt_profile_atexit);
+    });
+}
 
 /// Promise state
 #[repr(u8)]
@@ -48,6 +121,26 @@ impl Promise {
     }
 }
 
+/// One entry in the microtask queue. Two shapes:
+///
+/// `Promise(p, value, is_fulfilled)` — the legacy shape: we'll dispatch
+/// to `(*p).on_fulfilled` or `on_rejected` depending on the bool, then
+/// resolve `(*p).next` with the callback's return value.
+///
+/// `Inline(cb, value, next, is_fulfilled)` — the fast-path shape used
+/// by `js_promise_resolved_then` when the awaited value is a primitive.
+/// We've skipped allocating a source promise; the callback is carried
+/// inline. Dispatch is identical from here: invoke `cb(value)` (or
+/// `cb_rej(value)` — only one is non-null per entry), propagate the
+/// result to `next`. Saves one Promise allocation per `await` of a
+/// primitive value, which is the steady-state pattern for the async-to-
+/// generator transform.
+#[derive(Clone, Copy)]
+enum Task {
+    Promise(*mut Promise, f64, bool),
+    Inline(ClosurePtr, f64, *mut Promise, bool),
+}
+
 // Global task queue for pending promise callbacks. Must be FIFO per
 // ECMAScript microtask semantics: `Promise.resolve(1).then(...)` and
 // `Promise.resolve(2).then(...)` registered in source order must run
@@ -55,7 +148,7 @@ impl Promise {
 // `Vec` with `.pop()` produces LIFO ordering, breaking every test
 // that prints inside multiple parallel promise chains.
 thread_local! {
-    static TASK_QUEUE: RefCell<std::collections::VecDeque<(*mut Promise, f64, bool)>>
+    static TASK_QUEUE: RefCell<std::collections::VecDeque<Task>>
         = const { RefCell::new(std::collections::VecDeque::new()) };
 }
 
@@ -76,6 +169,7 @@ pub extern "C" fn js_microtasks_pending() -> i32 {
 /// Allocate a new Promise
 #[no_mangle]
 pub extern "C" fn js_promise_new() -> *mut Promise {
+    MT_PROMISE_NEW_COUNT.fetch_add(1, Ordering::Relaxed);
     let raw = crate::gc::gc_malloc(std::mem::size_of::<Promise>(), crate::gc::GC_TYPE_PROMISE);
     let promise = raw as *mut Promise;
     unsafe {
@@ -160,7 +254,7 @@ pub extern "C" fn js_promise_resolve(promise: *mut Promise, value: f64) {
         // never settled and `await chained` busy-waited forever.
         if !(*promise).on_fulfilled.is_null() || !(*promise).next.is_null() {
             TASK_QUEUE.with(|q| {
-                q.borrow_mut().push_back((promise, value, true));
+                q.borrow_mut().push_back(Task::Promise(promise, value, true));
             });
         }
     }
@@ -258,7 +352,7 @@ pub extern "C" fn js_promise_reject(promise: *mut Promise, reason: f64) {
         // OR a chained `next` promise to forward to.
         if !(*promise).on_rejected.is_null() || !(*promise).next.is_null() {
             TASK_QUEUE.with(|q| {
-                q.borrow_mut().push_back((promise, reason, false));
+                q.borrow_mut().push_back(Task::Promise(promise, reason, false));
             });
         }
     }
@@ -273,6 +367,7 @@ pub extern "C" fn js_promise_then(
     on_fulfilled: ClosurePtr,
     on_rejected: ClosurePtr,
 ) -> *mut Promise {
+    MT_PROMISE_THEN_COUNT.fetch_add(1, Ordering::Relaxed);
     if promise.is_null() {
         return ptr::null_mut();
     }
@@ -294,7 +389,8 @@ pub extern "C" fn js_promise_then(
             PromiseState::Fulfilled => {
                 if !on_fulfilled.is_null() || !next.is_null() {
                     TASK_QUEUE.with(|q| {
-                        q.borrow_mut().push_back((promise, (*promise).value, true));
+                        q.borrow_mut()
+                            .push_back(Task::Promise(promise, (*promise).value, true));
                     });
                 }
             }
@@ -302,7 +398,7 @@ pub extern "C" fn js_promise_then(
                 if !on_rejected.is_null() || !next.is_null() {
                     TASK_QUEUE.with(|q| {
                         q.borrow_mut()
-                            .push_back((promise, (*promise).reason, false));
+                            .push_back(Task::Promise(promise, (*promise).reason, false));
                     });
                 }
             }
@@ -371,13 +467,14 @@ pub extern "C" fn js_promise_finally(
         match (*promise).state {
             PromiseState::Fulfilled => {
                 TASK_QUEUE.with(|q| {
-                    q.borrow_mut().push_back((promise, (*promise).value, true));
+                    q.borrow_mut()
+                        .push_back(Task::Promise(promise, (*promise).value, true));
                 });
             }
             PromiseState::Rejected => {
                 TASK_QUEUE.with(|q| {
                     q.borrow_mut()
-                        .push_back((promise, (*promise).reason, false));
+                        .push_back(Task::Promise(promise, (*promise).reason, false));
                 });
             }
             PromiseState::Pending => {}
@@ -502,6 +599,7 @@ extern "C" fn finally_passthrough_reject(
 /// Process all pending promise callbacks (run microtasks)
 #[no_mangle]
 pub extern "C" fn js_promise_run_microtasks() -> i32 {
+    mt_profile_register();
     let mut ran = 0;
 
     // First, tick timers to resolve any expired timer promises
@@ -522,12 +620,77 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
     // Drain queued microtasks (from queueMicrotask() calls).
     crate::builtins::js_drain_queued_microtasks();
 
-    // Then process the task queue
+    // Then process the task queue.
+    //
+    // ── Exception trap (Issue #...): install ONE setjmp for the WHOLE
+    // loop body, instead of a fresh setjmp per microtask. The previous
+    // shape paid setjmp+js_try_push/end every microtask just so that a
+    // `throw` from a callback could be re-routed to reject the chained
+    // `next` promise. setjmp+longjmp on aarch64 saves ~16 callee-saved
+    // x-regs and ~8 d-regs per call — that's ~25 ns per microtask, and
+    // an async benchmark with 200k microtasks pays ~5 ms in setjmp cost
+    // alone. The single outer setjmp captures the same "throw out of a
+    // microtask body" case (since `js_throw` longjmps to the most recent
+    // try block; if no user try is in scope, this one is it). When the
+    // longjmp lands, we read the current promise context out of a
+    // thread-local set just before invoking the callback, reject its
+    // `next`, and continue the loop.
+    extern "C" {
+        fn setjmp(env: *mut i32) -> i32;
+    }
+
+    // Install the trap. We set up CURRENT_MICROTASK_PROMISE (or
+    // INLINE_TRAP_NEXT for inline-callback tasks) before the callback
+    // so the rejection path knows which `next` to reject.
+    thread_local! {
+        static CURRENT_MICROTASK_PROMISE: std::cell::Cell<*mut Promise>
+            = const { std::cell::Cell::new(std::ptr::null_mut()) };
+        static INLINE_TRAP_NEXT: std::cell::Cell<*mut Promise>
+            = const { std::cell::Cell::new(std::ptr::null_mut()) };
+    }
+
+    let trap_buf = crate::exception::js_try_push();
+    // SAFETY: The setjmp call must remain in this stack frame; we
+    // longjmp to it from `js_throw` only while this frame is still
+    // alive (inside the loop below).
+    let jumped = unsafe { setjmp(trap_buf) };
+    if jumped != 0 {
+        // A microtask's callback threw and unwound here. Read the
+        // exception, clear it, and reject the `next` promise of the
+        // microtask that was running. js_try_end is intentionally NOT
+        // called yet — we want the trap to remain in scope for the
+        // rest of the loop.
+        let exc = crate::exception::js_get_exception();
+        crate::exception::js_clear_exception();
+        let cur = CURRENT_MICROTASK_PROMISE.with(|c| c.replace(std::ptr::null_mut()));
+        if !cur.is_null() {
+            unsafe {
+                if !(*cur).next.is_null() {
+                    js_promise_reject((*cur).next, exc);
+                }
+            }
+            ran += 1;
+        } else {
+            let inline_next = INLINE_TRAP_NEXT.with(|c| c.replace(std::ptr::null_mut()));
+            if !inline_next.is_null() {
+                js_promise_reject(inline_next, exc);
+                ran += 1;
+            }
+        }
+    }
+
+    let prof = std::env::var_os("PERRY_MT_PROFILE").is_some();
     loop {
+        let t0 = if prof { Some(std::time::Instant::now()) } else { None };
         let task = TASK_QUEUE.with(|q| q.borrow_mut().pop_front());
+        if let Some(t) = t0 {
+            MT_TIME_NS_QUEUE.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
 
         match task {
-            Some((promise, value, is_fulfilled)) => {
+            None => break,
+            Some(Task::Promise(promise, value, is_fulfilled)) => {
+                MT_RUN_COUNT.fetch_add(1, Ordering::Relaxed);
                 unsafe {
                     let callback = if is_fulfilled {
                         (*promise).on_fulfilled
@@ -549,64 +712,107 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
                         continue;
                     }
 
-                    // Wrap the callback in a setjmp so a `throw` inside
-                    // it rejects the next promise instead of crashing
-                    // through `print_uncaught` (TRY_DEPTH would otherwise
-                    // be 0 here — microtask runner has no surrounding
-                    // user-level try block). Same setjmp-from-Rust
-                    // pattern as `gc.rs::mark_stack_roots`.
-                    extern "C" {
-                        fn setjmp(env: *mut i32) -> i32;
+                    // Record the running promise so the trap (above)
+                    // can reject its `next` if the callback throws.
+                    CURRENT_MICROTASK_PROMISE.with(|c| c.set(promise));
+
+                    let t1 = if prof { Some(std::time::Instant::now()) } else { None };
+                    let result = crate::closure::js_closure_call1(callback, value);
+                    if let Some(t) = t1 {
+                        MT_TIME_NS_CALLBACK
+                            .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                     }
-                    let buf = crate::exception::js_try_push();
-                    let jumped = setjmp(buf);
-                    if jumped == 0 {
-                        let result = crate::closure::js_closure_call1(callback, value);
-                        crate::exception::js_try_end();
-                        if !(*promise).next.is_null() {
-                            // Spec: when a .then callback returns a thenable
-                            // (a Promise), the chained `next` promise must
-                            // adopt the thenable's eventual state, not store
-                            // the Promise pointer as its value. Issue #256:
-                            // pre-fix Perry's runtime stored the Promise
-                            // pointer directly, so the async-step driver's
-                            // recursive `step()` returns produced
-                            // `Promise<Promise<...>>` chains that never
-                            // unwrapped to the real value. Without this
-                            // unwrap, `await fn()` of an async function with
-                            // multiple `await`s observes a Pending Promise as
-                            // the resolved value.
-                            if js_value_is_promise(result) != 0 {
-                                let inner =
-                                    crate::value::js_nanbox_get_pointer(result) as *mut Promise;
-                                if !inner.is_null() && inner != (*promise).next {
-                                    js_promise_resolve_with_promise((*promise).next, inner);
-                                } else {
-                                    js_promise_resolve((*promise).next, result);
-                                }
-                            } else {
-                                js_promise_resolve((*promise).next, result);
-                            }
-                        }
-                    } else {
-                        // Callback threw — convert to rejection of next
-                        // promise. Pull the exception value, clear it,
-                        // pop the try block (longjmp doesn't unwind it).
-                        let exc = crate::exception::js_get_exception();
-                        crate::exception::js_clear_exception();
-                        crate::exception::js_try_end();
-                        if !(*promise).next.is_null() {
-                            js_promise_reject((*promise).next, exc);
-                        }
+
+                    // Callback returned normally; clear the running
+                    // marker so a stray longjmp from a later (nested)
+                    // microtask doesn't misattribute its rejection.
+                    CURRENT_MICROTASK_PROMISE.with(|c| c.set(std::ptr::null_mut()));
+
+                    let t2 = if prof { Some(std::time::Instant::now()) } else { None };
+                    if !(*promise).next.is_null() {
+                        propagate_callback_result(result, (*promise).next);
+                    }
+                    if let Some(t) = t2 {
+                        MT_TIME_NS_RESOLVE
+                            .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                     }
                 }
                 ran += 1;
             }
-            None => break,
+            Some(Task::Inline(callback, value, next, is_fulfilled)) => {
+                MT_RUN_COUNT.fetch_add(1, Ordering::Relaxed);
+                // Inline tasks are produced by `js_promise_resolved_then`
+                // (the `Promise.resolve(<primitive>).then(cb_f, cb_e)`
+                // fast path). We've already skipped allocating the
+                // source promise — now dispatch directly: invoke the
+                // stored callback, propagate the result to `next`.
+                if callback.is_null() {
+                    if !next.is_null() {
+                        if is_fulfilled {
+                            js_promise_resolve(next, value);
+                        } else {
+                            js_promise_reject(next, value);
+                        }
+                    }
+                    ran += 1;
+                    continue;
+                }
+
+                // For exception unwinding, mirror the Promise variant:
+                // store a fake `cur` whose `.next` is what we want to
+                // reject if the callback throws. Allocate a minimal
+                // stub on the GC heap so the trap path still finds a
+                // valid `*mut Promise`. This is rarely hit (only on
+                // user-throw inside the inline callback) and we can
+                // afford the alloc on the slow path.
+                INLINE_TRAP_NEXT.with(|c| c.set(next));
+
+                let t1 = if prof { Some(std::time::Instant::now()) } else { None };
+                let result = unsafe { crate::closure::js_closure_call1(callback, value) };
+                if let Some(t) = t1 {
+                    MT_TIME_NS_CALLBACK
+                        .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                }
+
+                INLINE_TRAP_NEXT.with(|c| c.set(std::ptr::null_mut()));
+
+                let t2 = if prof { Some(std::time::Instant::now()) } else { None };
+                if !next.is_null() {
+                    propagate_callback_result(result, next);
+                }
+                if let Some(t) = t2 {
+                    MT_TIME_NS_RESOLVE
+                        .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                }
+                ran += 1;
+            }
         }
     }
 
+    crate::exception::js_try_end();
+
     ran
+}
+
+/// Common tail of a microtask: take the value the callback returned
+/// and feed it into `next`. If the callback returned a Promise, the
+/// chained promise must ADOPT that promise's eventual state per
+/// ECMAScript spec (Issue #256) — store-and-resolve breaks deep
+/// generator-state-machine chains.
+#[inline]
+fn propagate_callback_result(result: f64, next: *mut Promise) {
+    unsafe {
+        if js_value_is_promise(result) != 0 {
+            let inner = crate::value::js_nanbox_get_pointer(result) as *mut Promise;
+            if !inner.is_null() && inner != next {
+                js_promise_resolve_with_promise(next, inner);
+            } else {
+                js_promise_resolve(next, result);
+            }
+        } else {
+            js_promise_resolve(next, result);
+        }
+    }
 }
 
 /// Create a resolved promise with the given value.
@@ -622,8 +828,24 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
 /// `setTimeout`/`resolve` ever fires. Closes #77.
 #[no_mangle]
 pub extern "C" fn js_promise_resolved(value: f64) -> *mut Promise {
+    MT_PROMISE_RESOLVED_COUNT.fetch_add(1, Ordering::Relaxed);
+    // FAST PATH: NaN-boxed primitives (numbers, undefined, null, bool,
+    // raw f64s) are not pointers to thenables/promises. We can build a
+    // pre-fulfilled promise and skip the `is_promise` + `assimilate`
+    // probes — both are slow in the steady state of the async-to-
+    // generator pattern (`Promise.resolve(<primitive>).then(...)` per
+    // await). The probes still run on real pointers below.
+    if is_definitely_primitive(value) {
+        let promise = js_promise_new();
+        unsafe {
+            (*promise).state = PromiseState::Fulfilled;
+            (*promise).value = value;
+        }
+        return promise;
+    }
     let promise = js_promise_new();
     if js_value_is_promise(value) != 0 {
+        MT_INNER_PROMISE_UNWRAP_COUNT.fetch_add(1, Ordering::Relaxed);
         let inner = crate::value::js_nanbox_get_pointer(value) as *mut Promise;
         if !inner.is_null() && inner != promise {
             js_promise_resolve_with_promise(promise, inner);
@@ -651,6 +873,75 @@ pub extern "C" fn js_promise_resolved(value: f64) -> *mut Promise {
 
     js_promise_resolve(promise, value);
     promise
+}
+
+/// Fused fast path for `Promise.resolve(value).then(cb_f, cb_e)` —
+/// the steady-state shape of the async-to-generator transform's
+/// per-`await` lowering. The naive sequence is:
+///
+///   p1 = js_promise_resolved(value)              // alloc Promise #1
+///   p2 = js_promise_then(p1, cb_f, cb_e)         // alloc Promise #2
+///   return p2
+///
+/// Per-await we pay 2 Promise allocations + 2 TASK_QUEUE round-trips
+/// (push to queue, pop, dispatch cb_f). For a 200k-await benchmark
+/// that's 400k allocations — the dominant per-microtask cost.
+///
+/// The fast path:
+///   if `value` is a primitive (no possibility of being a thenable
+///   or another Promise), allocate ONE promise (`next`), enqueue an
+///   INLINE-callback task carrying `(cb_f, value, next)`, and return
+///   `next`. Skips Promise #1 entirely. The microtask runner's
+///   `Task::Inline` arm dispatches the callback and propagates its
+///   return value to `next` exactly as the legacy two-promise path
+///   would have.
+///
+/// Falls back to the unfused sequence when `value` is a real Promise
+/// or could be a thenable — those need the proper assimilation path.
+#[no_mangle]
+pub extern "C" fn js_promise_resolved_then(
+    value: f64,
+    on_fulfilled: ClosurePtr,
+    on_rejected: ClosurePtr,
+) -> *mut Promise {
+    if is_definitely_primitive(value) {
+        MT_FAST_PATH_HIT.fetch_add(1, Ordering::Relaxed);
+        // FAST PATH (primitive) — skip Promise.resolve()'s allocation
+        // entirely. The callback runs once during the next microtask
+        // drain via the `Task::Inline` arm.
+        let next = js_promise_new();
+        TASK_QUEUE.with(|q| {
+            q.borrow_mut()
+                .push_back(Task::Inline(on_fulfilled, value, next, true));
+        });
+        crate::event_pump::js_notify_main_thread();
+        // Suppress the rejection-handler bookkeeping: it would only
+        // matter if `value` were a Promise, which it isn't here.
+        let _ = on_rejected;
+        return next;
+    }
+
+    // FAST PATH (already-a-Promise) — `Promise.resolve(P)` is the
+    // identity per spec when P is a real Promise (the same constructor
+    // is used). The async-to-generator transform's per-`await` lowering
+    // routes through `Promise.resolve(__step_r.value).then(...)`; in
+    // the steady state `__step_r.value` is a Promise that the user's
+    // `await <expr>` produced, so the wrap-then-unwrap is wasted work.
+    // Skip the wrapper allocation: directly chain `.then()` off the
+    // existing promise.
+    if js_value_is_promise(value) != 0 {
+        MT_FAST_PATH_HIT.fetch_add(1, Ordering::Relaxed);
+        let inner = crate::value::js_nanbox_get_pointer(value) as *mut Promise;
+        if !inner.is_null() {
+            return js_promise_then(inner, on_fulfilled, on_rejected);
+        }
+    }
+
+    MT_FAST_PATH_MISS.fetch_add(1, Ordering::Relaxed);
+    // Pointer-tagged but not a Promise — could be a thenable. Take
+    // the unfused path so the assimilation probes can run on it.
+    let p1 = js_promise_resolved(value);
+    js_promise_then(p1, on_fulfilled, on_rejected)
 }
 
 /// `Array.fromAsync(input)` — Node 22+ static method.
@@ -1295,6 +1586,7 @@ pub extern "C" fn js_await_any_promise(value: f64) -> f64 {
 pub extern "C" fn js_assimilate_thenable(value: f64) -> f64 {
     use crate::value::JSValue;
 
+    MT_THENABLE_PROBE_COUNT.fetch_add(1, Ordering::Relaxed);
     // Real Promise — caller's await loop already handles it.
     if js_value_is_promise(value) != 0 {
         return value;
@@ -1730,16 +2022,35 @@ pub fn scan_promise_roots(mark: &mut dyn FnMut(f64)) {
     // Scan TASK_QUEUE entries
     TASK_QUEUE.with(|q| {
         let q = q.borrow();
-        for &(promise_ptr, value, _) in q.iter() {
-            // Mark the promise pointer (NaN-box it as a POINTER)
-            if !promise_ptr.is_null() {
-                let boxed = f64::from_bits(
-                    0x7FFD_0000_0000_0000 | (promise_ptr as u64 & 0x0000_FFFF_FFFF_FFFF),
-                );
-                mark(boxed);
+        for entry in q.iter() {
+            match entry {
+                Task::Promise(promise_ptr, value, _) => {
+                    if !promise_ptr.is_null() {
+                        let boxed = f64::from_bits(
+                            0x7FFD_0000_0000_0000
+                                | (*promise_ptr as u64 & 0x0000_FFFF_FFFF_FFFF),
+                        );
+                        mark(boxed);
+                    }
+                    mark(*value);
+                }
+                Task::Inline(cb, value, next, _) => {
+                    if !cb.is_null() {
+                        let boxed = f64::from_bits(
+                            0x7FFD_0000_0000_0000 | (*cb as u64 & 0x0000_FFFF_FFFF_FFFF),
+                        );
+                        mark(boxed);
+                    }
+                    if !next.is_null() {
+                        let boxed = f64::from_bits(
+                            0x7FFD_0000_0000_0000
+                                | (*next as u64 & 0x0000_FFFF_FFFF_FFFF),
+                        );
+                        mark(boxed);
+                    }
+                    mark(*value);
+                }
             }
-            // Mark the value
-            mark(value);
         }
     });
 

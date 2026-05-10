@@ -494,7 +494,16 @@ pub extern "C" fn js_set_value_at(set: *const SetHeader, i: u32) -> f64 {
 }
 
 /// Convert a Set to an Array (for Array.from(set))
-/// Returns a new array containing all elements of the set
+/// Returns a new array containing all elements of the set.
+///
+/// Bulk path: for non-empty sets we pre-allocate an array with capacity
+/// = set size and `memcpy` the f64s directly, then set `length = size`
+/// in one shot. The previous loop did N `js_array_push_f64` calls
+/// (each chasing a forwarding pointer + checking capacity + bumping
+/// length); on a 1.25M-element set the per-push overhead added ~70 ms
+/// to `[...set]` (vs Bun's 2 ms). The bulk copy is correctness-safe
+/// because we own the freshly-allocated destination — no aliasing,
+/// no concurrent modification, capacity is exact.
 #[no_mangle]
 pub extern "C" fn js_set_to_array(set: *const SetHeader) -> *mut crate::array::ArrayHeader {
     if set.is_null() {
@@ -504,11 +513,12 @@ pub extern "C" fn js_set_to_array(set: *const SetHeader) -> *mut crate::array::A
         let size = (*set).size as usize;
         let result = crate::array::js_array_alloc(size as u32);
         if size > 0 {
-            let elements = (*set).elements as *const f64;
-            for i in 0..size {
-                let element = ptr::read(elements.add(i));
-                crate::array::js_array_push_f64(result, element);
-            }
+            let src = (*set).elements as *const f64;
+            let dst = (result as *mut u8)
+                .add(std::mem::size_of::<crate::array::ArrayHeader>())
+                as *mut f64;
+            ptr::copy_nonoverlapping(src, dst, size);
+            (*result).length = size as u32;
         }
         result
     }

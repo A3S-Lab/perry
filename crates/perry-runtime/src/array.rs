@@ -1401,13 +1401,40 @@ pub extern "C" fn js_array_concat(
         }
 
         let src_elements = (src as *const u8).add(std::mem::size_of::<ArrayHeader>()) as *const f64;
-        let mut result = dest;
 
+        // Bulk-copy fast path: pre-grow once to fit dest_len+src_len,
+        // then memcpy the source elements into the dest tail and update
+        // length once. Replaces N individual `js_array_push_f64` calls
+        // (each doing a forwarding-chain follow + capacity check). The
+        // alias case (dest == src) is rare but possible — fall back to
+        // the per-element loop for that, since growing dest invalidates
+        // the src_elements pointer.
+        let dest_resolved = clean_arr_ptr_mut(dest);
+        if !dest_resolved.is_null() && dest_resolved as *const _ != src {
+            let dest_len = (*dest_resolved).length;
+            let new_len = dest_len + src_len;
+            let result = if new_len > (*dest_resolved).capacity {
+                js_array_grow(dest_resolved, new_len)
+            } else {
+                dest_resolved
+            };
+            let dst_elements =
+                (result as *mut u8).add(std::mem::size_of::<ArrayHeader>()) as *mut f64;
+            ptr::copy_nonoverlapping(
+                src_elements,
+                dst_elements.add(dest_len as usize),
+                src_len as usize,
+            );
+            (*result).length = new_len;
+            return result;
+        }
+
+        // Fallback: per-element push (handles aliasing + null dest).
+        let mut result = dest;
         for i in 0..src_len as usize {
             let element = *src_elements.add(i);
             result = js_array_push_f64(result, element);
         }
-
         result
     }
 }
@@ -1850,6 +1877,28 @@ pub extern "C" fn js_array_sort_with_comparator(
         }
         let elements_ptr = (arr as *mut u8).add(std::mem::size_of::<ArrayHeader>()) as *mut f64;
 
+        // Hoist the closure-dispatch resolution out of the hot loops.
+        // For a 1.25M-element sort we'd otherwise hit ~50M HashMap lookups
+        // (per-call rest + arity registry queries inside `js_closure_call2`).
+        // When the comparator is a plain (a,b) => ... arrow with no captures
+        // and no rest, `direct_call` is `Some(typed_fn)` and we call it
+        // unconditionally inside the loop. Falls back to `js_closure_call2`
+        // for the rare bound-method / rest / over-arity comparators.
+        let direct_call = crate::closure::resolve_call2_direct(comparator);
+
+        #[inline(always)]
+        unsafe fn cmp_with(
+            comparator: *const ClosureHeader,
+            direct: Option<extern "C" fn(*const ClosureHeader, f64, f64) -> f64>,
+            a: f64,
+            b: f64,
+        ) -> f64 {
+            match direct {
+                Some(f) => f(comparator, a, b),
+                None => js_closure_call2(comparator, a, b),
+            }
+        }
+
         // TimSort-style hybrid: insertion sort for small runs, merge sort for large arrays.
         // Stable, O(n log n) worst case. Insertion sort is used for runs <= 32 elements
         // because it has lower overhead for small inputs.
@@ -1861,7 +1910,7 @@ pub extern "C" fn js_array_sort_with_comparator(
                 let key = *elements_ptr.add(i);
                 let mut j = i as isize - 1;
                 while j >= 0 {
-                    let cmp = js_closure_call2(comparator, *elements_ptr.add(j as usize), key);
+                    let cmp = cmp_with(comparator, direct_call, *elements_ptr.add(j as usize), key);
                     if cmp > 0.0 {
                         ptr::write(
                             elements_ptr.add((j + 1) as usize),
@@ -1887,7 +1936,7 @@ pub extern "C" fn js_array_sort_with_comparator(
                     let key = *elements_ptr.add(i);
                     let mut j = i as isize - 1;
                     while j >= run_start as isize {
-                        let cmp = js_closure_call2(comparator, *elements_ptr.add(j as usize), key);
+                        let cmp = cmp_with(comparator, direct_call, *elements_ptr.add(j as usize), key);
                         if cmp > 0.0 {
                             ptr::write(
                                 elements_ptr.add((j + 1) as usize),
@@ -1921,7 +1970,7 @@ pub extern "C" fn js_array_sort_with_comparator(
                     let mut r = mid;
                     let mut k = left;
                     while l < mid && r < right {
-                        let cmp = js_closure_call2(comparator, *src.add(l), *src.add(r));
+                        let cmp = cmp_with(comparator, direct_call, *src.add(l), *src.add(r));
                         if cmp <= 0.0 {
                             *dst.add(k) = *src.add(l);
                             l += 1;

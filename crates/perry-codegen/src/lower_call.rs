@@ -1353,6 +1353,61 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
             match property.as_str() {
                 "then" => {
                     if !args.is_empty() {
+                        // Fused fast path: detect `Promise.resolve(<expr>).then(cb_f, cb_e?)`
+                        // and route to `js_promise_resolved_then`, which skips
+                        // the intermediate Promise-#1 allocation when `<expr>`
+                        // is a NaN-boxed primitive (number/bool/null/undefined/
+                        // string/bigint/int32). Steady-state shape of every
+                        // `await` after async-to-generator lowering — saves
+                        // one Promise alloc + one TASK_QUEUE round-trip per
+                        // await.
+                        if let Expr::Call {
+                            callee: inner_callee,
+                            args: inner_args,
+                            ..
+                        } = object.as_ref()
+                        {
+                            if let Expr::PropertyGet {
+                                object: inner_object,
+                                property: inner_property,
+                            } = inner_callee.as_ref()
+                            {
+                                if matches!(inner_object.as_ref(), Expr::GlobalGet(_))
+                                    && inner_property == "resolve"
+                                {
+                                    let inner_value = if inner_args.is_empty() {
+                                        double_literal(0.0)
+                                    } else {
+                                        lower_expr(ctx, &inner_args[0])?
+                                    };
+                                    let on_fulfilled_box = lower_expr(ctx, &args[0])?;
+                                    let on_rejected_box = if args.len() >= 2 {
+                                        lower_expr(ctx, &args[1])?
+                                    } else {
+                                        "0".to_string()
+                                    };
+                                    let blk = ctx.block();
+                                    let on_fulfilled_handle =
+                                        unbox_to_i64(blk, &on_fulfilled_box);
+                                    let on_rejected_handle = if args.len() >= 2 {
+                                        unbox_to_i64(blk, &on_rejected_box)
+                                    } else {
+                                        "0".to_string()
+                                    };
+                                    let new_promise = blk.call(
+                                        I64,
+                                        "js_promise_resolved_then",
+                                        &[
+                                            (DOUBLE, &inner_value),
+                                            (I64, &on_fulfilled_handle),
+                                            (I64, &on_rejected_handle),
+                                        ],
+                                    );
+                                    return Ok(nanbox_pointer_inline(blk, &new_promise));
+                                }
+                            }
+                        }
+
                         let promise_box = lower_expr(ctx, object)?;
                         let on_fulfilled_box = lower_expr(ctx, &args[0])?;
                         let on_rejected_box = if args.len() >= 2 {
