@@ -305,6 +305,7 @@ fn build_once(
         harmonyos_cert: None,
         harmonyos_profile: None,
         harmonyos_key_alias: None,
+        skip_swift_build: false,
     };
     parse_cache.reset_counters();
     let result = super::compile::run_with_parse_cache(

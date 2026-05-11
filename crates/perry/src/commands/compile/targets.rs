@@ -50,7 +50,9 @@ pub(super) fn generate_js_bundle(ctx: &CompilationContext, output_dir: &Path) ->
     Ok(bundle_path)
 }
 
-/// Compile for iOS widget target: emit SwiftUI source for WidgetKit extension
+/// Compile for iOS widget target: emit SwiftUI source for WidgetKit extension.
+/// Auto-invokes `swiftc` to produce a built `WidgetExtension.appex/` directory
+/// unless `--skip-swift-build` is passed.
 pub(super) fn compile_for_ios_widget(
     ctx: &CompilationContext,
     args: &CompileArgs,
@@ -99,10 +101,15 @@ pub(super) fn compile_for_ios_widget(
 
     // Generate SwiftUI for each widget
     let mut all_swift_files: Vec<(String, String)> = Vec::new();
-    let mut all_info_plists: Vec<(String, String)> = Vec::new();
+    let mut bundle_info_plist: Option<String> = None;
+    let mut uses_app_intents = false;
 
     for widget in &widgets {
         let bundle = perry_codegen_swiftui::compile_widget(widget, app_bundle_id)?;
+
+        if !widget.config_params.is_empty() {
+            uses_app_intents = true;
+        }
 
         for (filename, source) in &bundle.swift_files {
             let swift_path = output_dir.join(filename);
@@ -110,58 +117,197 @@ pub(super) fn compile_for_ios_widget(
             all_swift_files.push((filename.clone(), source.clone()));
         }
 
-        // Write Info.plist
+        // Write Info.plist (kept at output_dir for backwards compat with
+        // hand-rolled xcodebuild pipelines that consume the unresolved template)
         let plist_path = output_dir.join("Info.plist");
         fs::write(&plist_path, &bundle.info_plist)?;
-        all_info_plists.push(("Info.plist".to_string(), bundle.info_plist.clone()));
+        bundle_info_plist = Some(bundle.info_plist.clone());
     }
 
     // Report results
     let total_size: usize = all_swift_files.iter().map(|(_, s)| s.len()).sum();
+    let is_simulator = args.target.as_deref() == Some("ios-widget-simulator");
+    let sdk = if is_simulator {
+        "iphonesimulator"
+    } else {
+        "iphoneos"
+    };
+    let target_triple = if is_simulator {
+        "arm64-apple-ios17.0-simulator"
+    } else {
+        "arm64-apple-ios17.0"
+    };
+    let mut frameworks = vec!["WidgetKit", "SwiftUI"];
+    if uses_app_intents {
+        frameworks.push("AppIntents");
+    }
 
-    match format {
-        OutputFormat::Text => {
-            println!("Widget extension generated: {}/", output_dir.display());
-            for (name, source) in &all_swift_files {
-                println!("  {} ({:.1} KB)", name, source.len() as f64 / 1024.0);
+    let mut built_binary: Option<PathBuf> = None;
+    if args.skip_swift_build {
+        match format {
+            OutputFormat::Text => {
+                println!("Widget extension generated: {}/", output_dir.display());
+                for (name, source) in &all_swift_files {
+                    println!("  {} ({:.1} KB)", name, source.len() as f64 / 1024.0);
+                }
+                println!("  Info.plist");
+                println!("Total: {:.1} KB SwiftUI source", total_size as f64 / 1024.0);
+                println!();
+                println!("To build the widget extension:");
+                println!("  xcrun --sdk {} swiftc -target {} \\", sdk, target_triple);
+                for (name, _) in &all_swift_files {
+                    println!("    {}/{} \\", output_dir.display(), name);
+                }
+                let frameworks_str = frameworks
+                    .iter()
+                    .map(|f| format!("-framework {}", f))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!("    {} \\", frameworks_str);
+                println!("    -o {}/WidgetExtension", output_dir.display());
             }
-            println!("  Info.plist");
-            println!("Total: {:.1} KB SwiftUI source", total_size as f64 / 1024.0);
-            println!();
-            println!("To build the widget extension:");
-            let sdk = if args.target.as_deref() == Some("ios-widget-simulator") {
-                "iphonesimulator"
-            } else {
-                "iphoneos"
-            };
-            println!(
-                "  xcrun --sdk {} swiftc -target arm64-apple-ios17.0 \\",
-                sdk
-            );
-            for (name, _) in &all_swift_files {
-                println!("    {}/{} \\", output_dir.display(), name);
+            OutputFormat::Json => {
+                println!(
+                    "{{\"output\": \"{}\", \"widgets\": {}, \"size\": {}, \"target\": \"ios-widget\", \"built\": false}}",
+                    output_dir.display(),
+                    widgets.len(),
+                    total_size
+                );
             }
-            println!("    -framework WidgetKit -framework SwiftUI \\");
-            println!("    -o {}/WidgetExtension", output_dir.display());
         }
-        OutputFormat::Json => {
-            println!(
-                "{{\"output\": \"{}\", \"widgets\": {}, \"size\": {}, \"target\": \"ios-widget\"}}",
-                output_dir.display(),
-                widgets.len(),
-                total_size
-            );
+    } else {
+        let info_plist = bundle_info_plist
+            .ok_or_else(|| anyhow!("internal: no Info.plist generated"))?;
+        let appex_path = build_widget_appex(
+            &output_dir,
+            &all_swift_files,
+            &info_plist,
+            sdk,
+            target_triple,
+            &frameworks,
+            "WidgetExtension",
+            format,
+        )?;
+        built_binary = Some(appex_path.clone());
+        match format {
+            OutputFormat::Text => {
+                println!("Widget extension built: {}", appex_path.display());
+                for (name, source) in &all_swift_files {
+                    println!("  {} ({:.1} KB)", name, source.len() as f64 / 1024.0);
+                }
+                println!("Total: {:.1} KB SwiftUI source", total_size as f64 / 1024.0);
+            }
+            OutputFormat::Json => {
+                println!(
+                    "{{\"output\": \"{}\", \"widgets\": {}, \"size\": {}, \"target\": \"ios-widget\", \"built\": true, \"appex\": \"{}\"}}",
+                    output_dir.display(),
+                    widgets.len(),
+                    total_size,
+                    appex_path.display()
+                );
+            }
         }
     }
 
     let target_str = args.target.as_deref().unwrap_or("ios-widget").to_string();
     Ok(CompileResult {
-        output_path: output_dir,
+        output_path: built_binary.unwrap_or(output_dir),
         target: target_str,
         bundle_id: Some(app_bundle_id.to_string()),
         is_dylib: false,
         codegen_cache_stats: None,
     })
+}
+
+/// Build a WidgetKit .appex extension by invoking `xcrun swiftc` on the
+/// generated SwiftUI sources. Produces `<output_dir>/<extension_name>.appex/`
+/// containing the compiled mach-O binary plus a resolved Info.plist (Xcode
+/// build variables like `$(EXECUTABLE_NAME)` substituted to concrete values
+/// since there's no Xcode driver doing the substitution).
+///
+/// Returns the absolute path of the produced `.appex` directory.
+fn build_widget_appex(
+    output_dir: &Path,
+    swift_files: &[(String, String)],
+    info_plist: &str,
+    sdk: &str,
+    target_triple: &str,
+    frameworks: &[&str],
+    extension_name: &str,
+    format: OutputFormat,
+) -> Result<PathBuf> {
+    // Resolve SDK path up-front so a missing Xcode/CLT toolchain fails with
+    // a clearer message than swiftc's own diagnostic.
+    let sdk_path_output = Command::new("xcrun")
+        .args(["--sdk", sdk, "--show-sdk-path"])
+        .output()
+        .map_err(|e| {
+            anyhow!(
+                "Failed to invoke `xcrun --sdk {} --show-sdk-path`: {}. \
+                 Install Xcode or the Command Line Tools (`xcode-select --install`), \
+                 or pass --skip-swift-build to emit sources only.",
+                sdk,
+                e
+            )
+        })?;
+    if !sdk_path_output.status.success() {
+        return Err(anyhow!(
+            "`xcrun --sdk {} --show-sdk-path` failed: {}",
+            sdk,
+            String::from_utf8_lossy(&sdk_path_output.stderr)
+        ));
+    }
+    let sdk_path = String::from_utf8(sdk_path_output.stdout)?
+        .trim()
+        .to_string();
+
+    let appex_dir = output_dir.join(format!("{}.appex", extension_name));
+    fs::create_dir_all(&appex_dir)?;
+
+    let resolved_plist = info_plist
+        .replace("$(EXECUTABLE_NAME)", extension_name)
+        .replace("$(PRODUCT_NAME)", extension_name)
+        .replace("$(PRODUCT_BUNDLE_PACKAGE_TYPE)", "XPC!");
+    fs::write(appex_dir.join("Info.plist"), &resolved_plist)?;
+
+    let binary_path = appex_dir.join(extension_name);
+
+    let mut cmd = Command::new("xcrun");
+    cmd.args(["--sdk", sdk, "swiftc"])
+        .args(["-target", target_triple])
+        .args(["-sdk", &sdk_path])
+        .arg("-emit-executable")
+        .arg("-parse-as-library")
+        .arg("-O");
+    for (filename, _) in swift_files {
+        cmd.arg(output_dir.join(filename));
+    }
+    for fw in frameworks {
+        cmd.args(["-framework", fw]);
+    }
+    cmd.arg("-o").arg(&binary_path);
+
+    if matches!(format, OutputFormat::Text) {
+        println!("Invoking swiftc → {}", binary_path.display());
+    }
+
+    let status = cmd.status().map_err(|e| {
+        anyhow!(
+            "Failed to invoke swiftc: {}. Install Xcode or the Command Line Tools \
+             (`xcode-select --install`), or pass --skip-swift-build to emit sources only.",
+            e
+        )
+    })?;
+    if !status.success() {
+        return Err(anyhow!(
+            "swiftc failed (exit {}). The generated SwiftUI source is at {}/ — \
+             rerun with --skip-swift-build to inspect or hand off to xcodebuild.",
+            status.code().unwrap_or(-1),
+            output_dir.display()
+        ));
+    }
+
+    Ok(appex_dir)
 }
 
 /// Compile for watchOS widget target: emit SwiftUI + native timeline (accessory families)
@@ -209,9 +355,15 @@ pub(super) fn compile_for_watchos_widget(
     fs::create_dir_all(&output_dir)?;
 
     let mut all_swift_files: Vec<(String, String)> = Vec::new();
+    let mut bundle_info_plist: Option<String> = None;
+    let mut uses_app_intents = false;
 
     for widget in &widgets {
         let bundle = perry_codegen_swiftui::compile_widget(widget, app_bundle_id)?;
+
+        if !widget.config_params.is_empty() {
+            uses_app_intents = true;
+        }
 
         for (filename, source) in &bundle.swift_files {
             let swift_path = output_dir.join(filename);
@@ -221,38 +373,86 @@ pub(super) fn compile_for_watchos_widget(
 
         let plist_path = output_dir.join("Info.plist");
         fs::write(&plist_path, &bundle.info_plist)?;
+        bundle_info_plist = Some(bundle.info_plist.clone());
     }
 
     let total_size: usize = all_swift_files.iter().map(|(_, s)| s.len()).sum();
+    let is_simulator = args.target.as_deref() == Some("watchos-widget-simulator");
+    let sdk = if is_simulator {
+        "watchsimulator"
+    } else {
+        "watchos"
+    };
+    let target_triple = if is_simulator {
+        "arm64-apple-watchos10.0-simulator"
+    } else {
+        "arm64_32-apple-watchos10.0"
+    };
+    let mut frameworks = vec!["WidgetKit", "SwiftUI"];
+    if uses_app_intents {
+        frameworks.push("AppIntents");
+    }
 
-    match format {
-        OutputFormat::Text => {
-            println!("watchOS complication generated: {}/", output_dir.display());
-            for (name, source) in &all_swift_files {
-                println!("  {} ({:.1} KB)", name, source.len() as f64 / 1024.0);
+    let mut built_binary: Option<PathBuf> = None;
+    if args.skip_swift_build {
+        match format {
+            OutputFormat::Text => {
+                println!("watchOS complication generated: {}/", output_dir.display());
+                for (name, source) in &all_swift_files {
+                    println!("  {} ({:.1} KB)", name, source.len() as f64 / 1024.0);
+                }
+                println!("  Info.plist");
+                println!("Total: {:.1} KB SwiftUI source", total_size as f64 / 1024.0);
+                println!();
+                println!("To build the watchOS widget extension:");
+                println!("  xcrun --sdk {} swiftc -target {} \\", sdk, target_triple);
+                for (name, _) in &all_swift_files {
+                    println!("    {}/{} \\", output_dir.display(), name);
+                }
+                let frameworks_str = frameworks
+                    .iter()
+                    .map(|f| format!("-framework {}", f))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!("    {} \\", frameworks_str);
+                println!("    -o {}/WidgetExtension", output_dir.display());
             }
-            println!("  Info.plist");
-            println!("Total: {:.1} KB SwiftUI source", total_size as f64 / 1024.0);
-            println!();
-            println!("To build the watchOS widget extension:");
-            let sdk = if args.target.as_deref() == Some("watchos-widget-simulator") {
-                "watchsimulator"
-            } else {
-                "watchos"
-            };
-            println!(
-                "  xcrun --sdk {} swiftc -target arm64-apple-watchos9.0 \\",
-                sdk
-            );
-            for (name, _) in &all_swift_files {
-                println!("    {}/{} \\", output_dir.display(), name);
+            OutputFormat::Json => {
+                println!("{{\"output\": \"{}\", \"widgets\": {}, \"size\": {}, \"target\": \"watchos-widget\", \"built\": false}}",
+                    output_dir.display(), widgets.len(), total_size);
             }
-            println!("    -framework WidgetKit -framework SwiftUI \\");
-            println!("    -o {}/WidgetExtension", output_dir.display());
         }
-        OutputFormat::Json => {
-            println!("{{\"output\": \"{}\", \"widgets\": {}, \"size\": {}, \"target\": \"watchos-widget\"}}",
-                output_dir.display(), widgets.len(), total_size);
+    } else {
+        let info_plist = bundle_info_plist
+            .ok_or_else(|| anyhow!("internal: no Info.plist generated"))?;
+        let appex_path = build_widget_appex(
+            &output_dir,
+            &all_swift_files,
+            &info_plist,
+            sdk,
+            target_triple,
+            &frameworks,
+            "WidgetExtension",
+            format,
+        )?;
+        built_binary = Some(appex_path.clone());
+        match format {
+            OutputFormat::Text => {
+                println!("watchOS complication built: {}", appex_path.display());
+                for (name, source) in &all_swift_files {
+                    println!("  {} ({:.1} KB)", name, source.len() as f64 / 1024.0);
+                }
+                println!("Total: {:.1} KB SwiftUI source", total_size as f64 / 1024.0);
+            }
+            OutputFormat::Json => {
+                println!(
+                    "{{\"output\": \"{}\", \"widgets\": {}, \"size\": {}, \"target\": \"watchos-widget\", \"built\": true, \"appex\": \"{}\"}}",
+                    output_dir.display(),
+                    widgets.len(),
+                    total_size,
+                    appex_path.display()
+                );
+            }
         }
     }
 
@@ -262,7 +462,7 @@ pub(super) fn compile_for_watchos_widget(
         .unwrap_or("watchos-widget")
         .to_string();
     Ok(CompileResult {
-        output_path: output_dir,
+        output_path: built_binary.unwrap_or(output_dir),
         target: target_str,
         bundle_id: Some(app_bundle_id.to_string()),
         is_dylib: false,

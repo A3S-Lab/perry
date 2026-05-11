@@ -245,6 +245,15 @@ pub struct CompileArgs {
     /// `debugKey`. Phase 2 v7.
     #[arg(long)]
     pub harmonyos_key_alias: Option<String>,
+
+    /// Widget targets (`ios-widget`, `ios-widget-simulator`, `watchos-widget`,
+    /// `watchos-widget-simulator`): skip auto-invoking `swiftc` and emit only
+    /// the SwiftUI source + Info.plist. The build instructions are printed so
+    /// a downstream pipeline (Xcode project, custom xcodebuild script) can
+    /// pick them up. By default Perry drives swiftc itself and produces a
+    /// built `WidgetExtension.appex` directory next to the sources.
+    #[arg(long)]
+    pub skip_swift_build: bool,
 }
 
 /// Information about a JavaScript module that will be interpreted at runtime

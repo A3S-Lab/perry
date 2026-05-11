@@ -2,6 +2,24 @@
 
 Detailed changelog for Perry. See CLAUDE.md for concise summaries.
 
+## v0.5.809 — #676 phase 1 — `--target ios-widget` / `watchos-widget` auto-invoke swiftc and emit a built `.appex`
+
+Closes the build-glue half of issue #676's first ask: until v0.5.808 the widget-extension targets generated SwiftUI source + Info.plist and *printed* an `xcrun swiftc …` invocation for the user to copy-paste — every downstream project ended up with a hand-rolled `build.rs` re-running that command. v0.5.809 drives swiftc itself.
+
+**Fix** in `crates/perry/src/commands/compile/targets.rs`:
+- New `build_widget_appex()` helper resolves the SDK path via `xcrun --sdk <sdk> --show-sdk-path`, creates `<output_dir>/WidgetExtension.appex/`, writes a *resolved* Info.plist (substitutes `$(EXECUTABLE_NAME)` / `$(PRODUCT_NAME)` / `$(PRODUCT_BUNDLE_PACKAGE_TYPE)` since there's no Xcode build driver running), then invokes `xcrun --sdk <sdk> swiftc -target <triple> -sdk <path> -emit-executable -O <sources> -framework WidgetKit -framework SwiftUI [-framework AppIntents] -o <appex>/WidgetExtension`. Returns the produced `.appex` path.
+- `compile_for_ios_widget` and `compile_for_watchos_widget` both call the new helper after writing sources. The unresolved Info.plist is still left in `output_dir` for downstream pipelines that re-feed it to Xcode.
+- Frameworks list is now derived from widget contents — `AppIntents` is only linked when at least one widget has `config_params`, matching what `perry-codegen-swiftui` actually emits.
+- Target triples corrected for the simulator variants: previously the printed swiftc command used the device triple (`arm64-apple-ios17.0`) even for `--target ios-widget-simulator`; now we emit `arm64-apple-ios17.0-simulator` and `arm64-apple-watchos10.0-simulator` respectively. The watchOS device triple is also corrected from `arm64-apple-watchos9.0` to `arm64_32-apple-watchos10.0` to match what the rest of the watchOS link path (`crates/perry/src/commands/compile/link.rs:75-95`) already uses.
+
+**Escape hatch** in `crates/perry/src/commands/compile.rs`: new `--skip-swift-build` flag. When passed, Perry reverts to the pre-fix behaviour — emit SwiftUI source + Info.plist, print the swiftc command, exit. Lets existing pipelines that feed the sources into Xcode (or that don't have a swift toolchain on the build box, e.g. cross-compiling from a Linux CI runner) continue to work without modification.
+
+**Error UX**: `xcrun` not found → "Install Xcode or the Command Line Tools (`xcode-select --install`), or pass --skip-swift-build to emit sources only." swiftc non-zero exit → reports the exit code and points the user at the generated source dir + the `--skip-swift-build` flag for hand-off to xcodebuild.
+
+**JSON output** now includes a `built` boolean and an `appex` path when a build was performed: `{"output": "...", "widgets": N, "size": S, "target": "ios-widget", "built": true, "appex": "...WidgetExtension.appex"}`. The `built: false` shape preserves the old key set for the `--skip-swift-build` case so scripts that consumed the pre-fix JSON stay green.
+
+**Scope (not yet)**: bundle embedding (`.appex` into the host app's `PlugIns/`), `application-groups` entitlement wiring, `[[widget]]` table in `perry.toml`, and `perry widget init <name>` scaffolding remain on the #676 punch list as phase 2 / 3. This release only removes the manual swiftc step.
+
 ## v0.5.808 — refs #665 — `(?:module\.)?exports\.X = require('Y')` index aggregators forward class identity
 
 Closes the remaining symptom from issue #665's last comment: named-imports of CJS classes from packages whose `index.js` is a series of `module.exports.X = require('./lib/X')` lines (rate-limiter-flexible, many older npm packages). Pre-fix the consumer's `import { RateLimiterMemory } from "rate-limiter-flexible"` resolved to `export const RateLimiterMemory = _cjs.RateLimiterMemory;` — a runtime property read on the IIFE result. HIR can't see through that read to the class declaration in the required file, so `new RateLimiterMemory(...)` produced an empty object with no methods (`typeof limiter.consume === "undefined"`, `Object.keys(limiter) === ""`).

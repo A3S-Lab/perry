@@ -194,6 +194,7 @@ pub fn run(args: RunArgs, format: OutputFormat, use_color: bool, verbose: u8) ->
         harmonyos_cert: None,
         harmonyos_profile: None,
         harmonyos_key_alias: None,
+        skip_swift_build: false,
     };
 
     let result = super::compile::run(compile_args, format, use_color, verbose)?;
