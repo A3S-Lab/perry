@@ -1263,14 +1263,21 @@ pub extern "C" fn perry_ui_widget_set_enabled(handle: i64, enabled: i64) {
     widgets::set_enabled(handle, enabled != 0);
 }
 
-/// Rich tooltip stub (issue #479). iOS has no hover; long-press
-/// presentation is a future iteration.
+/// Rich tooltip (issue #479). iOS — long-press to show, since hover
+/// doesn't exist. `hover_delay_ms` is reinterpreted as the
+/// UILongPressGestureRecognizer minimumPressDuration.
 #[no_mangle]
 pub extern "C" fn perry_ui_widget_set_rich_tooltip(
-    _handle: i64,
-    _content_handle: i64,
-    _hover_delay_ms: f64,
+    handle: i64,
+    content_handle: i64,
+    hover_delay_ms: f64,
 ) {
+    let ms = if hover_delay_ms.is_finite() && hover_delay_ms > 0.0 {
+        hover_delay_ms as u32
+    } else {
+        0
+    };
+    widgets::rich_tooltip::set_rich_tooltip(handle, content_handle, ms);
 }
 
 /// Set a tooltip on a widget.

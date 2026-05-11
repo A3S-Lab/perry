@@ -14,6 +14,7 @@ pub mod picker;
 pub mod progressview;
 pub mod qrcode;
 pub mod rich_text;
+pub mod rich_tooltip;
 pub mod scrollview;
 pub mod securefield;
 pub mod slider;
