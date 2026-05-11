@@ -218,7 +218,7 @@ natively via `perry-ffi`:
 
 Pure-TypeScript drivers compiled via `compilePackages`:
 
-- **`@perryts/postgres`**, **`@perryts/mysql`**, **`@perryts/mongodb`** — wire-protocol clients that
+- **`@perryts/postgres`**, **`@perryts/mysql`**, **`@perryts/mongodb`**, **`@perryts/redis`** — wire-protocol clients that
   also run on Node.js and Bun unchanged.
 
 See [Native Bindings — Overview](../native-libraries/overview.md) for the

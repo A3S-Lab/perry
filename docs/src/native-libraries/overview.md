@@ -210,6 +210,7 @@ External pure-TypeScript drivers (compiled via compilePackages):
   PerryTS/postgres            → bun add @perryts/postgres
   PerryTS/mysql               → bun add @perryts/mysql
   PerryTS/mongodb             → bun add @perryts/mongodb
+  PerryTS/redis               → bun add @perryts/redis
 ```
 
 The split between **well-known** in-tree wrappers and **external** is
@@ -225,7 +226,7 @@ they're net-new bindings that originated as third-party packages.
 That validates the contract: perry-ffi is sufficient to write a real
 wrapper without forking Perry.
 
-## Three paths to a database driver (postgres / mysql / mongodb)
+## Three paths to a database driver (postgres / mysql / mongodb / redis)
 
 Perry currently ships two parallel database-driver families. Picking
 one is a packaging trade-off, not a feature trade-off:
@@ -233,7 +234,7 @@ one is a packaging trade-off, not a feature trade-off:
 | Path | Install | Resolver layer | What it is |
 |---|---|---|---|
 | **Well-known native binding** | nothing (bundled) | (c) | `import 'mysql2'` / `import 'pg'` / `import 'mongodb'` route to in-tree `perry-ext-mysql2` / `perry-ext-pg` / `perry-ext-mongodb`. Rust wrappers around `sqlx` / `mongodb` crates. Versioned in lockstep with Perry. |
-| **`@perryts/{postgres,mysql,mongodb}`** | `bun add @perryts/postgres` | (a) | Pure-TypeScript wire-protocol drivers — no Rust, no native dep. Use Perry's [`compilePackages`](../packages/porting.md) to compile the TS to native via LLVM. Also run unmodified on Node.js / Bun. Independent semver. |
+| **`@perryts/{postgres,mysql,mongodb,redis}`** | `bun add @perryts/postgres` | (a) | Pure-TypeScript wire-protocol drivers — no Rust, no native dep. Use Perry's [`compilePackages`](../packages/porting.md) to compile the TS to native via LLVM. Also run unmodified on Node.js / Bun. Independent semver. |
 | **External native binding** | `bun add @perryts/tursodb` | (a) | Third-party Rust crate using `perry-ffi`, manifest at `package.json::perry.nativeLibrary`. Today: `@perryts/tursodb`, `@perryts/iroh`. |
 
 Resolution precedence (per layer (a) → (b) → (c) above): an installed
@@ -248,7 +249,7 @@ shim, just don't import `mysql2`.
 - **Well-known native (`mysql2` / `pg` / `mongodb`)** — zero install
   step, fastest path to "it works"; you accept that the driver's
   feature set tracks Perry's release cadence.
-- **`@perryts/postgres` / `@perryts/mysql` / `@perryts/mongodb`** —
+- **`@perryts/postgres` / `@perryts/mysql` / `@perryts/mongodb` / `@perryts/redis`** —
   you want to read / fork / patch the driver in plain TypeScript;
   you want the same code running on Node.js or Bun for fallback;
   you need a feature ahead of Perry's next release.

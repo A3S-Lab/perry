@@ -97,6 +97,7 @@ Pure-TypeScript drivers compiled via `compilePackages` (no Rust):
 - **`@perryts/postgres`** — pg-compatible wire-protocol driver.
 - **`@perryts/mysql`** — mysql2-compatible wire-protocol driver.
 - **`@perryts/mongodb`** — mongodb-compatible wire-protocol driver.
+- **`@perryts/redis`** — Redis / Valkey RESP2 + RESP3 wire-protocol driver.
 
 Each of these also runs unmodified on Node.js / Bun. See
 [Native Bindings — Overview](../native-libraries/overview.md) for
