@@ -1566,7 +1566,9 @@ fn build_async_step_driver_direct(
     // try/catch so the throw path is a plain rethrow — we inline it
     // directly into the step body and skip the per-invocation
     // `__async_throw` allocation entirely.
-    let throw_id = throw_closure_expr.as_ref().map(|_| alloc_local(next_local_id));
+    let throw_id = throw_closure_expr
+        .as_ref()
+        .map(|_| alloc_local(next_local_id));
     let step_id = alloc_local(next_local_id);
 
     // Step closure params + locals
