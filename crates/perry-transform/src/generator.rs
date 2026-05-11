@@ -1211,8 +1211,20 @@ fn transform_generator_function(
         // The throw path stays as a separate closure (cold), since its
         // catch routing is tangled with state-machine post-catch
         // transitions and the fusion benefit there is marginal.
-        let mut throw_closure_for_step = throw_closure;
-        rewrite_iter_results_to_scratch(&mut throw_closure_for_step);
+        // When no user try/catch with awaits was lifted by linearize_body
+        // (`catches` empty), the throw closure body collapses to a single
+        // `throw __throw_val` — pure rethrow, no captures referenced.
+        // Skip the closure construction entirely and let the step driver
+        // emit `Stmt::Throw(value)` inline in its is-error arm, saving one
+        // closure allocation per async-fn invocation (50k/run on the
+        // promise_all_chains kernel).
+        let throw_closure_for_step = if catches.is_empty() {
+            None
+        } else {
+            let mut tcs = throw_closure;
+            rewrite_iter_results_to_scratch(&mut tcs);
+            Some(tcs)
+        };
         let mut next_body_for_step = next_body;
         rewrite_iter_results_in_stmts(&mut next_body_for_step);
         let wrapper_stmts = build_async_step_driver_direct(
@@ -1546,11 +1558,15 @@ fn build_async_step_driver_direct(
     next_param_id: LocalId,
     next_captures: Vec<LocalId>,
     next_mutable_captures: Vec<LocalId>,
-    throw_closure_expr: Expr,
+    throw_closure_expr: Option<Expr>,
     next_local_id: &mut u32,
     next_func_id: &mut u32,
 ) -> Vec<Stmt> {
-    let throw_id = alloc_local(next_local_id);
+    // When `throw_closure_expr` is None, the function had no awaiting
+    // try/catch so the throw path is a plain rethrow — we inline it
+    // directly into the step body and skip the per-invocation
+    // `__async_throw` allocation entirely.
+    let throw_id = throw_closure_expr.as_ref().map(|_| alloc_local(next_local_id));
     let step_id = alloc_local(next_local_id);
 
     // Step closure params + locals
@@ -1609,7 +1625,10 @@ fn build_async_step_driver_direct(
     // step body
     //   try {
     //     "__step_done": do {
-    //        if (isError) __throw(value); else { let __val = value; <next_body inlined> }
+    //        if (isError) {
+    //            // when no user catch: throw value; (caught by outer try)
+    //            // when user catch: __throw(value);
+    //        } else { let __val = value; <next_body inlined> }
     //     } while (false);
     //   } catch (e) {
     //     if (isError) return Promise.reject(e);
@@ -1617,13 +1636,23 @@ fn build_async_step_driver_direct(
     //   }
     //   if (js_iter_result_get_done()) return Promise.resolve(js_iter_result_get_value());
     //   return AsyncStepChain(js_iter_result_get_value(), __step);
-    let dispatch_inner = Stmt::If {
-        condition: Expr::LocalGet(is_error_param_id),
-        then_branch: vec![Stmt::Expr(Expr::Call {
-            callee: Box::new(Expr::LocalGet(throw_id)),
+    let throw_arm: Vec<Stmt> = if let Some(tid) = throw_id {
+        vec![Stmt::Expr(Expr::Call {
+            callee: Box::new(Expr::LocalGet(tid)),
             args: vec![Expr::LocalGet(value_param_id)],
             type_args: vec![],
-        })],
+        })]
+    } else {
+        // No __async_throw closure was constructed (callee passed None).
+        // The throw body would have been a plain rethrow, so inline it:
+        // the outer try/catch re-enters __step(e, true) which then hits
+        // this same path with isError=true a second time, and the catch
+        // arm returns Promise.reject (the `if (isError)` short-circuit).
+        vec![Stmt::Throw(Expr::LocalGet(value_param_id))]
+    };
+    let dispatch_inner = Stmt::If {
+        condition: Expr::LocalGet(is_error_param_id),
+        then_branch: throw_arm,
         else_branch: Some(else_branch),
     };
 
@@ -1681,9 +1710,11 @@ fn build_async_step_driver_direct(
         })),
     ];
 
-    // step closure captures = next_captures + [throw_id, step_id]
+    // step closure captures = next_captures + [throw_id?, step_id]
     let mut step_captures: Vec<LocalId> = next_captures;
-    step_captures.push(throw_id);
+    if let Some(tid) = throw_id {
+        step_captures.push(tid);
+    }
     step_captures.push(step_id);
     step_captures.sort();
     step_captures.dedup();
@@ -1720,18 +1751,21 @@ fn build_async_step_driver_direct(
     };
 
     // Outer wrapper:
-    //   let __throw = <throw_closure>;
+    //   let __throw = <throw_closure>;   // omitted when throw_id is None
     //   let __step;
     //   __step = <step_closure>;
     //   return __step(undefined, false);
-    vec![
-        Stmt::Let {
-            id: throw_id,
+    let mut wrapper: Vec<Stmt> = Vec::with_capacity(4);
+    if let (Some(tid), Some(tc_expr)) = (throw_id, throw_closure_expr) {
+        wrapper.push(Stmt::Let {
+            id: tid,
             name: "__async_throw".to_string(),
             ty: any_ty.clone(),
             mutable: false,
-            init: Some(throw_closure_expr),
-        },
+            init: Some(tc_expr),
+        });
+    }
+    wrapper.extend([
         Stmt::Let {
             id: step_id,
             name: "__async_step".to_string(),
@@ -1745,7 +1779,8 @@ fn build_async_step_driver_direct(
             args: vec![Expr::Undefined, Expr::Bool(false)],
             type_args: vec![],
         })),
-    ]
+    ]);
+    wrapper
 }
 
 struct State {
