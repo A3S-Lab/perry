@@ -350,20 +350,35 @@ jobs:
             test_issue_610_foreach \
             test_issue_610_smoke \
             test_issue_640_navstack_textfield \
+            test_parity_assert \
             test_parity_async_hooks \
             test_parity_buffer \
             test_parity_child_process \
+            test_parity_cluster \
+            test_parity_console \
             test_parity_crypto \
+            test_parity_dgram \
+            test_parity_diagnostics_channel \
+            test_parity_dns \
+            test_parity_dns_promises \
             test_parity_events \
             test_parity_fs \
+            test_parity_fs_promises \
             test_parity_http \
             test_parity_http2 \
             test_parity_https \
+            test_parity_module \
             test_parity_net \
             test_parity_path \
+            test_parity_perf_hooks \
             test_parity_process \
+            test_parity_querystring \
             test_parity_readline \
+            test_parity_readline_promises \
             test_parity_stream \
+            test_parity_stream_consumers \
+            test_parity_stream_promises \
+            test_parity_stream_web \
             test_parity_tls \
             test_parity_url \
             test_parity_util \
