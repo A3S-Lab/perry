@@ -1546,6 +1546,26 @@ unsafe fn is_object_pointer(ptr: *const u8) -> bool {
 
 #[inline]
 unsafe fn write_number(buf: &mut String, value: f64) {
+    // Date — JSON.stringify must call toJSON/toISOString per ECMA-262
+    // 24.5.4.1. Perry stores Date as a raw f64 timestamp; the
+    // `DATE_REGISTRY` HashSet records which finite numbers came from a
+    // `new Date(...)`. Every numeric write that's actually a Date routes
+    // here as the last-resort fallback, so centralizing the check at
+    // this single funnel covers all template / fast-path / replacer
+    // sites without per-call-site changes. Guarded on "finite integer"
+    // first since the lookup involves a thread-local HashSet — only
+    // millisecond-shaped values can be Dates.
+    if value.is_finite() && value.fract() == 0.0 && value >= 0.0 && value < 1e16 {
+        if crate::date::is_registered_date_bits(value.to_bits()) {
+            let s_ptr = crate::date::js_date_to_iso_string(value);
+            if let Some(s) = str_from_header(s_ptr) {
+                write_escaped_string(buf, s);
+            } else {
+                buf.push_str("null");
+            }
+            return;
+        }
+    }
     if value.is_nan() || value.is_infinite() {
         buf.push_str("null");
     } else if value.fract() == 0.0 && value.abs() < (i64::MAX as f64) {
@@ -2117,7 +2137,8 @@ unsafe fn stringify_object_inner(ptr: *const u8, buf: &mut String, depth: u32) {
             // Nested object/array — recurse with depth
             stringify_value_depth(field_val, TYPE_UNKNOWN, buf, depth + 1);
         } else {
-            // Number (most common for data objects)
+            // Number (most common for data objects) — or Date, handled
+            // centrally by `write_number` via DATE_REGISTRY lookup.
             write_number(buf, field_val);
         }
     }
@@ -2504,6 +2525,8 @@ unsafe fn stringify_array_depth(ptr: *const u8, buf: &mut String, depth: u32) {
                 }
             }
         } else {
+            // Number — or Date, handled centrally by `write_number`
+            // via DATE_REGISTRY lookup.
             write_number(buf, elem);
         }
     }
