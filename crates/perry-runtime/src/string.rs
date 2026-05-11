@@ -578,10 +578,8 @@ fn is_ascii_string(s: *const StringHeader) -> bool {
 pub extern "C" fn js_string_concat_box(l_value: f64, r_value: f64) -> f64 {
     let mut scratch_l = [0u8; crate::value::SHORT_STRING_MAX_LEN];
     let mut scratch_r = [0u8; crate::value::SHORT_STRING_MAX_LEN];
-    let l = str_bytes_from_jsvalue(l_value, &mut scratch_l)
-        .unwrap_or((std::ptr::null(), 0));
-    let r = str_bytes_from_jsvalue(r_value, &mut scratch_r)
-        .unwrap_or((std::ptr::null(), 0));
+    let l = str_bytes_from_jsvalue(l_value, &mut scratch_l).unwrap_or((std::ptr::null(), 0));
+    let r = str_bytes_from_jsvalue(r_value, &mut scratch_r).unwrap_or((std::ptr::null(), 0));
     let total_blen = l.1 + r.1;
 
     // SSO fast path — assemble the result inline when it fits (≤ 5
@@ -864,10 +862,7 @@ pub extern "C" fn js_string_concat_value(
 /// Returns a fresh shared (refcount=0) StringHeader. Callers NaN-box
 /// with STRING_TAG via the standard `nanbox_string_inline` helper.
 #[no_mangle]
-pub extern "C" fn js_string_concat_chain(
-    parts: *const f64,
-    n: i32,
-) -> *mut StringHeader {
+pub extern "C" fn js_string_concat_chain(parts: *const f64, n: i32) -> *mut StringHeader {
     // Cap the per-call part count. The codegen-side fold limits chains
     // to 32; in practice user code rarely exceeds 8-10 (CSV row, log
     // line, prompt template). The cap keeps the stack arrays bounded so
@@ -912,9 +907,8 @@ pub extern "C" fn js_string_concat_chain(
                 let u16len = unsafe { (*ptr).utf16_len };
                 let flags = unsafe { (*ptr).flags };
                 if blen > 0 {
-                    piece_ptrs[i] = unsafe {
-                        (ptr as *const u8).add(std::mem::size_of::<StringHeader>())
-                    };
+                    piece_ptrs[i] =
+                        unsafe { (ptr as *const u8).add(std::mem::size_of::<StringHeader>()) };
                     piece_lens[i] = blen;
                     piece_u16[i] = u16len;
                     piece_flags |= flags;
@@ -934,9 +928,8 @@ pub extern "C" fn js_string_concat_chain(
                 let u16len = unsafe { (*s).utf16_len };
                 let flags = unsafe { (*s).flags };
                 if blen > 0 {
-                    piece_ptrs[i] = unsafe {
-                        (s as *const u8).add(std::mem::size_of::<StringHeader>())
-                    };
+                    piece_ptrs[i] =
+                        unsafe { (s as *const u8).add(std::mem::size_of::<StringHeader>()) };
                     piece_lens[i] = blen;
                     piece_u16[i] = u16len;
                     piece_flags |= flags;
@@ -985,9 +978,8 @@ pub extern "C" fn js_string_concat_chain(
             let u16len = unsafe { (*s).utf16_len };
             let flags = unsafe { (*s).flags };
             if blen > 0 {
-                piece_ptrs[i] = unsafe {
-                    (s as *const u8).add(std::mem::size_of::<StringHeader>())
-                };
+                piece_ptrs[i] =
+                    unsafe { (s as *const u8).add(std::mem::size_of::<StringHeader>()) };
                 piece_lens[i] = blen;
                 piece_u16[i] = u16len;
                 piece_flags |= flags;

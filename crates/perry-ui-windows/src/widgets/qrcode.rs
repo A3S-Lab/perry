@@ -17,9 +17,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 #[cfg(target_os = "windows")]
-use windows::Win32::Foundation::*;
-#[cfg(target_os = "windows")]
 use windows::Win32::Foundation::COLORREF;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::*;
 #[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, InvalidateRect, PAINTSTRUCT,

@@ -224,7 +224,11 @@ pub fn create(url_ptr: *const u8, width: f64, height: f64, ephemeral_hint: f64) 
                     on_error: 0.0,
                     allowed_domains: Vec::new(),
                     user_data_dir: Some(user_data_dir.clone()),
-                    pending_url: if url.is_empty() { None } else { Some(url.clone()) },
+                    pending_url: if url.is_empty() {
+                        None
+                    } else {
+                        Some(url.clone())
+                    },
                 },
             );
         });
@@ -293,7 +297,9 @@ fn init_webview2_sync(handle: i64, user_data_dir: &PathBuf) -> windows::core::Re
     let env_handler = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(
         move |error_code, environment| {
             if error_code.is_err() {
-                env_done_clone.set(Some(Err(windows::core::Error::from(error_code.unwrap_err()))));
+                env_done_clone.set(Some(Err(windows::core::Error::from(
+                    error_code.unwrap_err(),
+                ))));
             } else if let Some(env) = environment {
                 env_done_clone.set(Some(Ok(env)));
             } else {
@@ -329,7 +335,9 @@ fn init_webview2_sync(handle: i64, user_data_dir: &PathBuf) -> windows::core::Re
     let ctrl_handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(
         move |error_code, controller| {
             if error_code.is_err() {
-                ctrl_done_clone.set(Some(Err(windows::core::Error::from(error_code.unwrap_err()))));
+                ctrl_done_clone.set(Some(Err(windows::core::Error::from(
+                    error_code.unwrap_err(),
+                ))));
             } else if let Some(c) = controller {
                 ctrl_done_clone.set(Some(Ok(c)));
             } else {
@@ -378,136 +386,134 @@ fn install_navigation_handlers(handle: i64, webview: &ICoreWebView2) {
 
     // NavigationStarting — sync intercept. Allows the user's
     // onShouldNavigate closure to cancel via `args.put_Cancel(true)`.
-    let nav_starting = NavigationStartingEventHandler::create(Box::new(
-        move |_sender, args| {
-            let args = match args {
-                Some(a) => a,
-                None => return Ok(()),
-            };
+    let nav_starting = NavigationStartingEventHandler::create(Box::new(move |_sender, args| {
+        let args = match args {
+            Some(a) => a,
+            None => return Ok(()),
+        };
+        let url = unsafe {
+            let mut uri = PWSTR::null();
+            let _ = args.Uri(&mut uri);
+            let s = pcwstr_to_string(uri);
+            if !uri.0.is_null() {
+                CoTaskMemFree(Some(uri.0 as *const _));
+            }
+            s
+        };
+
+        let (on_should, allowed) = WEBVIEW_STATES.with(|s| {
+            s.borrow()
+                .get(&handle)
+                .map(|st| (st.on_should_navigate, st.allowed_domains.clone()))
+                .unwrap_or((0.0, Vec::new()))
+        });
+
+        // Allowlist gate first.
+        if !allowed.is_empty() {
+            let host = host_of_url_string(&url);
+            if !host_in_allowlist(&host, &allowed) {
+                unsafe {
+                    let _ = args.SetCancel(true);
+                }
+                return Ok(());
+            }
+        }
+
+        if on_should != 0.0 {
+            let url_nb = nanbox_str(&url);
+            let closure_ptr = unsafe { js_nanbox_get_pointer(on_should) } as *const u8;
+            let result_cell = Cell::new(f64::from_bits(0x7FFC_0000_0000_0001));
+            if !closure_ptr.is_null() {
+                let result_cell_ref = &result_cell;
+                catch_panic(
+                    "webview onShouldNavigate",
+                    std::panic::AssertUnwindSafe(|| {
+                        let r = unsafe { js_closure_call1(closure_ptr, url_nb) };
+                        result_cell_ref.set(r);
+                    }),
+                );
+            }
+            let result = result_cell.get();
+            let bits = result.to_bits();
+            let is_undefined = bits == 0x7FFC_0000_0000_0001;
+            let allow = is_undefined || unsafe { js_is_truthy(result) != 0 };
+            if !allow {
+                unsafe {
+                    let _ = args.SetCancel(true);
+                }
+            }
+        }
+
+        Ok(())
+    }));
+
+    // NavigationCompleted — onLoaded on success, onError on failure.
+    let nav_completed = NavigationCompletedEventHandler::create(Box::new(move |sender, args| {
+        let webview = match sender {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let args = match args {
+            Some(a) => a,
+            None => return Ok(()),
+        };
+        let success = unsafe {
+            let mut s: BOOL = BOOL(0);
+            let _ = args.IsSuccess(&mut s);
+            s.as_bool()
+        };
+        if success {
             let url = unsafe {
                 let mut uri = PWSTR::null();
-                let _ = args.Uri(&mut uri);
+                let _ = webview.Source(&mut uri);
                 let s = pcwstr_to_string(uri);
                 if !uri.0.is_null() {
                     CoTaskMemFree(Some(uri.0 as *const _));
                 }
                 s
             };
-
-            let (on_should, allowed) = WEBVIEW_STATES.with(|s| {
+            let on_loaded = WEBVIEW_STATES.with(|s| {
                 s.borrow()
                     .get(&handle)
-                    .map(|st| (st.on_should_navigate, st.allowed_domains.clone()))
-                    .unwrap_or((0.0, Vec::new()))
+                    .map(|st| st.on_loaded)
+                    .unwrap_or(0.0)
             });
-
-            // Allowlist gate first.
-            if !allowed.is_empty() {
-                let host = host_of_url_string(&url);
-                if !host_in_allowlist(&host, &allowed) {
-                    unsafe {
-                        let _ = args.SetCancel(true);
-                    }
-                    return Ok(());
-                }
-            }
-
-            if on_should != 0.0 {
+            if on_loaded != 0.0 {
                 let url_nb = nanbox_str(&url);
-                let closure_ptr = unsafe { js_nanbox_get_pointer(on_should) } as *const u8;
-                let result_cell = Cell::new(f64::from_bits(0x7FFC_0000_0000_0001));
+                let closure_ptr = unsafe { js_nanbox_get_pointer(on_loaded) } as *const u8;
                 if !closure_ptr.is_null() {
-                    let result_cell_ref = &result_cell;
                     catch_panic(
-                        "webview onShouldNavigate",
-                        std::panic::AssertUnwindSafe(|| {
-                            let r = unsafe { js_closure_call1(closure_ptr, url_nb) };
-                            result_cell_ref.set(r);
+                        "webview onLoaded",
+                        std::panic::AssertUnwindSafe(|| unsafe {
+                            js_closure_call1(closure_ptr, url_nb);
                         }),
                     );
                 }
-                let result = result_cell.get();
-                let bits = result.to_bits();
-                let is_undefined = bits == 0x7FFC_0000_0000_0001;
-                let allow = is_undefined || unsafe { js_is_truthy(result) != 0 };
-                if !allow {
-                    unsafe {
-                        let _ = args.SetCancel(true);
-                    }
+            }
+        } else {
+            // Pull the error code.
+            let status = unsafe {
+                let mut st = COREWEBVIEW2_WEB_ERROR_STATUS::default();
+                let _ = args.WebErrorStatus(&mut st);
+                st.0 as i64
+            };
+            let on_error = WEBVIEW_STATES
+                .with(|s| s.borrow().get(&handle).map(|st| st.on_error).unwrap_or(0.0));
+            if on_error != 0.0 {
+                let msg_nb = nanbox_str(&format!("WebView2 error status {}", status));
+                let closure_ptr = unsafe { js_nanbox_get_pointer(on_error) } as *const u8;
+                if !closure_ptr.is_null() {
+                    catch_panic(
+                        "webview onError",
+                        std::panic::AssertUnwindSafe(|| unsafe {
+                            js_closure_call2(closure_ptr, status as f64, msg_nb);
+                        }),
+                    );
                 }
             }
-
-            Ok(())
-        },
-    ));
-
-    // NavigationCompleted — onLoaded on success, onError on failure.
-    let nav_completed = NavigationCompletedEventHandler::create(Box::new(
-        move |sender, args| {
-            let webview = match sender {
-                Some(s) => s,
-                None => return Ok(()),
-            };
-            let args = match args {
-                Some(a) => a,
-                None => return Ok(()),
-            };
-            let success = unsafe {
-                let mut s: BOOL = BOOL(0);
-                let _ = args.IsSuccess(&mut s);
-                s.as_bool()
-            };
-            if success {
-                let url = unsafe {
-                    let mut uri = PWSTR::null();
-                    let _ = webview.Source(&mut uri);
-                    let s = pcwstr_to_string(uri);
-                    if !uri.0.is_null() {
-                        CoTaskMemFree(Some(uri.0 as *const _));
-                    }
-                    s
-                };
-                let on_loaded = WEBVIEW_STATES.with(|s| {
-                    s.borrow().get(&handle).map(|st| st.on_loaded).unwrap_or(0.0)
-                });
-                if on_loaded != 0.0 {
-                    let url_nb = nanbox_str(&url);
-                    let closure_ptr = unsafe { js_nanbox_get_pointer(on_loaded) } as *const u8;
-                    if !closure_ptr.is_null() {
-                        catch_panic(
-                            "webview onLoaded",
-                            std::panic::AssertUnwindSafe(|| unsafe {
-                                js_closure_call1(closure_ptr, url_nb);
-                            }),
-                        );
-                    }
-                }
-            } else {
-                // Pull the error code.
-                let status = unsafe {
-                    let mut st = COREWEBVIEW2_WEB_ERROR_STATUS::default();
-                    let _ = args.WebErrorStatus(&mut st);
-                    st.0 as i64
-                };
-                let on_error = WEBVIEW_STATES.with(|s| {
-                    s.borrow().get(&handle).map(|st| st.on_error).unwrap_or(0.0)
-                });
-                if on_error != 0.0 {
-                    let msg_nb = nanbox_str(&format!("WebView2 error status {}", status));
-                    let closure_ptr = unsafe { js_nanbox_get_pointer(on_error) } as *const u8;
-                    if !closure_ptr.is_null() {
-                        catch_panic(
-                            "webview onError",
-                            std::panic::AssertUnwindSafe(|| unsafe {
-                                js_closure_call2(closure_ptr, status as f64, msg_nb);
-                            }),
-                        );
-                    }
-                }
-            }
-            Ok(())
-        },
-    ));
+        }
+        Ok(())
+    }));
 
     let mut token = EventRegistrationToken::default();
     unsafe {
@@ -688,42 +694,44 @@ pub fn evaluate_js(handle: i64, js_ptr: *const u8, callback: f64) {
     let js = str_from_header(js_ptr).to_string();
     #[cfg(target_os = "windows")]
     {
-        let webview = WEBVIEW_STATES.with(|s| s.borrow().get(&handle).and_then(|st| st.webview.clone()));
+        let webview =
+            WEBVIEW_STATES.with(|s| s.borrow().get(&handle).and_then(|st| st.webview.clone()));
         let webview = match webview {
             Some(w) => w,
             None => return,
         };
 
-        let cb_handler = ExecuteScriptCompletedHandler::create(Box::new(move |error_code, result_json| {
-            let s = if error_code.is_err() {
-                String::new()
-            } else {
-                // result_json is a JSON-encoded string. For simple results
-                // (e.g. document.cookie returns a JS string), the result is
-                // a JSON-quoted string. Strip outer quotes for ergonomics
-                // when it's a plain string; otherwise pass through.
-                let raw = result_json;
-                if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-                    let inner = &raw[1..raw.len() - 1];
-                    inner.replace("\\\"", "\"").replace("\\\\", "\\")
-                } else if raw == "null" {
+        let cb_handler =
+            ExecuteScriptCompletedHandler::create(Box::new(move |error_code, result_json| {
+                let s = if error_code.is_err() {
                     String::new()
                 } else {
-                    raw
+                    // result_json is a JSON-encoded string. For simple results
+                    // (e.g. document.cookie returns a JS string), the result is
+                    // a JSON-quoted string. Strip outer quotes for ergonomics
+                    // when it's a plain string; otherwise pass through.
+                    let raw = result_json;
+                    if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+                        let inner = &raw[1..raw.len() - 1];
+                        inner.replace("\\\"", "\"").replace("\\\\", "\\")
+                    } else if raw == "null" {
+                        String::new()
+                    } else {
+                        raw
+                    }
+                };
+                let nb = nanbox_str(&s);
+                let closure_ptr = unsafe { js_nanbox_get_pointer(callback) } as *const u8;
+                if !closure_ptr.is_null() {
+                    catch_panic(
+                        "webview evaluateJs callback",
+                        std::panic::AssertUnwindSafe(|| unsafe {
+                            js_closure_call1(closure_ptr, nb);
+                        }),
+                    );
                 }
-            };
-            let nb = nanbox_str(&s);
-            let closure_ptr = unsafe { js_nanbox_get_pointer(callback) } as *const u8;
-            if !closure_ptr.is_null() {
-                catch_panic(
-                    "webview evaluateJs callback",
-                    std::panic::AssertUnwindSafe(|| unsafe {
-                        js_closure_call1(closure_ptr, nb);
-                    }),
-                );
-            }
-            Ok(())
-        }));
+                Ok(())
+            }));
 
         let js_wide = to_wide(&js);
         unsafe {
@@ -906,9 +914,8 @@ unsafe extern "system" fn size_subclass_proc(
     if msg == WM_SIZE {
         let handle = HWND_TO_HANDLE.with(|m| m.borrow().get(&(hwnd.0 as isize)).copied());
         if let Some(handle) = handle {
-            let controller = WEBVIEW_STATES.with(|s| {
-                s.borrow().get(&handle).and_then(|st| st.controller.clone())
-            });
+            let controller = WEBVIEW_STATES
+                .with(|s| s.borrow().get(&handle).and_then(|st| st.controller.clone()));
             if let Some(controller) = controller {
                 let mut rect = RECT::default();
                 let _ = GetClientRect(hwnd, &mut rect);

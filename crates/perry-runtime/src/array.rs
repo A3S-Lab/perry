@@ -305,7 +305,9 @@ unsafe fn js_array_from_arraylike(obj: *const crate::object::ObjectHeader) -> *m
 /// `for (const c of "hello")` semantics). Surrogate pairs in UTF-16 source
 /// space materialize as a single codepoint per ECMA-262 §22.1.5 String
 /// Iterator Records, so `[..."🎉"]` yields a 1-element array (not 2).
-unsafe fn js_array_from_string_codepoints(s: *const crate::string::StringHeader) -> *mut ArrayHeader {
+unsafe fn js_array_from_string_codepoints(
+    s: *const crate::string::StringHeader,
+) -> *mut ArrayHeader {
     if s.is_null() {
         return js_array_alloc(0);
     }
@@ -790,11 +792,7 @@ pub extern "C" fn js_array_set_string_key(
     // Non-numeric string key — fall through to object-property set on the
     // array's expando map. Arrays with named properties are rare but spec-
     // legal.
-    crate::object::js_object_set_field_by_name(
-        arr as *mut crate::object::ObjectHeader,
-        key,
-        value,
-    );
+    crate::object::js_object_set_field_by_name(arr as *mut crate::object::ObjectHeader, key, value);
     arr
 }
 
@@ -830,8 +828,8 @@ pub extern "C" fn js_array_set_index_or_string(
         // SHORT_STRING_TAG (SSO). Materialize as a real StringHeader
         // via `js_get_string_pointer_unified` so `js_array_set_string_key`
         // can read the bytes through the standard layout.
-        let str_ptr = crate::value::js_get_string_pointer_unified(idx)
-            as *const crate::StringHeader;
+        let str_ptr =
+            crate::value::js_get_string_pointer_unified(idx) as *const crate::StringHeader;
         return js_array_set_string_key(arr, str_ptr, value);
     }
     // Treat as numeric (covers Int32 / plain f64 / other tags).
@@ -1502,8 +1500,7 @@ pub extern "C" fn js_array_concat(
     }
     // Uint8Array (legacy Buffer-backed) source — materialize byte values.
     if crate::buffer::is_registered_buffer(src as usize) {
-        let arr =
-            crate::buffer::buffer_to_array(src as *const crate::buffer::BufferHeader);
+        let arr = crate::buffer::buffer_to_array(src as *const crate::buffer::BufferHeader);
         return js_array_concat(dest, arr);
     }
     unsafe {
@@ -1915,9 +1912,7 @@ pub extern "C" fn js_array_clone(src: *const ArrayHeader) -> *mut ArrayHeader {
         }
         // Uint8Array (legacy Buffer-backed): same materialization story.
         if crate::buffer::is_registered_buffer(raw_addr) {
-            return crate::buffer::buffer_to_array(
-                raw_addr as *const crate::buffer::BufferHeader,
-            );
+            return crate::buffer::buffer_to_array(raw_addr as *const crate::buffer::BufferHeader);
         }
     }
     let src = clean_arr_ptr(src);
@@ -2163,7 +2158,8 @@ pub extern "C" fn js_array_sort_with_comparator(
                     let key = *elements_ptr.add(i);
                     let mut j = i as isize - 1;
                     while j >= run_start as isize {
-                        let cmp = cmp_with(comparator, direct_call, *elements_ptr.add(j as usize), key);
+                        let cmp =
+                            cmp_with(comparator, direct_call, *elements_ptr.add(j as usize), key);
                         if cmp > 0.0 {
                             ptr::write(
                                 elements_ptr.add((j + 1) as usize),

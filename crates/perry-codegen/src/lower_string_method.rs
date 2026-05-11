@@ -159,13 +159,12 @@ pub(crate) fn lower_string_method(
         // and for the common ASCII/non-Turkic case the output matches Node
         // byte-for-byte. Closes #592 — Effect's `aliasOrValue` (Cron.ts:846)
         // is the load-bearing user-impact site.
-        "toLowerCase" | "toUpperCase" | "toLocaleLowerCase" | "toLocaleUpperCase"
-        | "trim" | "trimStart" | "trimEnd" => {
+        "toLowerCase" | "toUpperCase" | "toLocaleLowerCase" | "toLocaleUpperCase" | "trim"
+        | "trimStart" | "trimEnd" => {
             // toLocaleLowerCase / toLocaleUpperCase optionally take a
             // `locales` arg per ECMAScript spec; we evaluate it for side
             // effects but ignore the value (no Intl support).
-            let allows_locale_arg =
-                matches!(property, "toLocaleLowerCase" | "toLocaleUpperCase");
+            let allows_locale_arg = matches!(property, "toLocaleLowerCase" | "toLocaleUpperCase");
             if !args.is_empty() && !allows_locale_arg {
                 bail!(
                     "perry-codegen: String.{} takes no args, got {}",
@@ -962,10 +961,7 @@ pub(crate) fn flatten_string_add_chain<'a>(
 /// One per-function buffer is shared across all chain call sites — fine
 /// because each chain call writes its parts and immediately calls into
 /// the runtime helper before any other call site can clobber the slots.
-pub(crate) fn lower_string_concat_chain(
-    ctx: &mut FnCtx<'_>,
-    parts: &[&Expr],
-) -> Result<String> {
+pub(crate) fn lower_string_concat_chain(ctx: &mut FnCtx<'_>, parts: &[&Expr]) -> Result<String> {
     debug_assert!(parts.len() >= 2);
     debug_assert!(parts.len() <= CONCAT_CHAIN_MAX_PARTS);
 
@@ -978,9 +974,7 @@ pub(crate) fn lower_string_concat_chain(
 
     let n = lowered.len();
     // Hoist the buffer to the function entry block. Issue #167.
-    let buf_reg = ctx
-        .func
-        .alloca_entry_array(DOUBLE, CONCAT_CHAIN_MAX_PARTS);
+    let buf_reg = ctx.func.alloca_entry_array(DOUBLE, CONCAT_CHAIN_MAX_PARTS);
     let blk = ctx.block();
     for (i, val) in lowered.iter().enumerate() {
         let slot = blk.gep(DOUBLE, &buf_reg, &[(I64, &format!("{}", i))]);

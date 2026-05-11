@@ -915,8 +915,7 @@ pub(crate) fn collect_assigned_locals_expr(expr: &Expr, assigned: &mut Vec<Local
             collect_assigned_locals_expr(name, assigned);
             collect_assigned_locals_expr(value, assigned);
         }
-        Expr::UrlSearchParamsToString(params)
-        | Expr::UrlSearchParamsEntries(params) => {
+        Expr::UrlSearchParamsToString(params) | Expr::UrlSearchParamsEntries(params) => {
             collect_assigned_locals_expr(params, assigned);
         }
         Expr::GlobalSet(_, value) => {

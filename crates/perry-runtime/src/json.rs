@@ -1535,10 +1535,7 @@ unsafe fn is_object_pointer(ptr: *const u8) -> bool {
         // to 10M which still catches a corrupted ObjectHeader (first-
         // fields bytes reading as 0x4059... — orders of magnitude
         // above 10M) but allows realistic object sizes through.
-        keys_len <= keys_cap
-            && keys_len > 0
-            && keys_cap < 10_000_000
-            && field_count < 10_000_000
+        keys_len <= keys_cap && keys_len > 0 && keys_cap < 10_000_000 && field_count < 10_000_000
     } else {
         false
     }

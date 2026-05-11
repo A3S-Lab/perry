@@ -313,9 +313,7 @@ pub unsafe extern "C" fn js_sqlite_stmt_get(
                                     row_arr =
                                         js_array_push(row_arr, sqlite_value_to_jsvalue(&value));
                                 }
-                                return f64::from_bits(
-                                    JsValue::from_object_ptr(row_arr).bits(),
-                                );
+                                return f64::from_bits(JsValue::from_object_ptr(row_arr).bits());
                             }
                             let (packed_keys, shape_id) = build_object_shape(&column_refs);
                             let obj = js_object_alloc_with_shape(

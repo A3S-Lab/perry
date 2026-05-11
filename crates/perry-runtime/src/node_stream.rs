@@ -125,12 +125,8 @@ fn build_object(methods: &[(&str, StubFn)], shape_id: u32) -> *mut ObjectHeader 
         packed.push(0);
     }
     let field_count = methods.len() as u32;
-    let obj = js_object_alloc_with_shape(
-        shape_id,
-        field_count,
-        packed.as_ptr(),
-        packed.len() as u32,
-    );
+    let obj =
+        js_object_alloc_with_shape(shape_id, field_count, packed.as_ptr(), packed.len() as u32);
 
     // NaN-box the object pointer — we'll capture it (as raw bits) in each
     // closure's slot 0 so the stub `this_value` helper can reconstruct

@@ -257,6 +257,10 @@ mod tests {
         };
         let bytes = diff(&g);
         let s = String::from_utf8_lossy(&bytes);
-        assert!(s.contains(";38;2;255;136;0"), "missing truecolor fg: {:?}", s);
+        assert!(
+            s.contains(";38;2;255;136;0"),
+            "missing truecolor fg: {:?}",
+            s
+        );
     }
 }

@@ -1562,7 +1562,11 @@ pub fn declare_stdlib_ffi(module: &mut LlModule) {
     module.declare_function("js_node_http_res_headers_sent", I32, &[I64]);
     module.declare_function("js_node_http_res_writable_ended", I32, &[I64]);
     module.declare_function("js_node_http_res_writable_finished", I32, &[I64]);
-    module.declare_function("js_node_http_res_write_head", VOID, &[I64, DOUBLE, I64, I64]);
+    module.declare_function(
+        "js_node_http_res_write_head",
+        VOID,
+        &[I64, DOUBLE, I64, I64],
+    );
     module.declare_function("js_node_http_res_write", I32, &[I64, DOUBLE]);
     module.declare_function("js_node_http_res_end", VOID, &[I64, DOUBLE]);
     module.declare_function("js_node_http_res_flush_headers", VOID, &[I64]);

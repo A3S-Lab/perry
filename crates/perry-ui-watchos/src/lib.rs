@@ -1442,9 +1442,9 @@ pub extern "C" fn perry_media_destroy(handle: f64) {
     media_playback::destroy(handle);
 }
 
+pub mod deeplinks_stub;
 pub mod issue_552_stub;
 pub mod network_stub;
-pub mod deeplinks_stub;
 
 // =============================================================================
 // Issue #553 — BottomNavigation, pull-to-refresh on LazyVStack, onScrollEnd,
@@ -1527,7 +1527,14 @@ pub extern "C" fn perry_background_cancel(identifier_ptr: i64) {
 //     still compiles and runs but the widget is invisible. Real backend
 //     deferred to a later phase per #658's roadmap.
 #[no_mangle]
-pub extern "C" fn perry_ui_webview_create(_url_ptr: i64, _width: f64, _height: f64, _ephemeral: f64) -> i64 { 0 }
+pub extern "C" fn perry_ui_webview_create(
+    _url_ptr: i64,
+    _width: f64,
+    _height: f64,
+    _ephemeral: f64,
+) -> i64 {
+    0
+}
 #[no_mangle]
 pub extern "C" fn perry_ui_webview_set_user_agent(_handle: i64, _ua_ptr: i64) {}
 #[no_mangle]
@@ -1549,7 +1556,9 @@ pub extern "C" fn perry_ui_webview_go_back(_handle: i64) {}
 #[no_mangle]
 pub extern "C" fn perry_ui_webview_go_forward(_handle: i64) {}
 #[no_mangle]
-pub extern "C" fn perry_ui_webview_can_go_back(_handle: i64) -> i64 { 0 }
+pub extern "C" fn perry_ui_webview_can_go_back(_handle: i64) -> i64 {
+    0
+}
 #[no_mangle]
 pub extern "C" fn perry_ui_webview_evaluate_js(_handle: i64, _js_ptr: i64, _callback: f64) {}
 #[no_mangle]

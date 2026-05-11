@@ -1,11 +1,11 @@
 pub mod app;
 pub mod audio;
+pub mod deeplinks_stub;
 #[cfg(target_os = "windows")]
 pub mod dpi_compat;
 pub mod issue_552_stub;
 pub mod media_playback;
 pub mod network_stub;
-pub mod deeplinks_stub;
 
 // Install a vectored exception handler that prints crash info to stderr.
 #[cfg(target_os = "windows")]
@@ -1206,7 +1206,12 @@ pub extern "C" fn perry_ui_map_view_set_map_type(h: i64, s: i64) {
 
 // Issue #477 — Command palette stubs.
 #[no_mangle]
-pub extern "C" fn perry_ui_command_palette_register(id: i64, label: i64, subtitle: i64, on_run: f64) {
+pub extern "C" fn perry_ui_command_palette_register(
+    id: i64,
+    label: i64,
+    subtitle: i64,
+    on_run: f64,
+) {
     widgets::command_palette::register(
         id as *const u8,
         label as *const u8,
@@ -2324,7 +2329,12 @@ pub extern "C" fn perry_ui_image_gallery_set_index(handle: i64, index: i64) {
 //     pumps the message loop synchronously so create() blocks until the
 //     widget is ready. See widgets::webview for the full impl.
 #[no_mangle]
-pub extern "C" fn perry_ui_webview_create(url_ptr: i64, width: f64, height: f64, ephemeral: f64) -> i64 {
+pub extern "C" fn perry_ui_webview_create(
+    url_ptr: i64,
+    width: f64,
+    height: f64,
+    ephemeral: f64,
+) -> i64 {
     widgets::webview::create(url_ptr as *const u8, width, height, ephemeral)
 }
 #[no_mangle]

@@ -118,8 +118,7 @@ pub(super) fn lower_arrow(ctx: &mut LoweringContext, arrow: &ast::ArrowExpr) -> 
     // Hoist function declarations in block body (JS hoisting semantics).
     // Track the hoisted-id set so we can emit `Stmt::PreallocateBoxes`
     // for sibling/forward captures (issue #633).
-    let mut hoisted_id_set: std::collections::HashSet<LocalId> =
-        std::collections::HashSet::new();
+    let mut hoisted_id_set: std::collections::HashSet<LocalId> = std::collections::HashSet::new();
     if let ast::BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
         for stmt in &block.stmts {
             if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {
@@ -314,8 +313,7 @@ pub(super) fn lower_fn_expr(ctx: &mut LoweringContext, fn_expr: &ast::FnExpr) ->
     // Hoist function declarations: pre-register all function declarations in the body
     // so they can be referenced before their lexical position (JS hoisting semantics).
     // Track ids for the prealloc-box analysis (issue #633).
-    let mut hoisted_id_set: std::collections::HashSet<LocalId> =
-        std::collections::HashSet::new();
+    let mut hoisted_id_set: std::collections::HashSet<LocalId> = std::collections::HashSet::new();
     if let Some(ref block) = fn_expr.function.body {
         for stmt in &block.stmts {
             if let ast::Stmt::Decl(ast::Decl::Fn(fn_decl)) = stmt {

@@ -19,7 +19,9 @@ use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 #[cfg(target_os = "windows")]
-use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TRACKMOUSEEVENT, TME_HOVER, TME_LEAVE};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    TrackMouseEvent, TME_HOVER, TME_LEAVE, TRACKMOUSEEVENT,
+};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -99,9 +101,8 @@ unsafe extern "system" fn tooltip_subclass_proc(
             // Arm hover tracking on first move within the trigger.
             let handle = super::find_handle_by_hwnd(hwnd);
             if handle > 0 {
-                let delay = TOOLTIPS.with(|t| {
-                    t.borrow().get(&handle).map(|tip| tip.delay_ms).unwrap_or(0)
-                });
+                let delay =
+                    TOOLTIPS.with(|t| t.borrow().get(&handle).map(|tip| tip.delay_ms).unwrap_or(0));
                 let mut tme = TRACKMOUSEEVENT {
                     cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
                     dwFlags: TME_HOVER | TME_LEAVE,
@@ -215,15 +216,7 @@ fn show_popup(trigger_handle: i64) {
 
         // Re-parent the content widget into the popup.
         let _ = SetParent(content_hwnd, popup);
-        let _ = SetWindowPos(
-            content_hwnd,
-            None,
-            8,
-            8,
-            popup_w,
-            popup_h,
-            SWP_NOACTIVATE,
-        );
+        let _ = SetWindowPos(content_hwnd, None, 8, 8, popup_w, popup_h, SWP_NOACTIVATE);
 
         let _ = ShowWindow(popup, SW_SHOWNOACTIVATE);
 

@@ -1286,10 +1286,8 @@ pub(crate) fn static_type_of(ctx: &FnCtx<'_>, e: &Expr) -> Option<HirType> {
                 for ext in &iface.extends {
                     if let HirType::Named(parent_name) = ext {
                         if let Some(parent_iface) = ctx.interfaces.get(parent_name) {
-                            if let Some(p) = parent_iface
-                                .properties
-                                .iter()
-                                .find(|p| p.name == *property)
+                            if let Some(p) =
+                                parent_iface.properties.iter().find(|p| p.name == *property)
                             {
                                 return Some(p.ty.clone());
                             }

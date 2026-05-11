@@ -323,7 +323,10 @@ pub(crate) struct InlineTrap {
 impl InlineTrap {
     #[inline(always)]
     const fn empty() -> Self {
-        InlineTrap { trap_next: std::ptr::null_mut(), current_step: 0 }
+        InlineTrap {
+            trap_next: std::ptr::null_mut(),
+            current_step: 0,
+        }
     }
 }
 
@@ -429,7 +432,8 @@ pub extern "C" fn js_promise_resolve(promise: *mut Promise, value: f64) {
         // never settled and `await chained` busy-waited forever.
         if !(*promise).on_fulfilled.is_null() || !(*promise).next.is_null() {
             TASK_QUEUE.with(|q| {
-                q.borrow_mut().push_back(Task::Promise(promise, value, true));
+                q.borrow_mut()
+                    .push_back(Task::Promise(promise, value, true));
             });
         }
     }
@@ -554,7 +558,8 @@ pub extern "C" fn js_promise_reject(promise: *mut Promise, reason: f64) {
         // OR a chained `next` promise to forward to.
         if !(*promise).on_rejected.is_null() || !(*promise).next.is_null() {
             TASK_QUEUE.with(|q| {
-                q.borrow_mut().push_back(Task::Promise(promise, reason, false));
+                q.borrow_mut()
+                    .push_back(Task::Promise(promise, reason, false));
             });
         }
     }
@@ -966,7 +971,11 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
     // the atomic load is ~1 ns.
     let prof = mt_profile_enabled();
     loop {
-        let t0 = if prof { Some(std::time::Instant::now()) } else { None };
+        let t0 = if prof {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let task = TASK_QUEUE.with(|q| q.borrow_mut().pop_front());
         if let Some(t) = t0 {
             MT_TIME_NS_QUEUE.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
@@ -1001,7 +1010,11 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
                     // can reject its `next` if the callback throws.
                     CURRENT_MICROTASK_PROMISE.with(|c| c.set(promise));
 
-                    let t1 = if prof { Some(std::time::Instant::now()) } else { None };
+                    let t1 = if prof {
+                        Some(std::time::Instant::now())
+                    } else {
+                        None
+                    };
                     let result = crate::closure::js_closure_call1(callback, value);
                     if let Some(t) = t1 {
                         MT_TIME_NS_CALLBACK
@@ -1013,7 +1026,11 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
                     // microtask doesn't misattribute its rejection.
                     CURRENT_MICROTASK_PROMISE.with(|c| c.set(std::ptr::null_mut()));
 
-                    let t2 = if prof { Some(std::time::Instant::now()) } else { None };
+                    let t2 = if prof {
+                        Some(std::time::Instant::now())
+                    } else {
+                        None
+                    };
                     if !(*promise).next.is_null() {
                         propagate_callback_result(result, (*promise).next);
                     }
@@ -1050,24 +1067,35 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
                 // valid `*mut Promise`. This is rarely hit (only on
                 // user-throw inside the inline callback) and we can
                 // afford the alloc on the slow path.
-                INLINE_TRAP.with(|c| c.set(InlineTrap { trap_next: next, current_step: 0 }));
+                INLINE_TRAP.with(|c| {
+                    c.set(InlineTrap {
+                        trap_next: next,
+                        current_step: 0,
+                    })
+                });
 
-                let t1 = if prof { Some(std::time::Instant::now()) } else { None };
+                let t1 = if prof {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
                 let result = unsafe { crate::closure::js_closure_call1(callback, value) };
                 if let Some(t) = t1 {
-                    MT_TIME_NS_CALLBACK
-                        .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    MT_TIME_NS_CALLBACK.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 }
 
                 INLINE_TRAP.with(|c| c.set(InlineTrap::empty()));
 
-                let t2 = if prof { Some(std::time::Instant::now()) } else { None };
+                let t2 = if prof {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
                 if !next.is_null() {
                     propagate_callback_result(result, next);
                 }
                 if let Some(t) = t2 {
-                    MT_TIME_NS_RESOLVE
-                        .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    MT_TIME_NS_RESOLVE.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 }
                 ran += 1;
             }
@@ -1098,28 +1126,36 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
                 // path: nested async-fn calls pass a DIFFERENT step
                 // closure → fail the gate → alloc their own next, so
                 // their settlement can't collapse onto the parent's.
-                INLINE_TRAP.with(|c| c.set(InlineTrap {
-                    trap_next: next,
-                    current_step: step_closure as usize,
-                }));
+                INLINE_TRAP.with(|c| {
+                    c.set(InlineTrap {
+                        trap_next: next,
+                        current_step: step_closure as usize,
+                    })
+                });
 
-                let t1 = if prof { Some(std::time::Instant::now()) } else { None };
+                let t1 = if prof {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
                 let is_error_bits = if is_error {
                     f64::from_bits(0x7FFC_0000_0000_0004) // TAG_TRUE
                 } else {
                     f64::from_bits(0x7FFC_0000_0000_0003) // TAG_FALSE
                 };
-                let result = unsafe {
-                    crate::closure::js_closure_call2(step_closure, value, is_error_bits)
-                };
+                let result =
+                    unsafe { crate::closure::js_closure_call2(step_closure, value, is_error_bits) };
                 if let Some(t) = t1 {
-                    MT_TIME_NS_CALLBACK
-                        .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    MT_TIME_NS_CALLBACK.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 }
 
                 INLINE_TRAP.with(|c| c.set(InlineTrap::empty()));
 
-                let t2 = if prof { Some(std::time::Instant::now()) } else { None };
+                let t2 = if prof {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
                 // Self-chain marker: when `js_async_step_chain` reused
                 // our `next` Promise (the steady-state primitive-await
                 // path), the result is the same Promise pointer. The
@@ -1127,21 +1163,17 @@ pub extern "C" fn js_promise_run_microtasks() -> i32 {
                 // queue carrying the same `next`; nothing to propagate
                 // here.
                 if !next.is_null() {
-                    let result_is_self_chain =
-                        if js_value_is_promise(result) != 0 {
-                            crate::value::js_nanbox_get_pointer(result)
-                                as *mut Promise
-                                == next
-                        } else {
-                            false
-                        };
+                    let result_is_self_chain = if js_value_is_promise(result) != 0 {
+                        crate::value::js_nanbox_get_pointer(result) as *mut Promise == next
+                    } else {
+                        false
+                    };
                     if !result_is_self_chain {
                         propagate_callback_result(result, next);
                     }
                 }
                 if let Some(t) = t2 {
-                    MT_TIME_NS_RESOLVE
-                        .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    MT_TIME_NS_RESOLVE.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 }
                 ran += 1;
             }
@@ -1318,10 +1350,7 @@ pub extern "C" fn js_promise_resolved_then(
 ///     body called `step_closure`; is now `step_closure` is invoked
 ///     directly by the runner).
 #[no_mangle]
-pub extern "C" fn js_async_step_chain(
-    value: f64,
-    step_closure: ClosurePtr,
-) -> *mut Promise {
+pub extern "C" fn js_async_step_chain(value: f64, step_closure: ClosurePtr) -> *mut Promise {
     // Reuse predicate. `next` reuse is sound only when AsyncStepChain
     // is being called from the body of the SAME step closure that the
     // runner is currently dispatching. Two readers of INLINE_TRAP pose
@@ -1414,12 +1443,8 @@ pub extern "C" fn js_async_step_chain(
     };
 
     TASK_QUEUE.with(|q| {
-        q.borrow_mut().push_back(Task::AsyncStep(
-            step_closure,
-            queued_value,
-            next,
-            is_error,
-        ));
+        q.borrow_mut()
+            .push_back(Task::AsyncStep(step_closure, queued_value, next, is_error));
     });
     crate::event_pump::js_notify_main_thread();
     next
@@ -1442,10 +1467,7 @@ pub extern "C" fn js_async_step_chain(
 /// where the outer activation's `next` must NOT be settled here).
 /// Fall back to `js_promise_resolved(value)`.
 #[no_mangle]
-pub extern "C" fn js_async_step_done(
-    value: f64,
-    step_closure: ClosurePtr,
-) -> *mut Promise {
+pub extern "C" fn js_async_step_done(value: f64, step_closure: ClosurePtr) -> *mut Promise {
     let trap = INLINE_TRAP.with(|c| c.get());
     if !trap.trap_next.is_null() && trap.current_step == step_closure as usize {
         bump(&MT_STEP_DONE_REUSE_HIT);
@@ -1472,15 +1494,11 @@ thread_local! {
 pub fn scan_async_step_thunk_cache(mark: &mut dyn FnMut(f64)) {
     let (_, f, r) = LAST_ASYNC_STEP_THUNKS.with(|c| c.get());
     if !f.is_null() {
-        let boxed = f64::from_bits(
-            0x7FFD_0000_0000_0000 | (f as u64 & 0x0000_FFFF_FFFF_FFFF),
-        );
+        let boxed = f64::from_bits(0x7FFD_0000_0000_0000 | (f as u64 & 0x0000_FFFF_FFFF_FFFF));
         mark(boxed);
     }
     if !r.is_null() {
-        let boxed = f64::from_bits(
-            0x7FFD_0000_0000_0000 | (r as u64 & 0x0000_FFFF_FFFF_FFFF),
-        );
+        let boxed = f64::from_bits(0x7FFD_0000_0000_0000 | (r as u64 & 0x0000_FFFF_FFFF_FFFF));
         mark(boxed);
     }
 }
@@ -1491,9 +1509,7 @@ pub fn scan_async_step_thunk_cache(mark: &mut dyn FnMut(f64)) {
 /// awaits) while degrading gracefully (no cache overhead beyond the
 /// cell read/write) when many distinct step closures interleave (the
 /// Promise.all-of-N shape).
-fn build_async_step_thunks(
-    step_closure: ClosurePtr,
-) -> (ClosurePtr, ClosurePtr) {
+fn build_async_step_thunks(step_closure: ClosurePtr) -> (ClosurePtr, ClosurePtr) {
     let key = step_closure as usize;
     let cached = LAST_ASYNC_STEP_THUNKS.with(|c| c.get());
     if cached.0 == key && !cached.1.is_null() && !cached.2.is_null() {
@@ -1928,8 +1944,7 @@ pub extern "C" fn js_promise_all(promises_arr: *const crate::array::ArrayHeader)
     // ONCE per Promise.all call and share across all inputs. Saves
     // (N-1) closure allocations per call — on the 50-input × 1000-batch
     // bench that's ~50k fewer closures (~2-3 ms on a hot run).
-    let shared_reject_closure =
-        js_closure_alloc(promise_all_reject_handler as *const u8, 2);
+    let shared_reject_closure = js_closure_alloc(promise_all_reject_handler as *const u8, 2);
     js_closure_set_capture_ptr(shared_reject_closure, 0, result_promise as i64);
     js_closure_set_capture_ptr(shared_reject_closure, 1, state_arr as i64);
 
@@ -2066,11 +2081,9 @@ pub extern "C" fn js_promise_race(promises_arr: *const crate::array::ArrayHeader
     // Both handlers capture only `result_promise` and don't depend on
     // the input index — so allocate once and share across all N inputs.
     // Saves (N-1) × 2 closure allocs per Promise.race call.
-    let shared_resolve =
-        js_closure_alloc(promise_race_resolve_handler as *const u8, 1);
+    let shared_resolve = js_closure_alloc(promise_race_resolve_handler as *const u8, 1);
     js_closure_set_capture_ptr(shared_resolve, 0, result_promise as i64);
-    let shared_reject =
-        js_closure_alloc(promise_race_reject_handler as *const u8, 1);
+    let shared_reject = js_closure_alloc(promise_race_reject_handler as *const u8, 1);
     js_closure_set_capture_ptr(shared_reject, 0, result_promise as i64);
 
     // For each promise, attach resolve/reject handlers that settle the result promise.
@@ -2209,8 +2222,8 @@ pub extern "C" fn js_assimilate_thenable(value: f64) -> f64 {
     // Verify GC type before reading class_id; reading garbage past random
     // pointers would either return a fake match or segfault.
     let class_id = unsafe {
-        let gc_header = (obj_ptr as *const u8).sub(crate::gc::GC_HEADER_SIZE)
-            as *const crate::gc::GcHeader;
+        let gc_header =
+            (obj_ptr as *const u8).sub(crate::gc::GC_HEADER_SIZE) as *const crate::gc::GcHeader;
         let gc_type = (*gc_header).obj_type;
         if gc_type != crate::gc::GC_TYPE_OBJECT {
             return value;
@@ -2233,11 +2246,9 @@ pub extern "C" fn js_assimilate_thenable(value: f64) -> f64 {
     let new_promise = js_promise_new();
     let promise_i64 = new_promise as i64;
 
-    let resolve_closure =
-        crate::closure::js_closure_alloc(promise_resolve_fn as *const u8, 1);
+    let resolve_closure = crate::closure::js_closure_alloc(promise_resolve_fn as *const u8, 1);
     crate::closure::js_closure_set_capture_ptr(resolve_closure, 0, promise_i64);
-    let reject_closure =
-        crate::closure::js_closure_alloc(promise_reject_fn as *const u8, 1);
+    let reject_closure = crate::closure::js_closure_alloc(promise_reject_fn as *const u8, 1);
     crate::closure::js_closure_set_capture_ptr(reject_closure, 0, promise_i64);
 
     // The user's `then(onFulfilled, onRejected)` reads each parameter as a
@@ -2262,8 +2273,7 @@ pub extern "C" fn js_assimilate_thenable(value: f64) -> f64 {
             }
             _ => {
                 // 2+ params: pass resolve/reject; any extra slots arrive as NaN.
-                let f: extern "C" fn(f64, f64, f64) -> f64 =
-                    std::mem::transmute(then_func_ptr);
+                let f: extern "C" fn(f64, f64, f64) -> f64 = std::mem::transmute(then_func_ptr);
                 f(this_f64, resolve_f64, reject_f64);
             }
         }
@@ -2516,8 +2526,7 @@ pub extern "C" fn js_promise_any(promises_arr: *const crate::array::ArrayHeader)
     // the Promise.all reject-closure sharing in commit 7c89fcc6).
     // Reject still needs per-index since it must write its error into
     // the correct slot of `errors_arr` for the eventual AggregateError.
-    let shared_fulfill =
-        js_closure_alloc(promise_any_fulfill_handler as *const u8, 2);
+    let shared_fulfill = js_closure_alloc(promise_any_fulfill_handler as *const u8, 2);
     js_closure_set_capture_ptr(shared_fulfill, 0, result_promise as i64);
     js_closure_set_capture_ptr(shared_fulfill, 1, state_arr as i64);
 
@@ -2619,8 +2628,7 @@ pub fn scan_promise_roots(mark: &mut dyn FnMut(f64)) {
                 Task::Promise(promise_ptr, value, _) => {
                     if !promise_ptr.is_null() {
                         let boxed = f64::from_bits(
-                            0x7FFD_0000_0000_0000
-                                | (*promise_ptr as u64 & 0x0000_FFFF_FFFF_FFFF),
+                            0x7FFD_0000_0000_0000 | (*promise_ptr as u64 & 0x0000_FFFF_FFFF_FFFF),
                         );
                         mark(boxed);
                     }
@@ -2635,8 +2643,7 @@ pub fn scan_promise_roots(mark: &mut dyn FnMut(f64)) {
                     }
                     if !next.is_null() {
                         let boxed = f64::from_bits(
-                            0x7FFD_0000_0000_0000
-                                | (*next as u64 & 0x0000_FFFF_FFFF_FFFF),
+                            0x7FFD_0000_0000_0000 | (*next as u64 & 0x0000_FFFF_FFFF_FFFF),
                         );
                         mark(boxed);
                     }
@@ -2651,8 +2658,7 @@ pub fn scan_promise_roots(mark: &mut dyn FnMut(f64)) {
                     }
                     if !next.is_null() {
                         let boxed = f64::from_bits(
-                            0x7FFD_0000_0000_0000
-                                | (*next as u64 & 0x0000_FFFF_FFFF_FFFF),
+                            0x7FFD_0000_0000_0000 | (*next as u64 & 0x0000_FFFF_FFFF_FFFF),
                         );
                         mark(boxed);
                     }

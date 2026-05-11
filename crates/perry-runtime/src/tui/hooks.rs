@@ -211,7 +211,8 @@ pub extern "C" fn perry_tui_state_setter_trampoline(
         return f64::from_bits(TAG_UNDEFINED);
     }
     let slot = unsafe {
-        let captures = (closure as *const u8).add(std::mem::size_of::<ClosureHeader>()) as *const f64;
+        let captures =
+            (closure as *const u8).add(std::mem::size_of::<ClosureHeader>()) as *const f64;
         *captures
     } as usize;
     let mut s = SLOTS.lock().unwrap();
@@ -953,4 +954,3 @@ mod tests {
         assert!(STATE_DIRTY.load(Ordering::Acquire));
     }
 }
-

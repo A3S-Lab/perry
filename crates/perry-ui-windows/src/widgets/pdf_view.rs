@@ -206,8 +206,8 @@ fn cheap_page_count(path: &PathBuf) -> Option<i64> {
         // Match "/Type" then any whitespace then "/Page" (not /Pages).
         if &bytes[i..i + 5] == b"/Type" {
             let mut j = i + 5;
-            while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t' || bytes[j] == b'\r'
-                || bytes[j] == b'\n')
+            while j < bytes.len()
+                && (bytes[j] == b' ' || bytes[j] == b'\t' || bytes[j] == b'\r' || bytes[j] == b'\n')
             {
                 j += 1;
             }
@@ -241,7 +241,12 @@ pub fn go_to_page(handle: i64, idx: i64) {
 }
 
 pub fn get_current_page(handle: i64) -> i64 {
-    PDFS.with(|p| p.borrow().get(&handle).map(|s| s.current_page).unwrap_or(-1))
+    PDFS.with(|p| {
+        p.borrow()
+            .get(&handle)
+            .map(|s| s.current_page)
+            .unwrap_or(-1)
+    })
 }
 
 pub fn set_scale(handle: i64, scale: f64) {

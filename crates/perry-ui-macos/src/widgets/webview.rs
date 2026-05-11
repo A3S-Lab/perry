@@ -299,9 +299,8 @@ impl PerryWebViewDelegate {
 
     fn dispatch_error(&self, error: *mut AnyObject) {
         let key = self.ivars().callback_key.get();
-        let on_error = WEBVIEW_STATES.with(|s| {
-            s.borrow().get(&key).map(|st| st.on_error).unwrap_or(0.0)
-        });
+        let on_error =
+            WEBVIEW_STATES.with(|s| s.borrow().get(&key).map(|st| st.on_error).unwrap_or(0.0));
         if on_error == 0.0 {
             return;
         }
@@ -447,19 +446,25 @@ unsafe fn load_url_on_webview(webview: *mut AnyObject, url: &str) {
 
 pub fn reload(handle: i64) {
     if let Some(wv) = webview_for_handle(handle) {
-        unsafe { let _: *mut AnyObject = msg_send![wv, reload]; }
+        unsafe {
+            let _: *mut AnyObject = msg_send![wv, reload];
+        }
     }
 }
 
 pub fn go_back(handle: i64) {
     if let Some(wv) = webview_for_handle(handle) {
-        unsafe { let _: *mut AnyObject = msg_send![wv, goBack]; }
+        unsafe {
+            let _: *mut AnyObject = msg_send![wv, goBack];
+        }
     }
 }
 
 pub fn go_forward(handle: i64) {
     if let Some(wv) = webview_for_handle(handle) {
-        unsafe { let _: *mut AnyObject = msg_send![wv, goForward]; }
+        unsafe {
+            let _: *mut AnyObject = msg_send![wv, goForward];
+        }
     }
 }
 
@@ -485,34 +490,32 @@ pub fn evaluate_js(handle: i64, js_ptr: *const u8, callback: f64) {
     unsafe {
         let js_str = NSString::from_str(&js);
 
-        let block = block2::RcBlock::new(
-            move |result: *mut AnyObject, _error: *mut AnyObject| {
-                crate::catch_callback_panic(
-                    "webview evaluateJs callback",
-                    std::panic::AssertUnwindSafe(|| {
-                        let s = if !result.is_null() {
-                            // result might be NSString, NSNumber, NSDictionary,
-                            // NSArray, or NSNull. Use `description` for a stable
-                            // string form across all cases.
-                            let descr: *mut AnyObject = msg_send![result, description];
-                            if !descr.is_null() {
-                                let ns: &NSString = &*(descr as *const NSString);
-                                ns.to_string()
-                            } else {
-                                String::new()
-                            }
+        let block = block2::RcBlock::new(move |result: *mut AnyObject, _error: *mut AnyObject| {
+            crate::catch_callback_panic(
+                "webview evaluateJs callback",
+                std::panic::AssertUnwindSafe(|| {
+                    let s = if !result.is_null() {
+                        // result might be NSString, NSNumber, NSDictionary,
+                        // NSArray, or NSNull. Use `description` for a stable
+                        // string form across all cases.
+                        let descr: *mut AnyObject = msg_send![result, description];
+                        if !descr.is_null() {
+                            let ns: &NSString = &*(descr as *const NSString);
+                            ns.to_string()
                         } else {
                             String::new()
-                        };
-                        let nb = nanbox_str(&s);
-                        let closure_ptr = js_nanbox_get_pointer(callback) as *const u8;
-                        if !closure_ptr.is_null() {
-                            js_closure_call1(closure_ptr, nb);
                         }
-                    }),
-                );
-            },
-        );
+                    } else {
+                        String::new()
+                    };
+                    let nb = nanbox_str(&s);
+                    let closure_ptr = js_nanbox_get_pointer(callback) as *const u8;
+                    if !closure_ptr.is_null() {
+                        js_closure_call1(closure_ptr, nb);
+                    }
+                }),
+            );
+        });
         let _: () = msg_send![wv, evaluateJavaScript: &*js_str, completionHandler: &*block];
     }
 }
@@ -645,11 +648,15 @@ pub fn set_on_error(handle: i64, closure: f64) {
 // =============================================================================
 
 fn webview_for_handle(handle: i64) -> Option<*mut AnyObject> {
-    HANDLE_TO_KEY.with(|m| m.borrow().get(&handle).copied()).and_then(|key| {
-        WEBVIEW_STATES.with(|s| {
-            s.borrow().get(&key).map(|st| st.webview_ptr as *mut AnyObject)
+    HANDLE_TO_KEY
+        .with(|m| m.borrow().get(&handle).copied())
+        .and_then(|key| {
+            WEBVIEW_STATES.with(|s| {
+                s.borrow()
+                    .get(&key)
+                    .map(|st| st.webview_ptr as *mut AnyObject)
+            })
         })
-    })
 }
 
 /// Suppress dead_code warnings for `js_closure_call0` import — kept for

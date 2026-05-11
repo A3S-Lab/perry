@@ -97,12 +97,16 @@ fn ast_expr_contains_function_expr(e: &ast::Expr) -> bool {
             (match &c.callee {
                 ast::Callee::Expr(e) => ast_expr_contains_function_expr(e),
                 _ => false,
-            }) || c.args.iter().any(|a| ast_expr_contains_function_expr(&a.expr))
+            }) || c
+                .args
+                .iter()
+                .any(|a| ast_expr_contains_function_expr(&a.expr))
         }
         Expr::New(n) => {
             ast_expr_contains_function_expr(&n.callee)
                 || n.args.as_ref().map_or(false, |args| {
-                    args.iter().any(|a| ast_expr_contains_function_expr(&a.expr))
+                    args.iter()
+                        .any(|a| ast_expr_contains_function_expr(&a.expr))
                 })
         }
         Expr::Member(m) => ast_expr_contains_function_expr(&m.obj),
@@ -147,7 +151,9 @@ fn ast_expr_contains_function_expr(e: &ast::Expr) -> bool {
             ast::OptChainBase::Member(m) => ast_expr_contains_function_expr(&m.obj),
             ast::OptChainBase::Call(c) => {
                 ast_expr_contains_function_expr(&c.callee)
-                    || c.args.iter().any(|a| ast_expr_contains_function_expr(&a.expr))
+                    || c.args
+                        .iter()
+                        .any(|a| ast_expr_contains_function_expr(&a.expr))
             }
         },
         _ => false,
@@ -1420,7 +1426,8 @@ pub(crate) fn lower_var_decl_with_destructuring(
                                 // had `server` unregistered, so the listen
                                 // dispatch fell through the class_filter
                                 // gate and never invoked the cb closure.
-                                let http_class = match (module_name.as_str(), method_name.as_str()) {
+                                let http_class = match (module_name.as_str(), method_name.as_str())
+                                {
                                     ("http", "createServer") => Some("HttpServer"),
                                     ("https", "createServer") => Some("HttpsServer"),
                                     ("http2", "createSecureServer") => Some("Http2SecureServer"),
@@ -1776,9 +1783,7 @@ pub(crate) fn lower_var_decl_with_destructuring(
                                 {
                                     if matches!(
                                         module,
-                                        "readable_stream"
-                                            | "writable_stream"
-                                            | "transform_stream"
+                                        "readable_stream" | "writable_stream" | "transform_stream"
                                     ) {
                                         ctx.register_native_instance(
                                             name.clone(),
@@ -2151,21 +2156,20 @@ pub(crate) fn lower_var_decl_with_destructuring(
             // [value, setter_closure] 2-element array. Without this, the
             // regular destructure path indexes a scalar return as if it were
             // an array — both elements come out undefined.
-            let init_expr = if let (ast::Pat::Array(_), Some(init)) =
-                (&decl.name, decl.init.as_ref())
-            {
-                if let Some(rewritten) = rewrite_use_state_tuple(ctx, init) {
-                    rewritten
+            let init_expr =
+                if let (ast::Pat::Array(_), Some(init)) = (&decl.name, decl.init.as_ref()) {
+                    if let Some(rewritten) = rewrite_use_state_tuple(ctx, init) {
+                        rewritten
+                    } else {
+                        lower_expr(ctx, init)?
+                    }
                 } else {
-                    lower_expr(ctx, init)?
-                }
-            } else {
-                decl.init
-                    .as_ref()
-                    .map(|e| lower_expr(ctx, e))
-                    .transpose()?
-                    .ok_or_else(|| anyhow!("Destructuring requires an initializer"))?
-            };
+                    decl.init
+                        .as_ref()
+                        .map(|e| lower_expr(ctx, e))
+                        .transpose()?
+                        .ok_or_else(|| anyhow!("Destructuring requires an initializer"))?
+                };
             let stmts = lower_pattern_binding(ctx, &decl.name, init_expr, mutable)?;
             result.extend(stmts);
         }

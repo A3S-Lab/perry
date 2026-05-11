@@ -186,8 +186,7 @@ const URL_FIELD_COUNT: u32 = 12;
 
 /// Create a URL object from a string
 fn create_url_object(url_string: &str) -> *mut ObjectHeader {
-    let (protocol, mut host, mut hostname, port, pathname, search, hash) =
-        parse_url(url_string);
+    let (protocol, mut host, mut hostname, port, pathname, search, hash) = parse_url(url_string);
 
     // Issue #650: extract userinfo (`user:pass@`) from `host`. parse_url
     // leaves it as a prefix on host/hostname because the WHATWG authority
@@ -583,8 +582,7 @@ fn is_valid_absolute_url(s: &str) -> bool {
     // Node accepts anything non-empty after `:`. Match that for ergonomics.
     let after_scheme = &s[scheme_end + 1..];
     let scheme = &s[..scheme_end];
-    let needs_authority =
-        matches!(scheme, "http" | "https" | "ws" | "wss" | "ftp" | "file");
+    let needs_authority = matches!(scheme, "http" | "https" | "ws" | "wss" | "ftp" | "file");
     if needs_authority {
         if !after_scheme.starts_with("//") {
             return false;
@@ -891,12 +889,11 @@ pub extern "C" fn js_url_search_params_new_any(init: f64) -> *mut ObjectHeader {
         // walk pair-by-pair.
         unsafe {
             if !raw_ptr.is_null() && (raw_ptr as usize) >= 0x1000 {
-                let gc_obj_type =
-                    *raw_ptr.sub(crate::gc::GC_HEADER_SIZE);
+                let gc_obj_type = *raw_ptr.sub(crate::gc::GC_HEADER_SIZE);
                 if gc_obj_type == crate::gc::GC_TYPE_ARRAY {
-                    return create_url_search_params_object(
-                        read_iterable_pair_entries(raw_ptr as *const ArrayHeader),
-                    );
+                    return create_url_search_params_object(read_iterable_pair_entries(
+                        raw_ptr as *const ArrayHeader,
+                    ));
                 }
             }
         }

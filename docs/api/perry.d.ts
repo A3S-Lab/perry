@@ -1,7 +1,7 @@
 // Auto-generated from Perry's API manifest (#465). Do not edit by hand.
 // Source: perry-api-manifest::API_MANIFEST
-// Perry version: 0.5.606
-// Coverage: 673 entries across 68 modules
+// Perry version: 0.5.827
+// Coverage: 812 entries across 70 modules
 
 declare module "argon2" {
   /** stdlib */
@@ -108,6 +108,10 @@ declare module "cron" {
 }
 
 declare module "crypto" {
+  /** stdlib */
+  export const constants: any;
+  /** stdlib */
+  export const subtle: any;
   /** stdlib */
   export function createHash(...args: any[]): any;
   /** stdlib */
@@ -284,7 +288,13 @@ declare module "http" {
   /** stdlib */
   export class IncomingMessage { [key: string]: any; }
   /** stdlib */
+  export class IncomingMessage { [key: string]: any; }
+  /** stdlib */
   export class Server { [key: string]: any; }
+  /** stdlib */
+  export class Server { [key: string]: any; }
+  /** stdlib */
+  export class ServerResponse { [key: string]: any; }
   /** stdlib */
   export class ServerResponse { [key: string]: any; }
   /** stdlib */
@@ -295,11 +305,24 @@ declare module "http" {
   export function request(...args: any[]): any;
 }
 
+declare module "http2" {
+  /** stdlib */
+  export class Http2SecureServer { [key: string]: any; }
+  /** stdlib */
+  export class Http2ServerRequest { [key: string]: any; }
+  /** stdlib */
+  export class Http2ServerResponse { [key: string]: any; }
+  /** stdlib */
+  export function createSecureServer(...args: any[]): any;
+}
+
 declare module "https" {
   /** stdlib */
   export class ClientRequest { [key: string]: any; }
   /** stdlib */
   export class IncomingMessage { [key: string]: any; }
+  /** stdlib */
+  export class Server { [key: string]: any; }
   /** stdlib */
   export class Server { [key: string]: any; }
   /** stdlib */
@@ -452,6 +475,8 @@ declare module "os" {
   /** stdlib */
   export const EOL: any;
   /** stdlib */
+  export const constants: any;
+  /** stdlib */
   export function arch(...args: any[]): any;
   /** stdlib */
   export function cpus(...args: any[]): any;
@@ -508,6 +533,15 @@ declare module "path" {
   export function relative(...args: any[]): any;
   /** stdlib */
   export function resolve(...args: any[]): any;
+}
+
+declare module "perry/background" {
+  /** stdlib */
+  export function cancel(...args: any[]): any;
+  /** stdlib */
+  export function registerTask(...args: any[]): any;
+  /** stdlib */
+  export function schedule(...args: any[]): any;
 }
 
 declare module "perry/i18n" {
@@ -593,6 +627,10 @@ declare module "perry/plugin" {
 
 declare module "perry/system" {
   /** stdlib */
+  export function appGetLaunchUrl(...args: any[]): any;
+  /** stdlib */
+  export function appOnOpenUrl(...args: any[]): any;
+  /** stdlib */
   export function audioGetLevel(...args: any[]): any;
   /** stdlib */
   export function audioGetPeak(...args: any[]): any;
@@ -609,6 +647,14 @@ declare module "perry/system" {
   /** stdlib */
   export function audioStopRecording(...args: any[]): any;
   /** stdlib */
+  export function geolocationGetCurrent(...args: any[]): any;
+  /** stdlib */
+  export function geolocationRequestPermission(...args: any[]): any;
+  /** stdlib */
+  export function geolocationStopWatch(...args: any[]): any;
+  /** stdlib */
+  export function geolocationWatch(...args: any[]): any;
+  /** stdlib */
   export function getAppIcon(...args: any[]): any;
   /** stdlib */
   export function getDeviceIdiom(...args: any[]): any;
@@ -617,6 +663,8 @@ declare module "perry/system" {
   /** stdlib */
   export function getLocale(...args: any[]): any;
   /** stdlib */
+  export function imagePickerPick(...args: any[]): any;
+  /** stdlib */
   export function isDarkMode(...args: any[]): any;
   /** stdlib */
   export function keychainDelete(...args: any[]): any;
@@ -624,6 +672,12 @@ declare module "perry/system" {
   export function keychainGet(...args: any[]): any;
   /** stdlib */
   export function keychainSave(...args: any[]): any;
+  /** stdlib */
+  export function networkGetStatus(...args: any[]): any;
+  /** stdlib */
+  export function networkOnChange(...args: any[]): any;
+  /** stdlib */
+  export function networkStopOnChange(...args: any[]): any;
   /** stdlib */
   export function notificationCancel(...args: any[]): any;
   /** stdlib */
@@ -655,9 +709,13 @@ declare module "perry/thread" {
 
 declare module "perry/tui" {
   /** stdlib */
+  export function AnimatedSpinner(p0: any, p1: any): any;
+  /** stdlib */
   export function Box(...args: any[]): any;
   /** stdlib */
   export function Input(p0: string): any;
+  /** stdlib */
+  export function InputAt(p0: string, p1: any): any;
   /** stdlib */
   export function List(p0: any, p1: any): any;
   /** stdlib */
@@ -669,29 +727,53 @@ declare module "perry/tui" {
   /** stdlib */
   export function Spinner(p0: any): any;
   /** stdlib */
+  export function Table(p0: any, p1: any, p2: any): any;
+  /** stdlib */
+  export function Tabs(p0: any, p1: any, p2: any): any;
+  /** stdlib */
   export function Text(p0: string): any;
   /** stdlib */
   export function TextArea(p0: string): any;
   /** stdlib */
+  export function TextStyled(p0: string, p1: string, p2: string, p3: any): any;
+  /** stdlib */
   export function boxSetAlignItems(p0: any, p1: string): void;
+  /** stdlib */
+  export function boxSetFlexBasis(p0: any, p1: any): void;
+  /** stdlib */
+  export function boxSetFlexBasisPct(p0: any, p1: any): void;
   /** stdlib */
   export function boxSetFlexDirection(p0: any, p1: string): void;
   /** stdlib */
   export function boxSetFlexGrow(p0: any, p1: any): void;
   /** stdlib */
+  export function boxSetFlexShrink(p0: any, p1: any): void;
+  /** stdlib */
   export function boxSetGap(p0: any, p1: any): void;
   /** stdlib */
   export function boxSetHeight(p0: any, p1: any): void;
+  /** stdlib */
+  export function boxSetHeightPct(p0: any, p1: any): void;
   /** stdlib */
   export function boxSetJustifyContent(p0: any, p1: string): void;
   /** stdlib */
   export function boxSetPadding(p0: any, p1: any): void;
   /** stdlib */
+  export function boxSetPaddingEach(p0: any, p1: any, p2: any, p3: any, p4: any): void;
+  /** stdlib */
   export function boxSetWidth(p0: any, p1: any): void;
+  /** stdlib */
+  export function boxSetWidthPct(p0: any, p1: any): void;
   /** stdlib */
   export function enter(): void;
   /** stdlib */
   export function exit(): void;
+  /** stdlib */
+  export function focus(p0: any): void;
+  /** stdlib */
+  export function focusNext(): void;
+  /** stdlib */
+  export function focusPrevious(): void;
   /** stdlib */
   export function render(p0: any): void;
   /** stdlib */
@@ -699,12 +781,36 @@ declare module "perry/tui" {
   /** stdlib */
   export function state(p0: any): any;
   /** stdlib */
+  export function useApp(...args: any[]): any;
+  /** stdlib */
+  export function useEffect(p0: any, p1: any): void;
+  /** stdlib */
+  export function useFocus(p0: any, p1: any): any;
+  /** stdlib */
+  export function useFocusManager(...args: any[]): any;
+  /** stdlib */
   export function useInput(p0: any): void;
+  /** stdlib */
+  export function useMemo(p0: any, p1: any): any;
+  /** stdlib */
+  export function useRef(p0: any): any;
+  /** stdlib */
+  export function useState(p0: any): any;
+  /** stdlib */
+  export function useStateSet(p0: any, p1: any): void;
+  /** stdlib */
+  export function useStateTuple(p0: any): any;
+  /** stdlib */
+  export function useStdout(...args: any[]): any;
+  /** stdlib */
+  export function waitUntilExit(): void;
 }
 
 declare module "perry/ui" {
   /** stdlib */
   export function App(...args: any[]): any;
+  /** stdlib */
+  export function BottomNavigation(...args: any[]): any;
   /** stdlib */
   export function Button(...args: any[]): any;
   /** stdlib */
@@ -720,7 +826,11 @@ declare module "perry/ui" {
   /** stdlib */
   export function HStackWithInsets(...args: any[]): any;
   /** stdlib */
+  export function Image(...args: any[]): any;
+  /** stdlib */
   export function ImageFile(...args: any[]): any;
+  /** stdlib */
+  export function ImageGallery(...args: any[]): any;
   /** stdlib */
   export function ImageSymbol(...args: any[]): any;
   /** stdlib */
@@ -762,6 +872,8 @@ declare module "perry/ui" {
   /** stdlib */
   export function VStackWithInsets(...args: any[]): any;
   /** stdlib */
+  export function WebView(...args: any[]): any;
+  /** stdlib */
   export function Window(...args: any[]): any;
   /** stdlib */
   export function ZStack(...args: any[]): any;
@@ -778,6 +890,12 @@ declare module "perry/ui" {
   /** stdlib */
   export function appSetTimer(...args: any[]): any;
   /** stdlib */
+  export function bottomNavAddItem(...args: any[]): any;
+  /** stdlib */
+  export function bottomNavSetBadge(...args: any[]): any;
+  /** stdlib */
+  export function bottomNavSetSelected(...args: any[]): any;
+  /** stdlib */
   export function clipboardRead(...args: any[]): any;
   /** stdlib */
   export function clipboardWrite(...args: any[]): any;
@@ -787,6 +905,16 @@ declare module "perry/ui" {
   export function frameSplitAddChild(...args: any[]): any;
   /** stdlib */
   export function frameSplitCreate(...args: any[]): any;
+  /** stdlib */
+  export function imageGalleryAddImage(...args: any[]): any;
+  /** stdlib */
+  export function imageGallerySetIndex(...args: any[]): any;
+  /** stdlib */
+  export function lazyvstackEndRefreshing(...args: any[]): any;
+  /** stdlib */
+  export function lazyvstackSetRefreshControl(...args: any[]): any;
+  /** stdlib */
+  export function lazyvstackSetScrollEndCallback(...args: any[]): any;
   /** stdlib */
   export function menuAddItem(...args: any[]): any;
   /** stdlib */
@@ -822,6 +950,10 @@ declare module "perry/ui" {
   /** stdlib */
   export function saveFileDialog(...args: any[]): any;
   /** stdlib */
+  export function scrollViewSetScrollEndCallback(...args: any[]): any;
+  /** stdlib */
+  export function scrollviewSetScrollEndCallback(...args: any[]): any;
+  /** stdlib */
   export function setText(...args: any[]): any;
   /** stdlib */
   export function sheetCreate(...args: any[]): any;
@@ -849,6 +981,20 @@ declare module "perry/ui" {
   export function traySetIcon(...args: any[]): any;
   /** stdlib */
   export function traySetTooltip(...args: any[]): any;
+  /** stdlib */
+  export function webviewCanGoBack(...args: any[]): any;
+  /** stdlib */
+  export function webviewClearCookies(...args: any[]): any;
+  /** stdlib */
+  export function webviewEvaluateJs(...args: any[]): any;
+  /** stdlib */
+  export function webviewGoBack(...args: any[]): any;
+  /** stdlib */
+  export function webviewGoForward(...args: any[]): any;
+  /** stdlib */
+  export function webviewLoadUrl(...args: any[]): any;
+  /** stdlib */
+  export function webviewReload(...args: any[]): any;
 }
 
 declare module "perry/updater" {
@@ -970,6 +1116,8 @@ declare module "stream" {
   /** stdlib */
   export function finished(...args: any[]): any;
   /** stdlib */
+  export function from(...args: any[]): any;
+  /** stdlib */
   export function pipeline(...args: any[]): any;
 }
 
@@ -1077,6 +1225,8 @@ declare module "worker_threads" {
 }
 
 declare module "ws" {
+  /** stdlib */
+  export class Client { [key: string]: any; }
   /** stdlib */
   export class WebSocket { [key: string]: any; }
   /** stdlib */

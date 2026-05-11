@@ -678,13 +678,7 @@ fn is_stream_api_member(module: &str, prop: &str) -> bool {
         "writable_stream" => matches!(prop, "getWriter" | "abort" | "close" | "locked"),
         "writable_stream_writer" => matches!(
             prop,
-            "write"
-                | "close"
-                | "abort"
-                | "releaseLock"
-                | "closed"
-                | "ready"
-                | "desiredSize"
+            "write" | "close" | "abort" | "releaseLock" | "closed" | "ready" | "desiredSize"
         ),
         "transform_stream" => matches!(prop, "readable" | "writable"),
         _ => false,

@@ -1863,7 +1863,9 @@ fn hex_decode_into_buffer(input: &[u8]) -> *mut BufferHeader {
     let max_out = input.len() / 2;
     let buf = buffer_alloc(max_out as u32);
     if max_out == 0 {
-        unsafe { (*buf).length = 0; }
+        unsafe {
+            (*buf).length = 0;
+        }
         return buf;
     }
     unsafe {
@@ -1900,7 +1902,7 @@ fn hex_encode_into_string(input: &[u8]) -> *mut StringHeader {
     unsafe {
         for (i, &b) in input.iter().enumerate() {
             // SAFETY: i*2+1 < out_len because allocation is exactly input.len()*2.
-            *dst.add(i * 2)     = *table.get_unchecked((b >> 4) as usize);
+            *dst.add(i * 2) = *table.get_unchecked((b >> 4) as usize);
             *dst.add(i * 2 + 1) = *table.get_unchecked((b & 0xF) as usize);
         }
     }
@@ -1928,7 +1930,9 @@ fn base64_decode_into_buffer(input: &[u8]) -> *mut BufferHeader {
     let max_out = input.len().saturating_mul(3) / 4 + 3;
     let buf = buffer_alloc(max_out as u32);
     if input.is_empty() {
-        unsafe { (*buf).length = 0; }
+        unsafe {
+            (*buf).length = 0;
+        }
         return buf;
     }
     unsafe {
@@ -1959,11 +1963,9 @@ fn base64_decode_into_buffer(input: &[u8]) -> *mut BufferHeader {
             if (v0 | v1 | v2 | v3) >= 64 {
                 break;
             }
-            let chunk = ((v0 as u32) << 18)
-                | ((v1 as u32) << 12)
-                | ((v2 as u32) << 6)
-                | (v3 as u32);
-            *dst.add(written)     = (chunk >> 16) as u8;
+            let chunk =
+                ((v0 as u32) << 18) | ((v1 as u32) << 12) | ((v2 as u32) << 6) | (v3 as u32);
+            *dst.add(written) = (chunk >> 16) as u8;
             *dst.add(written + 1) = (chunk >> 8) as u8;
             *dst.add(written + 2) = chunk as u8;
             written += 3;
@@ -2019,7 +2021,7 @@ fn base64_encode_into_string(input: &[u8]) -> *mut StringHeader {
             let b = *input.get_unchecked(i + 1) as u32;
             let c = *input.get_unchecked(i + 2) as u32;
             let n = (a << 16) | (b << 8) | c;
-            *dst.add(o)     = *table.get_unchecked((n >> 18) as usize);
+            *dst.add(o) = *table.get_unchecked((n >> 18) as usize);
             *dst.add(o + 1) = *table.get_unchecked(((n >> 12) & 0x3F) as usize);
             *dst.add(o + 2) = *table.get_unchecked(((n >> 6) & 0x3F) as usize);
             *dst.add(o + 3) = *table.get_unchecked((n & 0x3F) as usize);
@@ -2030,7 +2032,7 @@ fn base64_encode_into_string(input: &[u8]) -> *mut StringHeader {
         if rem == 1 {
             let a = *input.get_unchecked(i) as u32;
             let n = a << 16;
-            *dst.add(o)     = *table.get_unchecked((n >> 18) as usize);
+            *dst.add(o) = *table.get_unchecked((n >> 18) as usize);
             *dst.add(o + 1) = *table.get_unchecked(((n >> 12) & 0x3F) as usize);
             *dst.add(o + 2) = b'=';
             *dst.add(o + 3) = b'=';
@@ -2038,7 +2040,7 @@ fn base64_encode_into_string(input: &[u8]) -> *mut StringHeader {
             let a = *input.get_unchecked(i) as u32;
             let b = *input.get_unchecked(i + 1) as u32;
             let n = (a << 16) | (b << 8);
-            *dst.add(o)     = *table.get_unchecked((n >> 18) as usize);
+            *dst.add(o) = *table.get_unchecked((n >> 18) as usize);
             *dst.add(o + 1) = *table.get_unchecked(((n >> 12) & 0x3F) as usize);
             *dst.add(o + 2) = *table.get_unchecked(((n >> 6) & 0x3F) as usize);
             *dst.add(o + 3) = b'=';
@@ -2085,7 +2087,7 @@ fn encode_base64(input: &[u8]) -> Vec<u8> {
     let triple_end = input.len() - input.len() % 3;
     while i < triple_end {
         let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8) | (input[i + 2] as u32);
-        out[o]     = table[(n >> 18) as usize];
+        out[o] = table[(n >> 18) as usize];
         out[o + 1] = table[((n >> 12) & 0x3F) as usize];
         out[o + 2] = table[((n >> 6) & 0x3F) as usize];
         out[o + 3] = table[(n & 0x3F) as usize];
@@ -2095,13 +2097,13 @@ fn encode_base64(input: &[u8]) -> Vec<u8> {
     let rem = input.len() - i;
     if rem == 1 {
         let n = (input[i] as u32) << 16;
-        out[o]     = table[(n >> 18) as usize];
+        out[o] = table[(n >> 18) as usize];
         out[o + 1] = table[((n >> 12) & 0x3F) as usize];
         out[o + 2] = b'=';
         out[o + 3] = b'=';
     } else if rem == 2 {
         let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8);
-        out[o]     = table[(n >> 18) as usize];
+        out[o] = table[(n >> 18) as usize];
         out[o + 1] = table[((n >> 12) & 0x3F) as usize];
         out[o + 2] = table[((n >> 6) & 0x3F) as usize];
         out[o + 3] = b'=';

@@ -13,8 +13,8 @@ use anyhow::{anyhow, Result};
 use perry_hir::ModuleKind;
 use perry_transform::{
     gather_cross_module_anon_classes, gather_cross_module_methods,
-    gather_cross_module_methods_with_extern_imports, inline_finally_into_returns,
-    inline_functions, transform_async_to_generator, transform_generators, MethodCandidate,
+    gather_cross_module_methods_with_extern_imports, inline_finally_into_returns, inline_functions,
+    transform_async_to_generator, transform_generators, MethodCandidate,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -216,17 +216,16 @@ pub(super) fn collect_modules(
     let is_external_module = !canonical.starts_with(&ctx.project_root)
         || canonical.to_string_lossy().contains("/node_modules/")
         || entry_path.to_string_lossy().contains("/node_modules/");
-    let (mut hir_module, new_next_class_id) =
-        perry_hir::lower_module_full(
-            ast_module,
-            &module_name,
-            &source_file_path,
-            *next_class_id,
-            resolved_types,
-            imported_class_fields,
-            is_entry_module,
-            is_external_module,
-        )?;
+    let (mut hir_module, new_next_class_id) = perry_hir::lower_module_full(
+        ast_module,
+        &module_name,
+        &source_file_path,
+        *next_class_id,
+        resolved_types,
+        imported_class_fields,
+        is_entry_module,
+        is_external_module,
+    )?;
     *next_class_id = new_next_class_id; // Update the global class_id counter
 
     // Process imports and update their resolved paths and module kinds

@@ -262,7 +262,10 @@ pub unsafe extern "C" fn js_fetch_get_with_auth(
     let promise = JsPromise::new();
     let raw = promise.as_raw();
     let Some(url) = read_str(url_ptr) else {
-        eprintln!("[ext-fetch GET-auth] url_ptr null/invalid (ptr={:?})", url_ptr);
+        eprintln!(
+            "[ext-fetch GET-auth] url_ptr null/invalid (ptr={:?})",
+            url_ptr
+        );
         promise.reject_string("Invalid URL");
         return raw;
     };
@@ -272,7 +275,11 @@ pub unsafe extern "C" fn js_fetch_get_with_auth(
             headers.insert("Authorization".to_string(), auth);
         }
     }
-    eprintln!("[ext-fetch GET-auth] url='{}' headers.len={}", &url[..url.len().min(80)], headers.len());
+    eprintln!(
+        "[ext-fetch GET-auth] url='{}' headers.len={}",
+        &url[..url.len().min(80)],
+        headers.len()
+    );
     do_fetch("GET".to_string(), url, headers, None, promise);
     raw
 }
@@ -362,7 +369,14 @@ pub extern "C" fn js_fetch_response_status(handle: f64) -> f64 {
     let id = handle_id(handle);
     let map = FETCH_RESPONSES.lock().unwrap();
     let result = map.get(&id).map(|r| r.status as f64).unwrap_or(0.0);
-    eprintln!("[ext-fetch resp.status] handle={} bits=0x{:016x} id={} keys={:?} -> {}", handle, handle.to_bits(), id, map.keys().collect::<Vec<_>>(), result);
+    eprintln!(
+        "[ext-fetch resp.status] handle={} bits=0x{:016x} id={} keys={:?} -> {}",
+        handle,
+        handle.to_bits(),
+        id,
+        map.keys().collect::<Vec<_>>(),
+        result
+    );
     result
 }
 

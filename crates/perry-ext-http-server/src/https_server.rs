@@ -86,10 +86,7 @@ use crate::types::{
 /// via `json_stringify` so binary cert data has to fit through a
 /// PEM round-trip — fine since key + cert PEM are both ASCII.
 #[no_mangle]
-pub unsafe extern "C" fn js_node_https_create_server(
-    opts_f64: f64,
-    handler: i64,
-) -> i64 {
+pub unsafe extern "C" fn js_node_https_create_server(opts_f64: f64, handler: i64) -> i64 {
     ensure_gc_scanner_registered();
 
     let (key_pem, cert_pem, enable_http2_alpn) = parse_https_opts(opts_f64);
@@ -332,9 +329,7 @@ async fn handle_https_request(
 
 /// Non-blocking try_recv for HTTPS pending requests. Called by
 /// `js_node_http_server_process_pending` in `server.rs` each tick.
-pub(crate) fn try_recv_pending_https_nonblocking(
-    server_handle: i64,
-) -> Option<HttpPendingRequest> {
+pub(crate) fn try_recv_pending_https_nonblocking(server_handle: i64) -> Option<HttpPendingRequest> {
     if let Some(s) = get_handle_mut::<HttpsServer>(server_handle) {
         if let Some(rx) = s.base.request_rx.as_mut() {
             return rx.try_recv().ok();

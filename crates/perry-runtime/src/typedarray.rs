@@ -529,8 +529,8 @@ pub fn typed_array_to_array(ta: *const TypedArrayHeader) -> *mut crate::array::A
         if len == 0 {
             return result;
         }
-        let dst = (result as *mut u8).add(std::mem::size_of::<crate::array::ArrayHeader>())
-            as *mut f64;
+        let dst =
+            (result as *mut u8).add(std::mem::size_of::<crate::array::ArrayHeader>()) as *mut f64;
         for i in 0..len {
             *dst.add(i) = load_at(ta, i);
         }
@@ -561,9 +561,7 @@ pub extern "C" fn js_typed_array_to_reversed(ta: *const TypedArrayHeader) -> *mu
 /// `ta.sort()` — default ascending numeric sort, **in place**. Per the
 /// JS spec, the same typed-array reference is returned. Issue #654.
 #[no_mangle]
-pub extern "C" fn js_typed_array_sort_default(
-    ta: *mut TypedArrayHeader,
-) -> *mut TypedArrayHeader {
+pub extern "C" fn js_typed_array_sort_default(ta: *mut TypedArrayHeader) -> *mut TypedArrayHeader {
     let ta_clean = clean_ta_ptr(ta as *const TypedArrayHeader) as *mut TypedArrayHeader;
     if ta_clean.is_null() {
         return ta_clean;

@@ -21,8 +21,8 @@
 use std::collections::HashMap;
 
 use perry_ffi::{
-    alloc_string, get_handle, get_handle_mut, register_handle, JsClosure, JsValue, RawClosureHeader,
-    StringHeader,
+    alloc_string, get_handle, get_handle_mut, register_handle, JsClosure, JsValue,
+    RawClosureHeader, StringHeader,
 };
 
 use crate::types::{
@@ -361,8 +361,7 @@ pub(crate) fn emit_data_to_listeners(listeners: &[i64], body: &[u8]) {
     }
     let s = String::from_utf8_lossy(body).into_owned();
     let header = alloc_string(&s);
-    let chunk_f64 =
-        f64::from_bits(STRING_TAG | (header.as_raw() as u64 & PTR_MASK));
+    let chunk_f64 = f64::from_bits(STRING_TAG | (header.as_raw() as u64 & PTR_MASK));
     for cb in listeners {
         if *cb == 0 {
             continue;

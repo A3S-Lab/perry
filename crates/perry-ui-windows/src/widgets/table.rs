@@ -93,7 +93,10 @@ pub fn is_registered(handle: i64) -> bool {
 /// Render a single cell by invoking the user's render closure.
 fn render_cell(handle: i64, row: i64, col: i64) -> String {
     let render_closure = TABLES.with(|t| {
-        t.borrow().get(&handle).map(|e| e.render_closure).unwrap_or(0.0)
+        t.borrow()
+            .get(&handle)
+            .map(|e| e.render_closure)
+            .unwrap_or(0.0)
     });
     if render_closure == 0.0 {
         return String::new();
@@ -197,11 +200,7 @@ pub fn create(row_count: f64, col_count: f64, render_closure: f64) -> i64 {
                 hwnd,
                 LVM_SETEXTENDEDLISTVIEWSTYLE,
                 WPARAM(0),
-                LPARAM(
-                    (LVS_EX_FULLROWSELECT
-                        | LVS_EX_GRIDLINES
-                        | LVS_EX_HEADERDRAGDROP) as isize,
-                ),
+                LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_HEADERDRAGDROP) as isize),
             );
 
             // Insert the columns. Default header is "Col N".
@@ -599,7 +598,10 @@ pub fn handle_itemchanged(handle: i64, lparam: LPARAM) {
         return;
     }
     let select_closure = TABLES.with(|t| {
-        t.borrow().get(&handle).map(|e| e.select_closure).unwrap_or(0.0)
+        t.borrow()
+            .get(&handle)
+            .map(|e| e.select_closure)
+            .unwrap_or(0.0)
     });
     if select_closure == 0.0 {
         return;
@@ -654,11 +656,7 @@ pub fn handle_columnclick(handle: i64, lparam: LPARAM) {
         return;
     }
     unsafe {
-        js_closure_call2(
-            closure_ptr,
-            col as f64,
-            if ascending { 1.0 } else { 0.0 },
-        );
+        js_closure_call2(closure_ptr, col as f64, if ascending { 1.0 } else { 0.0 });
     }
     // Clear the cache so next paint re-renders post-sort.
     TABLES.with(|t| {

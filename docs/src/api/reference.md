@@ -2,9 +2,9 @@
 
 This page is auto-generated from Perry's compile-time API manifest (`perry-api-manifest::API_MANIFEST`). It is the source of truth for what `perry compile` accepts; references to symbols not listed here produce `R005 UnimplementedApi` (issue #463). Stubs (#464) are flagged ⚠ — they link cleanly but no-op at runtime on the chosen target.
 
-**Generated for Perry v0.5.606.**
+**Generated for Perry v0.5.827.**
 
-Total: 673 entries across 68 modules.
+Total: 812 entries across 70 modules.
 
 ## Modules
 
@@ -31,6 +31,7 @@ Total: 673 entries across 68 modules.
 - [`fetch`](#fetch)
 - [`fs`](#fs)
 - [`http`](#http)
+- [`http2`](#http2)
 - [`https`](#https)
 - [`ioredis`](#ioredis)
 - [`iroh`](#iroh)
@@ -48,6 +49,7 @@ Total: 673 entries across 68 modules.
 - [`nodemailer`](#nodemailer)
 - [`os`](#os)
 - [`path`](#path)
+- [`perry/background`](#perry-background)
 - [`perry/i18n`](#perry-i18n)
 - [`perry/media`](#perry-media)
 - [`perry/plugin`](#perry-plugin)
@@ -129,6 +131,7 @@ Total: 673 entries across 68 modules.
 - `exec` — instance
 - `get` — instance
 - `prepare` — instance
+- `raw` — instance
 - `run` — instance
 
 ## `bignumber.js`
@@ -221,6 +224,11 @@ Total: 673 entries across 68 modules.
 - `randomBytes` — module
 - `randomUUID` — module
 - `sha256` — module
+
+### Properties
+
+- `constants`
+- `subtle`
 
 ## `date-fns`
 
@@ -368,6 +376,7 @@ Total: 673 entries across 68 modules.
 - `setErrorHandler` — instance
 - `status` — instance
 - `text` — instance
+- `type` — instance
 - `url` — instance
 - `user` — instance
 
@@ -429,14 +438,74 @@ Total: 673 entries across 68 modules.
 
 - `ClientRequest`
 - `IncomingMessage`
+- `IncomingMessage`
 - `Server`
+- `Server`
+- `ServerResponse`
 - `ServerResponse`
 
 ### Methods
 
+- `__get_aborted` — instance *(class: `IncomingMessage`)*
+- `__get_complete` — instance *(class: `IncomingMessage`)*
+- `__get_destroyed` — instance *(class: `IncomingMessage`)*
+- `__get_headersSent` — instance *(class: `ServerResponse`)*
+- `__get_httpVersion` — instance *(class: `IncomingMessage`)*
+- `__get_method` — instance *(class: `IncomingMessage`)*
+- `__get_statusCode` — instance *(class: `ServerResponse`)*
+- `__get_url` — instance *(class: `IncomingMessage`)*
+- `__get_writableEnded` — instance *(class: `ServerResponse`)*
+- `__get_writableFinished` — instance *(class: `ServerResponse`)*
+- `__set_statusCode` — instance *(class: `ServerResponse`)*
+- `__set_statusMessage` — instance *(class: `ServerResponse`)*
+- `addListener` — instance *(class: `HttpServer`)*
+- `addListener` — instance *(class: `IncomingMessage`)*
+- `addListener` — instance *(class: `ServerResponse`)*
+- `close` — instance *(class: `HttpServer`)*
+- `closeAllConnections` — instance *(class: `HttpServer`)*
+- `closeIdleConnections` — instance *(class: `HttpServer`)*
 - `createServer` — module
+- `createServer` — module
+- `destroy` — instance *(class: `IncomingMessage`)*
+- `end` — instance *(class: `ServerResponse`)*
+- `flushHeaders` — instance *(class: `ServerResponse`)*
 - `get` — module
+- `getHeader` — instance *(class: `ServerResponse`)*
+- `getStatus` — instance *(class: `ServerResponse`)*
+- `hasHeader` — instance *(class: `ServerResponse`)*
+- `httpVersion` — instance *(class: `IncomingMessage`)*
+- `listen` — instance *(class: `HttpServer`)*
+- `method` — instance *(class: `IncomingMessage`)*
+- `on` — instance *(class: `HttpServer`)*
+- `on` — instance *(class: `IncomingMessage`)*
+- `on` — instance *(class: `ServerResponse`)*
+- `pause` — instance *(class: `IncomingMessage`)*
+- `read` — instance *(class: `IncomingMessage`)*
+- `removeHeader` — instance *(class: `ServerResponse`)*
 - `request` — module
+- `resume` — instance *(class: `IncomingMessage`)*
+- `setHeader` — instance *(class: `ServerResponse`)*
+- `setStatus` — instance *(class: `ServerResponse`)*
+- `url` — instance *(class: `IncomingMessage`)*
+- `write` — instance *(class: `ServerResponse`)*
+- `writeContinue` — instance *(class: `ServerResponse`)*
+- `writeHead` — instance *(class: `ServerResponse`)*
+- `writeProcessing` — instance *(class: `ServerResponse`)*
+
+## `http2`
+
+### Classes
+
+- `Http2SecureServer`
+- `Http2ServerRequest`
+- `Http2ServerResponse`
+
+### Methods
+
+- `close` — instance *(class: `Http2SecureServer`)*
+- `createSecureServer` — module
+- `listen` — instance *(class: `Http2SecureServer`)*
+- `on` — instance *(class: `Http2SecureServer`)*
 
 ## `https`
 
@@ -445,12 +514,17 @@ Total: 673 entries across 68 modules.
 - `ClientRequest`
 - `IncomingMessage`
 - `Server`
+- `Server`
 - `ServerResponse`
 
 ### Methods
 
+- `close` — instance *(class: `HttpsServer`)*
+- `createServer` — module
 - `createServer` — module
 - `get` — module
+- `listen` — instance *(class: `HttpsServer`)*
+- `on` — instance *(class: `HttpsServer`)*
 - `request` — module
 
 ## `ioredis`
@@ -461,9 +535,11 @@ Total: 673 entries across 68 modules.
 
 ### Methods
 
+- `connect` — instance
 - `createClient` — module
 - `decr` — instance
 - `del` — instance
+- `disconnect` — instance
 - `exists` — instance
 - `expire` — instance
 - `get` — instance
@@ -677,6 +753,7 @@ Total: 673 entries across 68 modules.
 ### Properties
 
 - `EOL`
+- `constants`
 
 ## `path`
 
@@ -699,6 +776,14 @@ Total: 673 entries across 68 modules.
 - `posix`
 - `sep`
 - `win32`
+
+## `perry/background`
+
+### Methods
+
+- `cancel` — module
+- `registerTask` — module
+- `schedule` — module
 
 ## `perry/i18n`
 
@@ -758,6 +843,8 @@ Total: 673 entries across 68 modules.
 
 ### Methods
 
+- `appGetLaunchUrl` — module
+- `appOnOpenUrl` — module
 - `audioGetLevel` — module
 - `audioGetPeak` — module
 - `audioGetWaveform` — module
@@ -766,14 +853,22 @@ Total: 673 entries across 68 modules.
 - `audioStartRecording` — module
 - `audioStop` — module
 - `audioStopRecording` — module
+- `geolocationGetCurrent` — module
+- `geolocationRequestPermission` — module
+- `geolocationStopWatch` — module
+- `geolocationWatch` — module
 - `getAppIcon` — module
 - `getDeviceIdiom` — module
 - `getDeviceModel` — module
 - `getLocale` — module
+- `imagePickerPick` — module
 - `isDarkMode` — module
 - `keychainDelete` — module
 - `keychainGet` — module
 - `keychainSave` — module
+- `networkGetStatus` — module
+- `networkOnChange` — module
+- `networkStopOnChange` — module
 - `notificationCancel` — module
 - `notificationOnBackgroundReceive` — module
 - `notificationOnReceive` — module
@@ -796,37 +891,73 @@ Total: 673 entries across 68 modules.
 
 ### Methods
 
+- `AnimatedSpinner` — module
 - `Box` — module
 - `Input` — module
+- `InputAt` — module
 - `List` — module
 - `ProgressBar` — module
 - `Select` — module
 - `Spacer` — module
 - `Spinner` — module
+- `Table` — module
+- `Tabs` — module
 - `Text` — module
 - `TextArea` — module
+- `TextStyled` — module
 - `boxSetAlignItems` — module
+- `boxSetFlexBasis` — module
+- `boxSetFlexBasisPct` — module
 - `boxSetFlexDirection` — module
 - `boxSetFlexGrow` — module
+- `boxSetFlexShrink` — module
 - `boxSetGap` — module
 - `boxSetHeight` — module
+- `boxSetHeightPct` — module
 - `boxSetJustifyContent` — module
 - `boxSetPadding` — module
+- `boxSetPaddingEach` — module
 - `boxSetWidth` — module
+- `boxSetWidthPct` — module
+- `columns` — instance *(class: `TuiStdout`)*
 - `enter` — module
 - `exit` — module
+- `exit` — instance *(class: `TuiApp`)*
+- `focus` — module
+- `focus` — instance *(class: `FocusManager`)*
+- `focusNext` — module
+- `focusNext` — instance *(class: `FocusManager`)*
+- `focusPrevious` — module
+- `focusPrevious` — instance *(class: `FocusManager`)*
 - `get` — instance *(class: `State`)*
+- `get` — instance *(class: `RefBox`)*
 - `render` — module
+- `rows` — instance *(class: `TuiStdout`)*
 - `run` — module
 - `set` — instance *(class: `State`)*
+- `set` — instance *(class: `RefBox`)*
 - `state` — module
+- `useApp` — module
+- `useEffect` — module
+- `useFocus` — module
+- `useFocusManager` — module
 - `useInput` — module
+- `useMemo` — module
+- `useRef` — module
+- `useState` — module
+- `useStateSet` — module
+- `useStateTuple` — module
+- `useStdout` — module
+- `waitUntilExit` — module
+- `waitUntilExit` — instance *(class: `TuiApp`)*
+- `write` — instance *(class: `TuiStdout`)*
 
 ## `perry/ui`
 
 ### Methods
 
 - `App` — module
+- `BottomNavigation` — module
 - `Button` — module
 - `CameraView` — module
 - `Canvas` — module
@@ -834,7 +965,9 @@ Total: 673 entries across 68 modules.
 - `ForEach` — module
 - `HStack` — module
 - `HStackWithInsets` — module
+- `Image` — module
 - `ImageFile` — module
+- `ImageGallery` — module
 - `ImageSymbol` — module
 - `LazyVStack` — module
 - `NavStack` — module
@@ -855,6 +988,7 @@ Total: 673 entries across 68 modules.
 - `Toggle` — module
 - `VStack` — module
 - `VStackWithInsets` — module
+- `WebView` — module
 - `Window` — module
 - `ZStack` — module
 - `addKeyboardShortcut` — module
@@ -863,11 +997,19 @@ Total: 673 entries across 68 modules.
 - `appSetMaxSize` — module
 - `appSetMinSize` — module
 - `appSetTimer` — module
+- `bottomNavAddItem` — module
+- `bottomNavSetBadge` — module
+- `bottomNavSetSelected` — module
 - `clipboardRead` — module
 - `clipboardWrite` — module
 - `embedNSView` — module
 - `frameSplitAddChild` — module
 - `frameSplitCreate` — module
+- `imageGalleryAddImage` — module
+- `imageGallerySetIndex` — module
+- `lazyvstackEndRefreshing` — module
+- `lazyvstackSetRefreshControl` — module
+- `lazyvstackSetScrollEndCallback` — module
 - `menuAddItem` — module
 - `menuAddItemWithShortcut` — module
 - `menuAddSeparator` — module
@@ -885,6 +1027,8 @@ Total: 673 entries across 68 modules.
 - `pollOpenFile` — module
 - `registerGlobalHotkey` — module
 - `saveFileDialog` — module
+- `scrollViewSetScrollEndCallback` — module
+- `scrollviewSetScrollEndCallback` — module
 - `setText` — module
 - `sheetCreate` — module
 - `sheetDismiss` — module
@@ -899,6 +1043,13 @@ Total: 673 entries across 68 modules.
 - `trayOnClick` — module
 - `traySetIcon` — module
 - `traySetTooltip` — module
+- `webviewCanGoBack` — module
+- `webviewClearCookies` — module
+- `webviewEvaluateJs` — module
+- `webviewGoBack` — module
+- `webviewGoForward` — module
+- `webviewLoadUrl` — module
+- `webviewReload` — module
 
 ## `perry/updater`
 
@@ -1025,6 +1176,7 @@ Total: 673 entries across 68 modules.
 ### Methods
 
 - `finished` — module
+- `from` — module
 - `pipeline` — module
 
 ## `streams`
@@ -1131,6 +1283,7 @@ Total: 673 entries across 68 modules.
 
 ### Classes
 
+- `Client`
 - `WebSocket`
 - `WebSocketServer`
 
@@ -1138,10 +1291,14 @@ Total: 673 entries across 68 modules.
 
 - `Server` — module
 - `WebSocket` — module
+- `addListener` — instance *(class: `Client`)*
 - `close` — instance
+- `close` — instance *(class: `Client`)*
 - `closeClient` — module
 - `on` — instance
+- `on` — instance *(class: `Client`)*
 - `send` — instance
+- `send` — instance *(class: `Client`)*
 - `sendToClient` — module
 
 ## `zlib`

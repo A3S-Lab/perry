@@ -219,10 +219,7 @@ fn expr_uses_arguments(expr: &ast::Expr) -> bool {
 /// the user's parameters, before lowering the body, when the body references
 /// `arguments` and the user hasn't already bound it (either explicitly or via
 /// their own rest param).
-pub(crate) fn append_synthetic_arguments_param(
-    ctx: &mut LoweringContext,
-    params: &mut Vec<Param>,
-) {
+pub(crate) fn append_synthetic_arguments_param(ctx: &mut LoweringContext, params: &mut Vec<Param>) {
     let arguments_id = ctx.define_local("arguments".to_string(), Type::Any);
     params.push(Param {
         id: arguments_id,
@@ -670,9 +667,10 @@ pub(crate) fn lower_class_decl(
                     "WritableStream" => {
                         Some(("writable_stream".to_string(), "WritableStream".to_string()))
                     }
-                    "TransformStream" => {
-                        Some(("transform_stream".to_string(), "TransformStream".to_string()))
-                    }
+                    "TransformStream" => Some((
+                        "transform_stream".to_string(),
+                        "TransformStream".to_string(),
+                    )),
                     _ => None,
                 };
                 if native_parent.is_some() {
@@ -699,11 +697,7 @@ pub(crate) fn lower_class_decl(
                 // Class names are unique enough in practice that `lookup_class`
                 // resolves; if it doesn't, we fall back to the prior
                 // name-only behavior (no regression for unknown parents).
-                (
-                    ctx.lookup_class(&parent_name),
-                    Some(parent_name),
-                    None,
-                )
+                (ctx.lookup_class(&parent_name), Some(parent_name), None)
             } else {
                 (None, None, None)
             }
@@ -1590,9 +1584,10 @@ pub(crate) fn lower_class_from_ast(
                 "WritableStream" => {
                     Some(("writable_stream".to_string(), "WritableStream".to_string()))
                 }
-                "TransformStream" => {
-                    Some(("transform_stream".to_string(), "TransformStream".to_string()))
-                }
+                "TransformStream" => Some((
+                    "transform_stream".to_string(),
+                    "TransformStream".to_string(),
+                )),
                 _ => None,
             };
             if native_parent.is_some() {
@@ -1606,11 +1601,7 @@ pub(crate) fn lower_class_from_ast(
             // rationale — without this, the parent link is lost and
             // inherited methods don't reach instances.
             let parent_name = extract_member_class_name(member);
-            (
-                ctx.lookup_class(&parent_name),
-                Some(parent_name),
-                None,
-            )
+            (ctx.lookup_class(&parent_name), Some(parent_name), None)
         } else {
             (None, None, None)
         }
@@ -3393,10 +3384,7 @@ pub(crate) fn collect_refs_in_closure_bodies_stmt(
     }
 }
 
-fn collect_refs_in_closure_bodies_expr(
-    expr: &Expr,
-    out: &mut std::collections::HashSet<LocalId>,
-) {
+fn collect_refs_in_closure_bodies_expr(expr: &Expr, out: &mut std::collections::HashSet<LocalId>) {
     if let Expr::Closure { body, .. } = expr {
         // Inside a closure body — collect every reference (including refs
         // from any further-nested closures, since those run when the outer
@@ -3419,7 +3407,10 @@ fn collect_refs_in_closure_bodies_expr(
 /// Collect `LocalId`s declared by a top-level `Stmt::Let` in `stmt`. Does
 /// NOT recurse into nested blocks (those are block-scoped — their lets
 /// aren't hoisted to function-entry).
-pub(crate) fn collect_top_level_let_ids_stmt(stmt: &Stmt, out: &mut std::collections::HashSet<LocalId>) {
+pub(crate) fn collect_top_level_let_ids_stmt(
+    stmt: &Stmt,
+    out: &mut std::collections::HashSet<LocalId>,
+) {
     if let Stmt::Let { id, .. } = stmt {
         out.insert(*id);
     }

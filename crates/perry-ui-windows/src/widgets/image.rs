@@ -468,12 +468,7 @@ fn fetch_url_async(hwnd: HWND, url: String) {
         };
         url_bytes_set(target.0 .0 as isize, bytes);
         unsafe {
-            let _ = PostMessageW(
-                target.0,
-                WM_USER_IMAGE_LOADED,
-                WPARAM(0),
-                LPARAM(0),
-            );
+            let _ = PostMessageW(target.0, WM_USER_IMAGE_LOADED, WPARAM(0), LPARAM(0));
         }
     });
 
@@ -482,8 +477,8 @@ fn fetch_url_async(hwnd: HWND, url: String) {
     // image HWND for repaint. The match-arm is added to image_wnd_proc.
     let _ = (); // (compile-time anchor — keeps the const above alive when
                 // grep'ing for the message id.)
-    // Make the constant accessible from the wnd-proc match arm via a
-    // module-scope re-export — see `IMAGE_LOADED_MSG` below.
+                // Make the constant accessible from the wnd-proc match arm via a
+                // module-scope re-export — see `IMAGE_LOADED_MSG` below.
 }
 
 /// Cross-thread blocking URL fetch via WinHTTP. Returns the body bytes
@@ -511,7 +506,9 @@ fn fetch_url_blocking(url: &str) -> Option<Vec<u8>> {
             return None;
         }
 
-        let port = parsed.port.unwrap_or(if parsed.is_https { 443 } else { 80 });
+        let port = parsed
+            .port
+            .unwrap_or(if parsed.is_https { 443 } else { 80 });
         let connect = WinHttpConnect(session, PCWSTR(host_wide.as_ptr()), port, 0);
         if connect.is_null() {
             let _ = WinHttpCloseHandle(session);
@@ -539,14 +536,7 @@ fn fetch_url_blocking(url: &str) -> Option<Vec<u8>> {
             return None;
         }
 
-        let send_ok = WinHttpSendRequest(
-            request,
-            None,
-            None,
-            0,
-            0,
-            0,
-        );
+        let send_ok = WinHttpSendRequest(request, None, None, 0, 0, 0);
         if send_ok.is_err() {
             let _ = WinHttpCloseHandle(request);
             let _ = WinHttpCloseHandle(connect);

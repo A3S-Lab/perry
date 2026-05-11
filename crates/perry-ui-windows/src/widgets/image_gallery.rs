@@ -131,10 +131,8 @@ fn refresh_image(handle: i64) {
             // signature. Length-prefixed UTF-8 matches the on-the-wire
             // format the runtime uses.
             let bytes = url.as_bytes();
-            let str_ptr = perry_runtime::string::js_string_from_bytes(
-                bytes.as_ptr(),
-                bytes.len() as u32,
-            );
+            let str_ptr =
+                perry_runtime::string::js_string_from_bytes(bytes.as_ptr(), bytes.len() as u32);
             super::image::set_url(handle, str_ptr as *const u8);
         }
     }

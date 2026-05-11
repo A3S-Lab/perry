@@ -442,9 +442,7 @@ async fn handle_websocket_upgrade(
         .headers()
         .get("sec-websocket-key")
         .and_then(|v| v.to_str().ok())
-        .map(|k| {
-            tokio_tungstenite::tungstenite::handshake::derive_accept_key(k.as_bytes())
-        })
+        .map(|k| tokio_tungstenite::tungstenite::handshake::derive_accept_key(k.as_bytes()))
         .unwrap_or_default();
 
     // Build the upgraded-protocol IncomingMessage now (no body — WS
@@ -668,9 +666,7 @@ fn try_recv_upgrade(server_handle: i64) -> Option<HttpPendingUpgrade> {
 /// The codegen-emitted main loop's `js_wait_for_event` provides the
 /// blocking wait at the outer level via condvar, so we don't need to
 /// spin here.
-pub(crate) fn try_recv_pending_nonblocking(
-    server_handle: i64,
-) -> Option<HttpPendingRequest> {
+pub(crate) fn try_recv_pending_nonblocking(server_handle: i64) -> Option<HttpPendingRequest> {
     if let Some(s) = get_handle_mut::<HttpServer>(server_handle) {
         if let Some(rx) = s.request_rx.as_mut() {
             return rx.try_recv().ok();

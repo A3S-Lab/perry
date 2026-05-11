@@ -26,8 +26,7 @@ use crate::nanbox::{
 use crate::strings::StringPool;
 use crate::type_analysis::{
     compute_auto_captures, is_array_expr, is_bigint_expr, is_bool_expr, is_map_expr,
-    is_numeric_expr, is_set_expr, is_string_expr, is_url_search_params_expr,
-    receiver_class_name,
+    is_numeric_expr, is_set_expr, is_string_expr, is_url_search_params_expr, receiver_class_name,
 };
 use crate::types::{DOUBLE, I1, I32, I64, I8, PTR};
 
@@ -310,8 +309,7 @@ pub(crate) struct FnCtx<'a> {
     /// `(namespace_local_name, member_name)` → `source_prefix`. Consulted
     /// by namespace member access lowering to disambiguate when the same
     /// export name appears in multiple `import * as X / Y` sources.
-    pub namespace_member_prefixes:
-        &'a std::collections::HashMap<(String, String), String>,
+    pub namespace_member_prefixes: &'a std::collections::HashMap<(String, String), String>,
     /// Names of imported functions that are async. Used to wrap
     /// cross-module calls in promise machinery.
     pub imported_async_funcs: &'a std::collections::HashSet<String>,
@@ -749,11 +747,7 @@ fn emit_write_barrier(ctx: &mut FnCtx<'_>, parent_bits: &str, child_bits: &str) 
 ///
 /// `kind` is one of `"readable"` / `"writable"` / `"transform"` —
 /// matches the SuperCall arm's `parent_name` switch in expr.rs.
-fn lower_stream_super_init(
-    ctx: &mut FnCtx<'_>,
-    kind: &str,
-    super_args: &[Expr],
-) -> Result<String> {
+fn lower_stream_super_init(ctx: &mut FnCtx<'_>, kind: &str, super_args: &[Expr]) -> Result<String> {
     let undef_lit = double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
 
     // Pre-extract field exprs so we don't hold a borrow across `lower_expr`.
@@ -958,9 +952,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         // through so `typeof Buffer === "function"` keeps
                         // working through the existing class-ref path.
                         match property.as_str() {
-                            "process" | "console" | "globalThis" | "performance" => {
-                                Some("object")
-                            }
+                            "process" | "console" | "globalThis" | "performance" => Some("object"),
                             _ => None,
                         }
                     } else {
@@ -2877,7 +2869,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 let key_handle = unbox_str_handle(blk, &key_box);
                 blk.call_void(
                     "js_object_set_field_by_name",
-                    &[(I64, &obj_handle), (I64, &key_handle), (DOUBLE, &val_double)],
+                    &[
+                        (I64, &obj_handle),
+                        (I64, &key_handle),
+                        (DOUBLE, &val_double),
+                    ],
                 );
                 return Ok(val_double);
             }
@@ -2923,7 +2919,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 blk.call(
                     I64,
                     "js_array_set_string_key",
-                    &[(I64, &arr_handle), (I64, &key_handle), (DOUBLE, &val_double)],
+                    &[
+                        (I64, &arr_handle),
+                        (I64, &key_handle),
+                        (DOUBLE, &val_double),
+                    ],
                 );
                 let val_bits = ctx.block().bitcast_double_to_i64(&val_double);
                 let arr_bits = ctx.block().bitcast_double_to_i64(&arr_box);
@@ -2950,7 +2950,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 blk.call(
                     I64,
                     "js_array_set_index_or_string",
-                    &[(I64, &arr_handle), (DOUBLE, &idx_double), (DOUBLE, &val_double)],
+                    &[
+                        (I64, &arr_handle),
+                        (DOUBLE, &idx_double),
+                        (DOUBLE, &val_double),
+                    ],
                 );
                 let val_bits = ctx.block().bitcast_double_to_i64(&val_double);
                 let arr_bits = ctx.block().bitcast_double_to_i64(&arr_box);
@@ -3402,12 +3406,10 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // `js_object_get_field_by_name`'s NATIVE_MODULE_CLASS_ID arm.
             if let Expr::NativeModuleRef(module_name) = object.as_ref() {
                 let mod_idx = ctx.strings.intern(module_name);
-                let mod_bytes_global =
-                    format!("@{}", ctx.strings.entry(mod_idx).bytes_global);
+                let mod_bytes_global = format!("@{}", ctx.strings.entry(mod_idx).bytes_global);
                 let mod_len_str = module_name.len().to_string();
                 let prop_idx = ctx.strings.intern(property);
-                let prop_bytes_global =
-                    format!("@{}", ctx.strings.entry(prop_idx).bytes_global);
+                let prop_bytes_global = format!("@{}", ctx.strings.entry(prop_idx).bytes_global);
                 let prop_len_str = property.len().to_string();
                 return Ok(ctx.block().call(
                     DOUBLE,
@@ -3491,9 +3493,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 // (None for "port") → method-bind check (None) → the
                 // generic runtime helper that crashes on the dummy slot.
                 if ctx.scalar_replaced.contains_key(id) {
-                    return Ok(double_literal(f64::from_bits(
-                        crate::nanbox::TAG_UNDEFINED,
-                    )));
+                    return Ok(double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
                 }
                 // Scalar-replaced array literal: `.length` folds to a
                 // compile-time constant. No heap access, no runtime call.
@@ -3588,7 +3588,8 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     // own sources even when both modules export `make`.
                     // Falls back to the flat `import_function_prefixes`
                     // for namespaces with no overlapping conflicts.
-                    let _ns_lookup_name = if let Expr::ExternFuncRef { name, .. } = object.as_ref() {
+                    let _ns_lookup_name = if let Expr::ExternFuncRef { name, .. } = object.as_ref()
+                    {
                         Some(name.clone())
                     } else {
                         None
@@ -3601,8 +3602,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                                 .cloned()
                         })
                         .or_else(|| ctx.import_function_prefixes.get(property).cloned());
-                    if let Some(source_prefix) = source_prefix_opt
-                    {
+                    if let Some(source_prefix) = source_prefix_opt {
                         // Issue #671: distinguish exported VARIABLES from
                         // exported FUNCTIONS — for variables, the symbol
                         // `perry_fn_<src>__<prop>` is a trivial getter that
@@ -3811,19 +3811,19 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // handles `.length` directly from the NaN-box length
             // byte and returns `undefined` for other keys).
             let is_sso = ctx.block().icmp_eq(I64, &obj_tag, "32761"); // 0x7FF9
-            // v0.5.747: INT32-tagged class refs (top16 == 0x7FFE) used
-            // as PropertyGet receivers. Pre-fix these fell through to
-            // the invalid-recv path (returning undefined) because the
-            // 0xFFFD-masked tag check (0x7FFE & 0xFFFD = 0x7FFC, not
-            // 0x7FFD) treated them as non-pointer values. Drizzle's
-            // `is(value, type)` chain depends on `Cls.kind` reads through
-            // an Any-typed local. Refs #420 / #618 followup.
-            //
-            // Note: this also catches plain int32 numeric values (e.g.
-            // `(42).property`). The runtime helper's INT32-tag arm at
-            // js_object_get_field_by_name returns undefined for any
-            // class_id not registered in CLASS_DYNAMIC_PROPS, matching
-            // the previous behavior — pure ints have no static fields.
+                                                                      // v0.5.747: INT32-tagged class refs (top16 == 0x7FFE) used
+                                                                      // as PropertyGet receivers. Pre-fix these fell through to
+                                                                      // the invalid-recv path (returning undefined) because the
+                                                                      // 0xFFFD-masked tag check (0x7FFE & 0xFFFD = 0x7FFC, not
+                                                                      // 0x7FFD) treated them as non-pointer values. Drizzle's
+                                                                      // `is(value, type)` chain depends on `Cls.kind` reads through
+                                                                      // an Any-typed local. Refs #420 / #618 followup.
+                                                                      //
+                                                                      // Note: this also catches plain int32 numeric values (e.g.
+                                                                      // `(42).property`). The runtime helper's INT32-tag arm at
+                                                                      // js_object_get_field_by_name returns undefined for any
+                                                                      // class_id not registered in CLASS_DYNAMIC_PROPS, matching
+                                                                      // the previous behavior — pure ints have no static fields.
             let is_int32_class = ctx.block().icmp_eq(I64, &obj_tag, "32766"); // 0x7FFE
             let obj_tag_masked = ctx.block().and(I64, &obj_tag, "65533"); // 0xFFFD
             let is_valid = ctx.block().icmp_eq(I64, &obj_tag_masked, "32765"); // 0x7FFD
@@ -6012,7 +6012,11 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // runtime walks the object's class chain and returns a
         // NaN-tagged TAG_TRUE/TAG_FALSE double directly — no
         // conversion needed.
-        Expr::InstanceOf { expr: e, ty, ty_expr } => {
+        Expr::InstanceOf {
+            expr: e,
+            ty,
+            ty_expr,
+        } => {
             let v = lower_expr(ctx, e)?;
             // v0.5.749: dynamic dispatch when the type is a runtime
             // expression (function arg, local holding a class ref).
@@ -7415,9 +7419,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         // callees.
                         if has_rest && declared_count == 1 {
                             let arr_box = lower_expr(ctx, spread_expr)?;
-                            return Ok(ctx
-                                .block()
-                                .call(DOUBLE, &fname, &[(DOUBLE, &arr_box)]));
+                            return Ok(ctx.block().call(DOUBLE, &fname, &[(DOUBLE, &arr_box)]));
                         }
 
                         // Lower the spread source as an array.
@@ -7995,9 +7997,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 &[(DOUBLE, &v_box), (I32, done_str)],
             ))
         }
-        Expr::IterResultGetValue => {
-            Ok(ctx.block().call(DOUBLE, "js_iter_result_get_value", &[]))
-        }
+        Expr::IterResultGetValue => Ok(ctx.block().call(DOUBLE, "js_iter_result_get_value", &[])),
         Expr::IterResultGetDone => {
             // Returns NaN-boxed bool (TAG_TRUE / TAG_FALSE) directly,
             // so it can be used in any conditional / property context
@@ -9088,8 +9088,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let v = lower_expr(ctx, d)?;
             let inferred = crate::type_analysis::refine_type_from_init(ctx, d);
             let rt_fn = match inferred {
-                Some(perry_types::Type::Number)
-                | Some(perry_types::Type::Int32) => "js_number_to_locale_string",
+                Some(perry_types::Type::Number) | Some(perry_types::Type::Int32) => {
+                    "js_number_to_locale_string"
+                }
                 _ => "js_date_to_locale_string",
             };
             let blk = ctx.block();
@@ -9106,11 +9107,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let auth_box = lower_expr(ctx, auth_header)?;
             let blk = ctx.block();
             let url_ptr = blk.call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &url_box)]);
-            let auth_ptr = blk.call(
-                I64,
-                "js_get_string_pointer_unified",
-                &[(DOUBLE, &auth_box)],
-            );
+            let auth_ptr = blk.call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &auth_box)]);
             let promise = blk.call(
                 I64,
                 "js_fetch_get_with_auth",
@@ -9131,16 +9128,8 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let body_box = lower_expr(ctx, body)?;
             let blk = ctx.block();
             let url_ptr = blk.call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &url_box)]);
-            let auth_ptr = blk.call(
-                I64,
-                "js_get_string_pointer_unified",
-                &[(DOUBLE, &auth_box)],
-            );
-            let body_ptr = blk.call(
-                I64,
-                "js_get_string_pointer_unified",
-                &[(DOUBLE, &body_box)],
-            );
+            let auth_ptr = blk.call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &auth_box)]);
+            let body_ptr = blk.call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &body_box)]);
             let promise = blk.call(
                 I64,
                 "js_fetch_post_with_auth",
@@ -9342,9 +9331,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // and the await would resolve with the object instead of
             // calling its `.then` (drizzle-orm's `QueryPromise.execute()`
             // never ran for `await db.select().from(users)`).
-            let promise_box = ctx
-                .block()
-                .call(DOUBLE, "js_assimilate_thenable", &[(DOUBLE, &raw_operand)]);
+            let promise_box =
+                ctx.block()
+                    .call(DOUBLE, "js_assimilate_thenable", &[(DOUBLE, &raw_operand)]);
 
             // Defensive guard: if the operand is not actually a
             // Promise (e.g. `await someNumber` or an unsupported
@@ -10609,7 +10598,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // dedicated arms above; this catch-all only fires for
             // names with no resolution at all.
             if ctx.namespace_imports.contains(name) {
-                return Ok(ctx.block().call(DOUBLE, "js_unresolved_namespace_stub", &[]));
+                return Ok(ctx
+                    .block()
+                    .call(DOUBLE, "js_unresolved_namespace_stub", &[]));
             }
             Ok(double_literal(f64::from_bits(crate::nanbox::TAG_TRUE)))
         }
@@ -11051,9 +11042,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let url_v = lower_expr(ctx, url)?;
             let url_handle = unbox_to_i64(ctx.block(), &url_v);
             let val_v = lower_expr(ctx, value)?;
-            let val_str_ptr = ctx
-                .block()
-                .call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &val_v)]);
+            let val_str_ptr =
+                ctx.block()
+                    .call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &val_v)]);
             ctx.block()
                 .call_void(runtime_fn, &[(I64, &url_handle), (I64, &val_str_ptr)]);
             // Assignment expression evaluates to the value on the RHS.
@@ -11067,7 +11058,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             let str_ptr = ctx
                 .block()
                 .call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &v)]);
-            let result_i32 = ctx.block().call(I32, "js_url_can_parse", &[(I64, &str_ptr)]);
+            let result_i32 = ctx
+                .block()
+                .call(I32, "js_url_can_parse", &[(I64, &str_ptr)]);
             let blk = ctx.block();
             let is_true = blk.icmp_ne(I32, &result_i32, "0");
             let tagged = blk.select(
@@ -11247,9 +11240,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // rustdoc.
             let p_v = lower_expr(ctx, params)?;
             let p_ptr = unbox_to_i64(ctx.block(), &p_v);
-            let arr = ctx
-                .block()
-                .call(DOUBLE, "js_url_search_params_entries_arr", &[(I64, &p_ptr)]);
+            let arr =
+                ctx.block()
+                    .call(DOUBLE, "js_url_search_params_entries_arr", &[(I64, &p_ptr)]);
             Ok(arr)
         }
 

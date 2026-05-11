@@ -121,8 +121,7 @@ unsafe fn keys_index_lookup(
             if sp.is_null() {
                 continue;
             }
-            let sname_ptr =
-                (sp as *const u8).add(std::mem::size_of::<crate::StringHeader>());
+            let sname_ptr = (sp as *const u8).add(std::mem::size_of::<crate::StringHeader>());
             let sname_len = (*sp).byte_len as usize;
             let h = key_bytes_hash(sname_ptr, sname_len);
             map.entry(h).or_default().push(i);
@@ -144,8 +143,7 @@ unsafe fn keys_index_lookup(
             if sp.is_null() {
                 continue;
             }
-            let sname_ptr =
-                (sp as *const u8).add(std::mem::size_of::<crate::StringHeader>());
+            let sname_ptr = (sp as *const u8).add(std::mem::size_of::<crate::StringHeader>());
             let sname_len = (*sp).byte_len as usize;
             if sname_len != key_bytes.len() {
                 continue;
@@ -721,8 +719,7 @@ fn transition_cache_lookup(
         // owner (whose keys_array points at the same memory) must
         // now treat the array as shared.
         unsafe {
-            let gc_header = (entry.next_keys as *const u8)
-                .wrapping_sub(crate::gc::GC_HEADER_SIZE)
+            let gc_header = (entry.next_keys as *const u8).wrapping_sub(crate::gc::GC_HEADER_SIZE)
                 as *mut crate::gc::GcHeader;
             if entry.next_keys >= crate::gc::GC_HEADER_SIZE
                 && (*gc_header).obj_type == crate::gc::GC_TYPE_ARRAY
@@ -1579,10 +1576,7 @@ fn get_parent_class_id(class_id: u32) -> Option<u32> {
 /// Returns `Some((func_ptr, param_count))` if found, `None` otherwise.
 /// Used by `js_assimilate_thenable` (refs #586) and other runtime callers
 /// that need to probe a class for a method without invoking it.
-pub fn lookup_class_method_in_chain(
-    class_id: u32,
-    name: &str,
-) -> Option<(usize, u32)> {
+pub fn lookup_class_method_in_chain(class_id: u32, name: &str) -> Option<(usize, u32)> {
     let registry = CLASS_VTABLE_REGISTRY.read().unwrap();
     let reg = registry.as_ref()?;
     let mut cur = class_id;
@@ -2842,8 +2836,7 @@ pub extern "C" fn js_object_get_field_by_name(
         if (bits >> 48) == 0x7FFE && !key.is_null() {
             let class_id = (bits & 0xFFFF_FFFF) as u32;
             unsafe {
-                let name_ptr =
-                    (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
+                let name_ptr = (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
                 let name_len = (*key).byte_len as usize;
                 let name = std::str::from_utf8(std::slice::from_raw_parts(name_ptr, name_len))
                     .unwrap_or("");
@@ -2936,11 +2929,9 @@ pub extern "C" fn js_object_get_field_by_name(
                         let key_len = (*key).byte_len as usize;
                         let key_bytes = std::slice::from_raw_parts(key_ptr, key_len);
                         if key_bytes == b"constructor" {
-                            let null_obj_ptr = &NULL_OBJECT_BYTES as *const NullObjectBytes
-                                as *mut u8;
-                            return JSValue::from_bits(
-                                JSValue::pointer(null_obj_ptr).bits(),
-                            );
+                            let null_obj_ptr =
+                                &NULL_OBJECT_BYTES as *const NullObjectBytes as *mut u8;
+                            return JSValue::from_bits(JSValue::pointer(null_obj_ptr).bits());
                         }
                     }
                     let dispatch = unsafe { HANDLE_PROPERTY_DISPATCH };
@@ -3013,17 +3004,11 @@ pub extern "C" fn js_object_get_field_by_name(
                 if let Ok(name) = std::str::from_utf8(key_bytes) {
                     if is_buffer_method_name(name) {
                         let heap_name = {
-                            let layout = std::alloc::Layout::from_size_align(
-                                key_bytes.len().max(1),
-                                1,
-                            )
-                            .unwrap();
+                            let layout =
+                                std::alloc::Layout::from_size_align(key_bytes.len().max(1), 1)
+                                    .unwrap();
                             let ptr = std::alloc::alloc(layout);
-                            std::ptr::copy_nonoverlapping(
-                                key_bytes.as_ptr(),
-                                ptr,
-                                key_bytes.len(),
-                            );
+                            std::ptr::copy_nonoverlapping(key_bytes.as_ptr(), ptr, key_bytes.len());
                             ptr
                         };
                         // Buffers are stored as raw f64-bitcast pointers
@@ -3033,11 +3018,9 @@ pub extern "C" fn js_object_get_field_by_name(
                         // NaN-boxed payloads via `(bits >> 48) >= 0x7FF8`,
                         // so wrapping in POINTER_TAG here is equally
                         // valid and matches `js_class_method_bind`.
-                        let this_f64 = f64::from_bits(
-                            crate::value::js_nanbox_pointer(obj as i64).to_bits(),
-                        );
-                        let result =
-                            js_class_method_bind(this_f64, heap_name, key_bytes.len());
+                        let this_f64 =
+                            f64::from_bits(crate::value::js_nanbox_pointer(obj as i64).to_bits());
+                        let result = js_class_method_bind(this_f64, heap_name, key_bytes.len());
                         return JSValue::from_bits(result.to_bits());
                     }
                 }
@@ -3293,11 +3276,8 @@ pub extern "C" fn js_object_get_field_by_name(
             let module_name = get_module_name_from_namespace(nb_ptr);
             if !module_name.is_empty() {
                 let property_name =
-                    std::str::from_utf8(std::slice::from_raw_parts(key_ptr, key_len))
-                        .unwrap_or("");
-                if let Some(val) =
-                    get_native_module_constant(module_name, property_name, nb_ptr)
-                {
+                    std::str::from_utf8(std::slice::from_raw_parts(key_ptr, key_len)).unwrap_or("");
+                if let Some(val) = get_native_module_constant(module_name, property_name, nb_ptr) {
                     return JSValue::from_bits(val.to_bits());
                 }
                 return JSValue::undefined();
@@ -3536,18 +3516,14 @@ pub extern "C" fn js_object_get_field_by_name(
                     // could in theory be GC'd if the keys_array is not
                     // pinned for the closure's lifetime.
                     let heap_name = {
-                        let layout = std::alloc::Layout::from_size_align(
-                            key_bytes.len().max(1),
-                            1,
-                        )
-                        .unwrap();
+                        let layout =
+                            std::alloc::Layout::from_size_align(key_bytes.len().max(1), 1).unwrap();
                         let ptr = std::alloc::alloc(layout);
                         std::ptr::copy_nonoverlapping(key_bytes.as_ptr(), ptr, key_bytes.len());
                         ptr
                     };
-                    let this_f64 = f64::from_bits(
-                        crate::value::js_nanbox_pointer(obj as i64).to_bits(),
-                    );
+                    let this_f64 =
+                        f64::from_bits(crate::value::js_nanbox_pointer(obj as i64).to_bits());
                     let result = js_class_method_bind(this_f64, heap_name, key_bytes.len());
                     return JSValue::from_bits(result.to_bits());
                 }
@@ -3905,8 +3881,7 @@ pub extern "C" fn js_object_set_field_by_name(
         if (bits >> 48) == 0x7FFE && !key.is_null() {
             let class_id = (bits & 0xFFFF_FFFF) as u32;
             unsafe {
-                let name_ptr =
-                    (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
+                let name_ptr = (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
                 let name_len = (*key).byte_len as usize;
                 let name = std::str::from_utf8(std::slice::from_raw_parts(name_ptr, name_len))
                     .unwrap_or("")
@@ -4023,8 +3998,8 @@ pub extern "C" fn js_object_set_field_by_name(
                 if let Ok(registry) = CLASS_VTABLE_REGISTRY.read() {
                     if let Some(ref reg) = *registry {
                         let key_bytes = {
-                            let name_ptr = (key as *const u8)
-                                .add(std::mem::size_of::<crate::StringHeader>());
+                            let name_ptr =
+                                (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
                             let name_len = (*key).byte_len as usize;
                             std::slice::from_raw_parts(name_ptr, name_len)
                         };
@@ -4209,7 +4184,8 @@ pub extern "C" fn js_object_set_field_by_name(
         // each iteration. With the sidecar, the per-insert cost is
         // O(1) amortized (rebuild after a `js_array_push` realloc is
         // bounded by the doubling growth pattern).
-        if !key.is_null() && (key as usize) > 0x10000 && key_count >= KEYS_INDEX_THRESHOLD as usize {
+        if !key.is_null() && (key as usize) > 0x10000 && key_count >= KEYS_INDEX_THRESHOLD as usize
+        {
             let name_ptr = (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
             let name_len = (*key).byte_len as usize;
             let name_bytes = std::slice::from_raw_parts(name_ptr, name_len);
@@ -4224,12 +4200,11 @@ pub extern "C" fn js_object_set_field_by_name(
                     js_object_set_field(obj, i as u32, JSValue::from_bits(value.to_bits()));
                 } else {
                     let vbits = value.to_bits();
-                    let vbits =
-                        if (vbits >> 48) == 0x7FFD && (vbits & 0x0000_FFFF_FFFF_FFFF) == 0 {
-                            crate::value::TAG_UNDEFINED
-                        } else {
-                            vbits
-                        };
+                    let vbits = if (vbits >> 48) == 0x7FFD && (vbits & 0x0000_FFFF_FFFF_FFFF) == 0 {
+                        crate::value::TAG_UNDEFINED
+                    } else {
+                        vbits
+                    };
                     overflow_set(obj as usize, i, vbits);
                 }
                 return;
@@ -4247,8 +4222,8 @@ pub extern "C" fn js_object_set_field_by_name(
             // scan is shared.
             // We achieve this by setting a marker, then the linear
             // scan checks it and skips.
-            let keys_gc_header = (keys as *const u8).sub(crate::gc::GC_HEADER_SIZE)
-                as *const crate::gc::GcHeader;
+            let keys_gc_header =
+                (keys as *const u8).sub(crate::gc::GC_HEADER_SIZE) as *const crate::gc::GcHeader;
             let keys_shared = if (keys as usize) >= crate::gc::GC_HEADER_SIZE
                 && (*keys_gc_header).obj_type == crate::gc::GC_TYPE_ARRAY
             {
@@ -4528,12 +4503,10 @@ pub extern "C" fn js_object_delete_field(
         // key would corrupt every other object that picks up this
         // shape — they'd silently lose entries they never deleted.
         let keys_cloned = crate::array::js_array_alloc(new_count.max(1) as u32 + 4);
-        let src_elements = (keys as *const u8)
-            .add(std::mem::size_of::<crate::ArrayHeader>())
-            as *const f64;
-        let dst_elements = (keys_cloned as *mut u8)
-            .add(std::mem::size_of::<crate::ArrayHeader>())
-            as *mut f64;
+        let src_elements =
+            (keys as *const u8).add(std::mem::size_of::<crate::ArrayHeader>()) as *const f64;
+        let dst_elements =
+            (keys_cloned as *mut u8).add(std::mem::size_of::<crate::ArrayHeader>()) as *mut f64;
         // Copy keys [0..i) ++ [i+1..N) into [0..new_count).
         for j in 0..i {
             *dst_elements.add(j) = *src_elements.add(j);
@@ -4551,9 +4524,8 @@ pub extern "C" fn js_object_delete_field(
             let next = js_object_get_field(obj, (j + 1) as u32);
             // Inline write if target slot < alloc_limit, else overflow.
             if j < alloc_limit {
-                let fields_ptr = (obj as *mut u8)
-                    .add(std::mem::size_of::<ObjectHeader>())
-                    as *mut JSValue;
+                let fields_ptr =
+                    (obj as *mut u8).add(std::mem::size_of::<ObjectHeader>()) as *mut JSValue;
                 ptr::write(fields_ptr.add(j), next);
             } else {
                 overflow_set(obj as usize, j, next.bits());
@@ -4561,9 +4533,8 @@ pub extern "C" fn js_object_delete_field(
         }
         // Clear the now-tail slot so reads past keys_array.length see undefined.
         if new_count < alloc_limit {
-            let fields_ptr = (obj as *mut u8)
-                .add(std::mem::size_of::<ObjectHeader>())
-                as *mut JSValue;
+            let fields_ptr =
+                (obj as *mut u8).add(std::mem::size_of::<ObjectHeader>()) as *mut JSValue;
             ptr::write(fields_ptr.add(new_count), JSValue::undefined());
         } else {
             overflow_set(obj as usize, new_count, crate::value::TAG_UNDEFINED);
@@ -5869,8 +5840,7 @@ pub unsafe extern "C" fn js_native_call_method(
                             let tag = bits >> 48;
                             if tag == 0x7FFF || tag == 0x7FFE {
                                 // STRING_TAG or SHORT_STRING tag
-                                (bits & 0x0000_FFFF_FFFF_FFFF)
-                                    as *const crate::string::StringHeader
+                                (bits & 0x0000_FFFF_FFFF_FFFF) as *const crate::string::StringHeader
                             } else {
                                 std::ptr::null()
                             }
@@ -6306,8 +6276,7 @@ pub unsafe extern "C" fn js_native_call_method(
             if dyn_val.to_bits() != crate::value::TAG_UNDEFINED {
                 let recv_bits = jsval.bits();
                 let prev_this = IMPLICIT_THIS.with(|c| c.replace(recv_bits));
-                let result =
-                    crate::closure::js_native_call_value(dyn_val, args_ptr, args_len);
+                let result = crate::closure::js_native_call_value(dyn_val, args_ptr, args_len);
                 IMPLICIT_THIS.with(|c| c.set(prev_this));
                 return result;
             }

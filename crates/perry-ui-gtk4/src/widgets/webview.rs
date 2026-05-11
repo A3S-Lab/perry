@@ -140,11 +140,10 @@ fn install_signal_handlers(handle: i64, webview: &webkit6::WebView) {
         if decision_type != webkit6::PolicyDecisionType::NavigationAction {
             return false; // let WebKit handle it
         }
-        let action_decision: &webkit6::NavigationPolicyDecision =
-            match decision.downcast_ref() {
-                Some(d) => d,
-                None => return false,
-            };
+        let action_decision: &webkit6::NavigationPolicyDecision = match decision.downcast_ref() {
+            Some(d) => d,
+            None => return false,
+        };
         let action = match action_decision.navigation_action() {
             Some(a) => a,
             None => return false,
@@ -194,7 +193,10 @@ fn install_signal_handlers(handle: i64, webview: &webkit6::WebView) {
             return;
         }
         let on_loaded = WEBVIEW_STATES.with(|s| {
-            s.borrow().get(&handle).map(|st| st.on_loaded).unwrap_or(0.0)
+            s.borrow()
+                .get(&handle)
+                .map(|st| st.on_loaded)
+                .unwrap_or(0.0)
         });
         if on_loaded == 0.0 {
             return;
@@ -213,9 +215,8 @@ fn install_signal_handlers(handle: i64, webview: &webkit6::WebView) {
     // error page from rendering; we return `false` so the user sees the
     // standard WebKit error page if they want.
     webview.connect_load_failed(move |_wv, _event, _failing_uri, error| {
-        let on_error = WEBVIEW_STATES.with(|s| {
-            s.borrow().get(&handle).map(|st| st.on_error).unwrap_or(0.0)
-        });
+        let on_error =
+            WEBVIEW_STATES.with(|s| s.borrow().get(&handle).map(|st| st.on_error).unwrap_or(0.0));
         if on_error == 0.0 {
             return false;
         }
@@ -289,25 +290,19 @@ pub fn evaluate_js(handle: i64, js_ptr: *const u8, callback: f64) {
     };
 
     let cancellable: Option<&gtk4::gio::Cancellable> = None;
-    webview.evaluate_javascript(
-        &js,
-        None,
-        None,
-        cancellable,
-        move |result| {
-            let s = match result {
-                Ok(value) => value.to_string(),
-                Err(_) => String::new(),
-            };
-            let nb = nanbox_str(&s);
-            let closure_ptr = unsafe { js_nanbox_get_pointer(callback) } as *const u8;
-            if !closure_ptr.is_null() {
-                unsafe {
-                    js_closure_call1(closure_ptr, nb);
-                }
+    webview.evaluate_javascript(&js, None, None, cancellable, move |result| {
+        let s = match result {
+            Ok(value) => value.to_string(),
+            Err(_) => String::new(),
+        };
+        let nb = nanbox_str(&s);
+        let closure_ptr = unsafe { js_nanbox_get_pointer(callback) } as *const u8;
+        if !closure_ptr.is_null() {
+            unsafe {
+                js_closure_call1(closure_ptr, nb);
             }
-        },
-    );
+        }
+    });
 }
 
 pub fn clear_cookies(handle: i64) {

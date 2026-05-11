@@ -229,7 +229,6 @@ pub extern "C" fn js_stdlib_process_pending() -> i32 {
         }
     }
 
-
     // Process pending WebSocket events (server/client listener callbacks).
     // Gate fires for either `bundled-ws` (perry-stdlib's own impl) or
     // `external-ws-pump` (well-known flip → perry-ext-ws provides the

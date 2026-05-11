@@ -74,8 +74,7 @@ pub struct CompileOptions {
     /// to `tracer.make` — Effect's `defaultServices.ts` SIGSEGV'd because
     /// it dispatched `tracer.make(Math.random())` instead of
     /// `random.make(Math.random())`.
-    pub namespace_member_prefixes:
-        std::collections::HashMap<(String, String), String>,
+    pub namespace_member_prefixes: std::collections::HashMap<(String, String), String>,
     /// When true, `compile_module` returns the textual LLVM IR (`.ll`)
     /// as bytes instead of invoking `clang -c` to produce an object file.
     /// Used by the bitcode-link path (`PERRY_LLVM_BITCODE_LINK=1`).
@@ -265,8 +264,7 @@ pub(crate) struct CrossModuleCtx {
     pub namespace_imports: std::collections::HashSet<String>,
     /// Issue #680: per-namespace member resolution. See doc on
     /// `CompileOptions::namespace_member_prefixes`.
-    pub namespace_member_prefixes:
-        std::collections::HashMap<(String, String), String>,
+    pub namespace_member_prefixes: std::collections::HashMap<(String, String), String>,
     pub imported_async_funcs: std::collections::HashSet<String>,
     /// FuncIds of locally-defined async functions in this module. Populated
     /// from `hir.functions.is_async`. Used by `is_promise_expr` to refine
@@ -1535,13 +1533,21 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         for (prop, f) in &c.getters {
             method_names.insert(
                 (c.name.clone(), format!("__get_{}", prop)),
-                scoped_method_name(class_prefix, mangle_class_name, &format!("__get_{}", f.name)),
+                scoped_method_name(
+                    class_prefix,
+                    mangle_class_name,
+                    &format!("__get_{}", f.name),
+                ),
             );
         }
         for (prop, f) in &c.setters {
             method_names.insert(
                 (c.name.clone(), format!("__set_{}", prop)),
-                scoped_method_name(class_prefix, mangle_class_name, &format!("__set_{}", f.name)),
+                scoped_method_name(
+                    class_prefix,
+                    mangle_class_name,
+                    &format!("__set_{}", f.name),
+                ),
             );
         }
         // Static methods. Registered under their plain method name
@@ -2860,7 +2866,7 @@ fn compile_function(
         closure_rest_params,
         local_closure_func_ids: HashMap::new(),
         namespace_imports: &cross_module.namespace_imports,
-            namespace_member_prefixes: &cross_module.namespace_member_prefixes,
+        namespace_member_prefixes: &cross_module.namespace_member_prefixes,
         imported_async_funcs: &cross_module.imported_async_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
@@ -3238,7 +3244,7 @@ fn compile_closure(
         closure_rest_params,
         local_closure_func_ids: HashMap::new(),
         namespace_imports: &cross_module.namespace_imports,
-            namespace_member_prefixes: &cross_module.namespace_member_prefixes,
+        namespace_member_prefixes: &cross_module.namespace_member_prefixes,
         imported_async_funcs: &cross_module.imported_async_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
@@ -3461,7 +3467,7 @@ fn compile_method(
         closure_rest_params,
         local_closure_func_ids: HashMap::new(),
         namespace_imports: &cross_module.namespace_imports,
-            namespace_member_prefixes: &cross_module.namespace_member_prefixes,
+        namespace_member_prefixes: &cross_module.namespace_member_prefixes,
         imported_async_funcs: &cross_module.imported_async_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
@@ -3896,7 +3902,7 @@ fn compile_module_entry(
             local_async_funcs: &cross_module.local_async_funcs,
             type_aliases: &cross_module.type_aliases,
             imported_func_param_counts: &cross_module.imported_func_param_counts,
-        imported_func_has_rest: &cross_module.imported_func_has_rest,
+            imported_func_has_rest: &cross_module.imported_func_has_rest,
             method_param_counts: &cross_module.method_param_counts,
             method_has_rest: &cross_module.method_has_rest,
             imported_func_return_types: &cross_module.imported_func_return_types,
@@ -4156,7 +4162,7 @@ fn compile_module_entry(
             local_async_funcs: &cross_module.local_async_funcs,
             type_aliases: &cross_module.type_aliases,
             imported_func_param_counts: &cross_module.imported_func_param_counts,
-        imported_func_has_rest: &cross_module.imported_func_has_rest,
+            imported_func_has_rest: &cross_module.imported_func_has_rest,
             method_param_counts: &cross_module.method_param_counts,
             method_has_rest: &cross_module.method_has_rest,
             imported_func_return_types: &cross_module.imported_func_return_types,
@@ -4860,7 +4866,7 @@ fn compile_static_method(
         closure_rest_params,
         local_closure_func_ids: HashMap::new(),
         namespace_imports: &cross_module.namespace_imports,
-            namespace_member_prefixes: &cross_module.namespace_member_prefixes,
+        namespace_member_prefixes: &cross_module.namespace_member_prefixes,
         imported_async_funcs: &cross_module.imported_async_funcs,
         local_async_funcs: &cross_module.local_async_funcs,
         type_aliases: &cross_module.type_aliases,
@@ -5085,11 +5091,8 @@ fn init_static_fields(ctx: &mut crate::expr::FnCtx<'_>, hir: &HirModule) -> Resu
     // fix is to emit the init at the class-expression site inside the
     // factory body; tracking the eager-eval-of-inner-class-statics
     // separately.
-    let mut module_local_scope: std::collections::HashSet<u32> = ctx
-        .module_globals
-        .keys()
-        .copied()
-        .collect();
+    let mut module_local_scope: std::collections::HashSet<u32> =
+        ctx.module_globals.keys().copied().collect();
     // Top-level `let` / `const` bindings may not appear in
     // `module_globals` (the global table only includes vars referenced
     // from inner functions or exported). For the purpose of "is this

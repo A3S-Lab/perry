@@ -1,6 +1,7 @@
 pub mod app;
 pub mod audio;
 pub mod clipboard;
+pub mod deeplinks_stub;
 pub mod dialog;
 pub mod file_dialog;
 pub mod issue_552_stub;
@@ -9,7 +10,6 @@ pub mod location;
 pub mod media_playback;
 pub mod menu;
 pub mod network_stub;
-pub mod deeplinks_stub;
 pub mod sheet;
 pub mod state;
 pub mod system;
@@ -2296,7 +2296,12 @@ pub extern "C" fn perry_ui_frame_split_add_child(_parent: i64, _child: i64) {}
 //     deferred to a later phase per #658's roadmap.
 // --- WebView (issue #658 Phase 4) — real Linux backend via WebKitGTK 6.0.
 #[no_mangle]
-pub extern "C" fn perry_ui_webview_create(url_ptr: i64, width: f64, height: f64, ephemeral: f64) -> i64 {
+pub extern "C" fn perry_ui_webview_create(
+    url_ptr: i64,
+    width: f64,
+    height: f64,
+    ephemeral: f64,
+) -> i64 {
     widgets::webview::create(url_ptr as *const u8, width, height, ephemeral)
 }
 #[no_mangle]

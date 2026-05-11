@@ -597,7 +597,11 @@ fn effective_limb_len(limbs: &[u64; BIGINT_LIMBS]) -> usize {
     // limbs (the sign-extension fill). The first limb that breaks the
     // pattern is the highest "real" limb. This is sound for the
     // schoolbook multiplier because we only read the first `len` limbs.
-    let fill = if (limbs[BIGINT_LIMBS - 1] >> 63) == 1 { u64::MAX } else { 0u64 };
+    let fill = if (limbs[BIGINT_LIMBS - 1] >> 63) == 1 {
+        u64::MAX
+    } else {
+        0u64
+    };
     for i in (0..BIGINT_LIMBS).rev() {
         if limbs[i] != fill {
             // We need one more limb than i+1 if the next one isn't already
@@ -1518,8 +1522,10 @@ mod tests {
         let one = js_bigint_from_i64(1);
         let beyond = js_bigint_add(max, one);
         unsafe {
-            assert!(fits_in_i64(&(*beyond).limbs).is_none(),
-                "i64::MAX + 1 should not fit in i64");
+            assert!(
+                fits_in_i64(&(*beyond).limbs).is_none(),
+                "i64::MAX + 1 should not fit in i64"
+            );
         }
     }
 }

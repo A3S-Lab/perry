@@ -23,12 +23,7 @@ pub fn get_status(cb: f64) {
     let bridge_class =
         jni_bridge::with_cache(|c| env.new_local_ref(c.perry_bridge_class.as_obj()).unwrap());
     let bridge_cls: &jni::objects::JClass = (&bridge_class).into();
-    let _ = env.call_static_method(
-        bridge_cls,
-        "networkGetStatus",
-        "(J)V",
-        &[JValue::Long(key)],
-    );
+    let _ = env.call_static_method(bridge_cls, "networkGetStatus", "(J)V", &[JValue::Long(key)]);
 
     unsafe {
         env.pop_local_frame(&jni::objects::JObject::null());
@@ -46,15 +41,11 @@ pub fn on_change(cb: f64) -> f64 {
     let bridge_class =
         jni_bridge::with_cache(|c| env.new_local_ref(c.perry_bridge_class.as_obj()).unwrap());
     let bridge_cls: &jni::objects::JClass = (&bridge_class).into();
-    let id: i64 = match env.call_static_method(
-        bridge_cls,
-        "networkOnChange",
-        "(J)J",
-        &[JValue::Long(key)],
-    ) {
-        Ok(v) => v.j().unwrap_or(0),
-        Err(_) => 0,
-    };
+    let id: i64 =
+        match env.call_static_method(bridge_cls, "networkOnChange", "(J)J", &[JValue::Long(key)]) {
+            Ok(v) => v.j().unwrap_or(0),
+            Err(_) => 0,
+        };
 
     unsafe {
         env.pop_local_frame(&jni::objects::JObject::null());

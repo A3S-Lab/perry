@@ -176,8 +176,8 @@ pub(super) fn compile_for_ios_widget(
             }
         }
     } else {
-        let info_plist = bundle_info_plist
-            .ok_or_else(|| anyhow!("internal: no Info.plist generated"))?;
+        let info_plist =
+            bundle_info_plist.ok_or_else(|| anyhow!("internal: no Info.plist generated"))?;
         let appex_path = build_widget_appex(
             &output_dir,
             &all_swift_files,
@@ -423,8 +423,8 @@ pub(super) fn compile_for_watchos_widget(
             }
         }
     } else {
-        let info_plist = bundle_info_plist
-            .ok_or_else(|| anyhow!("internal: no Info.plist generated"))?;
+        let info_plist =
+            bundle_info_plist.ok_or_else(|| anyhow!("internal: no Info.plist generated"))?;
         let appex_path = build_widget_appex(
             &output_dir,
             &all_swift_files,

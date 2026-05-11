@@ -356,7 +356,8 @@ fn emit_own_method_override_check(
     let static_label = ctx.block_label(static_idx);
     let merge_label = ctx.block_label(merge_idx);
 
-    ctx.block().cond_br(&is_undef, &static_label, &override_label);
+    ctx.block()
+        .cond_br(&is_undef, &static_label, &override_label);
 
     // Override path: spill the user args (skip lowered_args[0] which is
     // `this`) into a fresh alloca and call js_native_call_value. The
@@ -387,9 +388,10 @@ fn emit_own_method_override_check(
         ));
         (ptr_reg, user_arg_count.to_string())
     };
-    let recv_for_this = lowered_args.first().cloned().unwrap_or_else(|| {
-        double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
-    });
+    let recv_for_this = lowered_args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED)));
     let prev_this = ctx
         .block()
         .call(DOUBLE, "js_implicit_this_set", &[(DOUBLE, &recv_for_this)]);
@@ -562,8 +564,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                     if ctx.imported_vars.contains(property) {
                         // Var-shaped export: fetch closure via zero-arg
                         // getter, then closure-call with the user args.
-                        ctx.pending_declares
-                            .push((symbol.clone(), DOUBLE, vec![]));
+                        ctx.pending_declares.push((symbol.clone(), DOUBLE, vec![]));
                         let closure_box = ctx.block().call(DOUBLE, &symbol, &[]);
                         let mut lowered: Vec<String> = Vec::with_capacity(args.len());
                         for a in args {
@@ -600,8 +601,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                         }
                         let rest_count = args.len().saturating_sub(fixed_count);
                         let cap = (rest_count as u32).to_string();
-                        let mut current =
-                            ctx.block().call(I64, "js_array_alloc", &[(I32, &cap)]);
+                        let mut current = ctx.block().call(I64, "js_array_alloc", &[(I32, &cap)]);
                         for a in args.iter().skip(fixed_count) {
                             let v = lower_expr(ctx, a)?;
                             let blk = ctx.block();
@@ -1070,8 +1070,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                 lowered.push(lower_expr(ctx, a)?);
             }
             // Pad fixed params if the caller passed too few.
-            let undefined_lit =
-                double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+            let undefined_lit = double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
             while lowered.len() < fixed_count {
                 lowered.push(undefined_lit.clone());
             }
@@ -1083,8 +1082,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
             for a in args.iter().skip(fixed_count) {
                 let v = lower_expr(ctx, a)?;
                 let blk = ctx.block();
-                current =
-                    blk.call(I64, "js_array_push_f64", &[(I64, &current), (DOUBLE, &v)]);
+                current = blk.call(I64, "js_array_push_f64", &[(I64, &current), (DOUBLE, &v)]);
             }
             let rest_box = nanbox_pointer_inline(ctx.block(), &current);
             lowered.push(rest_box);
@@ -1093,8 +1091,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                 lowered.push(lower_expr(ctx, a)?);
             }
             // Pad with TAG_UNDEFINED for the missing trailing args.
-            let undefined_lit =
-                double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+            let undefined_lit = double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
             while lowered.len() < target_arity {
                 lowered.push(undefined_lit.clone());
             }
@@ -1308,10 +1305,9 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
             // 2-arg form (searchString, position) is also unambiguous.
             let is_string_only_method = match property.as_str() {
                 "split" | "charCodeAt" | "charAt" | "trim" | "trimStart" | "trimEnd"
-                | "substring" | "substr" | "toLowerCase" | "toUpperCase"
-                | "toLocaleLowerCase" | "toLocaleUpperCase" | "replaceAll"
-                | "padStart" | "padEnd" | "repeat" | "normalize" | "codePointAt"
-                | "localeCompare" => true,
+                | "substring" | "substr" | "toLowerCase" | "toUpperCase" | "toLocaleLowerCase"
+                | "toLocaleUpperCase" | "replaceAll" | "padStart" | "padEnd" | "repeat"
+                | "normalize" | "codePointAt" | "localeCompare" => true,
                 // Issue #638: `replace` is also string-exclusive, but routing
                 // it here unconditionally caused regressions in async dispatch
                 // pathways. Only fire when args[1] is statically detectable as
@@ -1395,8 +1391,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                                         "0".to_string()
                                     };
                                     let blk = ctx.block();
-                                    let on_fulfilled_handle =
-                                        unbox_to_i64(blk, &on_fulfilled_box);
+                                    let on_fulfilled_handle = unbox_to_i64(blk, &on_fulfilled_box);
                                     let on_rejected_handle = if args.len() >= 2 {
                                         unbox_to_i64(blk, &on_rejected_box)
                                     } else {
@@ -1770,10 +1765,8 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                         .iter()
                         .any(|m| m.name == *property);
                     if is_static {
-                        if let Some(fname) = ctx
-                            .methods
-                            .get(&(c.clone(), property.clone()))
-                            .cloned()
+                        if let Some(fname) =
+                            ctx.methods.get(&(c.clone(), property.clone())).cloned()
                         {
                             resolved = Some((fname, true));
                             break;
@@ -1791,19 +1784,14 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                 for a in args {
                     lowered.push(lower_expr(ctx, a)?);
                 }
-                let prev_this = ctx.block().call(
-                    DOUBLE,
-                    "js_implicit_this_set",
-                    &[(DOUBLE, &recv_box)],
-                );
+                let prev_this =
+                    ctx.block()
+                        .call(DOUBLE, "js_implicit_this_set", &[(DOUBLE, &recv_box)]);
                 let arg_slices: Vec<(crate::types::LlvmType, &str)> =
                     lowered.iter().map(|s| (DOUBLE, s.as_str())).collect();
                 let result = ctx.block().call(DOUBLE, &fn_name, &arg_slices);
-                ctx.block().call(
-                    DOUBLE,
-                    "js_implicit_this_set",
-                    &[(DOUBLE, &prev_this)],
-                );
+                ctx.block()
+                    .call(DOUBLE, "js_implicit_this_set", &[(DOUBLE, &prev_this)]);
                 return Ok(result);
             }
             // No static method resolved through the visible chain.
@@ -1991,15 +1979,11 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                     let split_at = 1 + fixed_user;
                     let rest_count = lowered_args.len().saturating_sub(split_at);
                     let cap = (rest_count as u32).to_string();
-                    let mut rest_arr =
-                        ctx.block().call(I64, "js_array_alloc", &[(I32, &cap)]);
+                    let mut rest_arr = ctx.block().call(I64, "js_array_alloc", &[(I32, &cap)]);
                     for v in &lowered_args[split_at..] {
                         let blk = ctx.block();
-                        rest_arr = blk.call(
-                            I64,
-                            "js_array_push_f64",
-                            &[(I64, &rest_arr), (DOUBLE, v)],
-                        );
+                        rest_arr =
+                            blk.call(I64, "js_array_push_f64", &[(I64, &rest_arr), (DOUBLE, v)]);
                     }
                     let rest_box = nanbox_pointer_inline(ctx.block(), &rest_arr);
                     lowered_args.truncate(split_at);
@@ -2036,8 +2020,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                 );
                 let own_bits_probe = ctx.block().bitcast_double_to_i64(&own_method_probe);
                 let undef_bits_str = format!("{}", crate::nanbox::TAG_UNDEFINED as i64);
-                let is_undef_probe =
-                    ctx.block().icmp_eq(I64, &own_bits_probe, &undef_bits_str);
+                let is_undef_probe = ctx.block().icmp_eq(I64, &own_bits_probe, &undef_bits_str);
                 let probe_override_idx = ctx.new_block("idisp.override");
                 let probe_dispatch_idx = ctx.new_block("idisp.dispatch");
                 let probe_outer_merge_idx = ctx.new_block("idisp.outer_merge");
@@ -2061,8 +2044,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
                 let (probe_args_ptr, probe_args_len_str) = if user_arg_count_probe == 0 {
                     ("null".to_string(), "0".to_string())
                 } else {
-                    let buf_reg =
-                        ctx.func.alloca_entry_array(DOUBLE, user_arg_count_probe);
+                    let buf_reg = ctx.func.alloca_entry_array(DOUBLE, user_arg_count_probe);
                     for (i, a_val) in lowered_args.iter().skip(1).enumerate() {
                         let slot = ctx
                             .block()
@@ -3442,11 +3424,7 @@ pub(crate) fn lower_new(ctx: &mut FnCtx<'_>, class_name: &str, args: &[Expr]) ->
         None
     };
     if let Some(stop_at) = inherited_ctor_class.clone() {
-        apply_field_initializers_recursive(
-            ctx,
-            class_name,
-            FieldInitMode::UpToInclusive(stop_at),
-        )?;
+        apply_field_initializers_recursive(ctx, class_name, FieldInitMode::UpToInclusive(stop_at))?;
     } else {
         apply_field_initializers_recursive(ctx, class_name, FieldInitMode::AncestorsOnly)?;
     }
@@ -3616,11 +3594,9 @@ pub(crate) fn lower_new(ctx: &mut FnCtx<'_>, class_name: &str, args: &[Expr]) ->
                     );
                 }
                 let name_idx = ctx.strings.intern("name");
-                let name_handle_global =
-                    format!("@{}", ctx.strings.entry(name_idx).handle_global);
+                let name_handle_global = format!("@{}", ctx.strings.entry(name_idx).handle_global);
                 let name_val_idx = ctx.strings.intern(&kind);
-                let name_val_global =
-                    format!("@{}", ctx.strings.entry(name_val_idx).handle_global);
+                let name_val_global = format!("@{}", ctx.strings.entry(name_val_idx).handle_global);
                 let blk = ctx.block();
                 let name_key_box = blk.load(DOUBLE, &name_handle_global);
                 let name_key_bits = blk.bitcast_double_to_i64(&name_key_box);
@@ -3646,98 +3622,103 @@ pub(crate) fn lower_new(ctx: &mut FnCtx<'_>, class_name: &str, args: &[Expr]) ->
         // ctor args). Without this walk, `new PgSerial(table, config)`
         // produced an empty object since none of the chain's bodies ran.
         if !found_inherited_ctor {
-        let lookup_class = class_name.to_string();
-        let mut effective_class_name = lookup_class.clone();
-        let mut effective_extends = class.extends_name.clone();
-        loop {
-            let has_real_ctor = ctx
-                .imported_class_ctors
-                .get(&effective_class_name)
-                .map(|(_, n)| *n > 0)
-                .unwrap_or(false);
-            if has_real_ctor {
-                break;
-            }
-            // v0.5.759: stop walking ONLY for the leaf class (the user's
-            // `new X(...)` target) when it has its own synthesized
-            // imported_class_ctor symbol AND its stub has fields. The
-            // synthesized ctor applies SelfOnly + forwards super(), so
-            // it handles the leaf's field inits (arrow fields,
-            // default-value fields). Skipping the walk on the LEAF
-            // (effective == lookup) doesn't break the drizzle PgSerial
-            // → PgColumn → Column chain because that walks past
-            // intermediate empty-stub classes; only the leaf gets the
-            // walk-stop. Refs #420 / #618 followup.
-            if effective_class_name == lookup_class {
-                let leaf_has_synth_ctor = ctx
+            let lookup_class = class_name.to_string();
+            let mut effective_class_name = lookup_class.clone();
+            let mut effective_extends = class.extends_name.clone();
+            loop {
+                let has_real_ctor = ctx
                     .imported_class_ctors
-                    .contains_key(&effective_class_name);
-                let leaf_has_fields = ctx
-                    .classes
                     .get(&effective_class_name)
-                    .map(|c| !c.fields.is_empty())
+                    .map(|(_, n)| *n > 0)
                     .unwrap_or(false);
-                if leaf_has_synth_ctor && leaf_has_fields {
+                if has_real_ctor {
                     break;
                 }
+                // v0.5.759: stop walking ONLY for the leaf class (the user's
+                // `new X(...)` target) when it has its own synthesized
+                // imported_class_ctor symbol AND its stub has fields. The
+                // synthesized ctor applies SelfOnly + forwards super(), so
+                // it handles the leaf's field inits (arrow fields,
+                // default-value fields). Skipping the walk on the LEAF
+                // (effective == lookup) doesn't break the drizzle PgSerial
+                // → PgColumn → Column chain because that walks past
+                // intermediate empty-stub classes; only the leaf gets the
+                // walk-stop. Refs #420 / #618 followup.
+                if effective_class_name == lookup_class {
+                    let leaf_has_synth_ctor =
+                        ctx.imported_class_ctors.contains_key(&effective_class_name);
+                    let leaf_has_fields = ctx
+                        .classes
+                        .get(&effective_class_name)
+                        .map(|c| !c.fields.is_empty())
+                        .unwrap_or(false);
+                    if leaf_has_synth_ctor && leaf_has_fields {
+                        break;
+                    }
+                }
+                let Some(parent) = effective_extends.clone() else {
+                    break;
+                };
+                let Some(parent_class) = ctx.classes.get(&parent).copied() else {
+                    break;
+                };
+                effective_class_name = parent;
+                effective_extends = parent_class.extends_name.clone();
             }
-            let Some(parent) = effective_extends.clone() else {
-                break;
-            };
-            let Some(parent_class) = ctx.classes.get(&parent).copied() else {
-                break;
-            };
-            effective_class_name = parent;
-            effective_extends = parent_class.extends_name.clone();
-        }
-        if let Some((ctor_name, param_count)) = ctx
-            .imported_class_ctors
-            .get(&effective_class_name)
-            .cloned()
-            .filter(|(_, _)| effective_class_name != lookup_class)
-        {
-            // Walked to an ancestor — call its ctor with this and forwarded args.
-            let undef_lit =
-                crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
-            while lowered_args.len() < param_count {
-                lowered_args.push(undef_lit.clone());
+            if let Some((ctor_name, param_count)) = ctx
+                .imported_class_ctors
+                .get(&effective_class_name)
+                .cloned()
+                .filter(|(_, _)| effective_class_name != lookup_class)
+            {
+                // Walked to an ancestor — call its ctor with this and forwarded args.
+                let undef_lit =
+                    crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+                while lowered_args.len() < param_count {
+                    lowered_args.push(undef_lit.clone());
+                }
+                let mut ctor_args: Vec<(crate::types::LlvmType, &str)> =
+                    Vec::with_capacity(1 + lowered_args.len());
+                ctor_args.push((DOUBLE, &obj_box));
+                let ctor_param_types: Vec<crate::types::LlvmType> = std::iter::once(DOUBLE)
+                    .chain(lowered_args.iter().map(|_| DOUBLE))
+                    .collect();
+                for la in &lowered_args {
+                    ctor_args.push((DOUBLE, la.as_str()));
+                }
+                ctx.pending_declares.push((
+                    ctor_name.clone(),
+                    crate::types::VOID,
+                    ctor_param_types,
+                ));
+                ctx.block().call_void(&ctor_name, &ctor_args);
+            } else if let Some((ctor_name, param_count)) =
+                ctx.imported_class_ctors.get(class_name).cloned()
+            {
+                // Pad missing optional args with TAG_UNDEFINED so the constructor
+                // doesn't read garbage from stale registers.
+                let undef_lit =
+                    crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
+                while lowered_args.len() < param_count {
+                    lowered_args.push(undef_lit.clone());
+                }
+                // Pass `this` as NaN-boxed double (same as compile_method's this_arg).
+                let mut ctor_args: Vec<(crate::types::LlvmType, &str)> =
+                    Vec::with_capacity(1 + lowered_args.len());
+                ctor_args.push((DOUBLE, &obj_box));
+                let ctor_param_types: Vec<crate::types::LlvmType> = std::iter::once(DOUBLE)
+                    .chain(lowered_args.iter().map(|_| DOUBLE))
+                    .collect();
+                for la in &lowered_args {
+                    ctor_args.push((DOUBLE, la.as_str()));
+                }
+                ctx.pending_declares.push((
+                    ctor_name.clone(),
+                    crate::types::VOID,
+                    ctor_param_types,
+                ));
+                ctx.block().call_void(&ctor_name, &ctor_args);
             }
-            let mut ctor_args: Vec<(crate::types::LlvmType, &str)> =
-                Vec::with_capacity(1 + lowered_args.len());
-            ctor_args.push((DOUBLE, &obj_box));
-            let ctor_param_types: Vec<crate::types::LlvmType> = std::iter::once(DOUBLE)
-                .chain(lowered_args.iter().map(|_| DOUBLE))
-                .collect();
-            for la in &lowered_args {
-                ctor_args.push((DOUBLE, la.as_str()));
-            }
-            ctx.pending_declares
-                .push((ctor_name.clone(), crate::types::VOID, ctor_param_types));
-            ctx.block().call_void(&ctor_name, &ctor_args);
-        } else if let Some((ctor_name, param_count)) =
-            ctx.imported_class_ctors.get(class_name).cloned()
-        {
-            // Pad missing optional args with TAG_UNDEFINED so the constructor
-            // doesn't read garbage from stale registers.
-            let undef_lit =
-                crate::nanbox::double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED));
-            while lowered_args.len() < param_count {
-                lowered_args.push(undef_lit.clone());
-            }
-            // Pass `this` as NaN-boxed double (same as compile_method's this_arg).
-            let mut ctor_args: Vec<(crate::types::LlvmType, &str)> =
-                Vec::with_capacity(1 + lowered_args.len());
-            ctor_args.push((DOUBLE, &obj_box));
-            let ctor_param_types: Vec<crate::types::LlvmType> = std::iter::once(DOUBLE)
-                .chain(lowered_args.iter().map(|_| DOUBLE))
-                .collect();
-            for la in &lowered_args {
-                ctor_args.push((DOUBLE, la.as_str()));
-            }
-            ctx.pending_declares
-                .push((ctor_name.clone(), crate::types::VOID, ctor_param_types));
-            ctx.block().call_void(&ctor_name, &ctor_args);
-        }
         } // end !found_inherited_ctor
     }
 
@@ -3764,9 +3745,7 @@ pub(crate) fn lower_new(ctx: &mut FnCtx<'_>, class_name: &str, args: &[Expr]) ->
     // super + applies SelfOnly) or has an explicit body. Drizzle's
     // `BetterSQLiteSession` (explicit ctor) and arrow-field cross-
     // module classes are both load-bearing. Refs #420 / #618 followup.
-    let has_imported_ctor = ctx
-        .imported_class_ctors
-        .contains_key(class_name);
+    let has_imported_ctor = ctx.imported_class_ctors.contains_key(class_name);
     if !has_own_ctor && has_extends && !has_imported_ctor {
         if let Some(stop_at) = inherited_ctor_class {
             apply_field_initializers_recursive(
@@ -4503,11 +4482,9 @@ pub(super) fn lower_fetch_native_method(
                     "put" => "js_axios_put",
                     _ => "js_axios_patch",
                 };
-                let promise = ctx.block().call(
-                    I64,
-                    rt_fn,
-                    &[(I64, &url_handle), (DOUBLE, &body_box)],
-                );
+                let promise =
+                    ctx.block()
+                        .call(I64, rt_fn, &[(I64, &url_handle), (DOUBLE, &body_box)]);
                 return Ok(Some(nanbox_pointer_inline(ctx.block(), &promise)));
             }
             _ => {}
@@ -4872,9 +4849,9 @@ pub(super) fn lower_fetch_native_method(
                     double_literal(f64::from_bits(crate::nanbox::TAG_UNDEFINED))
                 };
                 // Issue #562: `dest` may be a subclass instance — unwrap.
-                let dest = ctx
-                    .block()
-                    .call(DOUBLE, "js_stream_unwrap_handle", &[(DOUBLE, &dest_raw)]);
+                let dest =
+                    ctx.block()
+                        .call(DOUBLE, "js_stream_unwrap_handle", &[(DOUBLE, &dest_raw)]);
                 let blk = ctx.block();
                 let promise = blk.call(
                     I64,
@@ -9291,70 +9268,469 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         args: &[],
         ret: NR_PTR,
     },
-
     // ========== node:http server (issue #577) ==========
     // Module-level: `import { createServer } from "node:http"; createServer(handler)`
-    NativeModSig { module: "http", has_receiver: false, method: "createServer", class_filter: None, runtime: "js_node_http_create_server", args: &[NA_PTR], ret: NR_PTR },
+    NativeModSig {
+        module: "http",
+        has_receiver: false,
+        method: "createServer",
+        class_filter: None,
+        runtime: "js_node_http_create_server",
+        args: &[NA_PTR],
+        ret: NR_PTR,
+    },
     // HttpServer instance methods (class_filter: HttpServer)
-    NativeModSig { module: "http", has_receiver: true, method: "listen", class_filter: Some("HttpServer"), runtime: "js_node_http_server_listen", args: &[NA_F64, NA_PTR], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "close", class_filter: Some("HttpServer"), runtime: "js_node_http_server_close", args: &[NA_PTR], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "closeAllConnections", class_filter: Some("HttpServer"), runtime: "js_node_http_server_close_all_connections", args: &[], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "closeIdleConnections", class_filter: Some("HttpServer"), runtime: "js_node_http_server_close_idle_connections", args: &[], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "on", class_filter: Some("HttpServer"), runtime: "js_node_http_server_on", args: &[NA_STR, NA_PTR], ret: NR_F64 },
-    NativeModSig { module: "http", has_receiver: true, method: "addListener", class_filter: Some("HttpServer"), runtime: "js_node_http_server_on", args: &[NA_STR, NA_PTR], ret: NR_F64 },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "listen",
+        class_filter: Some("HttpServer"),
+        runtime: "js_node_http_server_listen",
+        args: &[NA_F64, NA_PTR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "close",
+        class_filter: Some("HttpServer"),
+        runtime: "js_node_http_server_close",
+        args: &[NA_PTR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "closeAllConnections",
+        class_filter: Some("HttpServer"),
+        runtime: "js_node_http_server_close_all_connections",
+        args: &[],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "closeIdleConnections",
+        class_filter: Some("HttpServer"),
+        runtime: "js_node_http_server_close_idle_connections",
+        args: &[],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "on",
+        class_filter: Some("HttpServer"),
+        runtime: "js_node_http_server_on",
+        args: &[NA_STR, NA_PTR],
+        ret: NR_F64,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "addListener",
+        class_filter: Some("HttpServer"),
+        runtime: "js_node_http_server_on",
+        args: &[NA_STR, NA_PTR],
+        ret: NR_F64,
+    },
     // IncomingMessage instance methods
-    NativeModSig { module: "http", has_receiver: true, method: "on", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_on", args: &[NA_STR, NA_PTR], ret: NR_F64 },
-    NativeModSig { module: "http", has_receiver: true, method: "addListener", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_on", args: &[NA_STR, NA_PTR], ret: NR_F64 },
-    NativeModSig { module: "http", has_receiver: true, method: "pause", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_pause", args: &[], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "resume", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_resume", args: &[], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "destroy", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_destroy", args: &[], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "read", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_read", args: &[], ret: NR_F64 },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "on",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_on",
+        args: &[NA_STR, NA_PTR],
+        ret: NR_F64,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "addListener",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_on",
+        args: &[NA_STR, NA_PTR],
+        ret: NR_F64,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "pause",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_pause",
+        args: &[],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "resume",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_resume",
+        args: &[],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "destroy",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_destroy",
+        args: &[],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "read",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_read",
+        args: &[],
+        ret: NR_F64,
+    },
     // ServerResponse instance methods
-    NativeModSig { module: "http", has_receiver: true, method: "setHeader", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_set_header", args: &[NA_STR, NA_STR], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "getHeader", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_get_header", args: &[NA_STR], ret: NR_F64 },
-    NativeModSig { module: "http", has_receiver: true, method: "removeHeader", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_remove_header", args: &[NA_STR], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "hasHeader", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_has_header", args: &[NA_STR], ret: NR_I32 },
-    NativeModSig { module: "http", has_receiver: true, method: "writeHead", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_write_head", args: &[NA_F64, NA_STR, NA_STR], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "write", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_write", args: &[NA_F64], ret: NR_I32 },
-    NativeModSig { module: "http", has_receiver: true, method: "end", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_end", args: &[NA_F64], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "flushHeaders", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_flush_headers", args: &[], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "writeContinue", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_write_continue", args: &[], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "writeProcessing", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_write_processing", args: &[], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "on", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_on", args: &[NA_STR, NA_PTR], ret: NR_F64 },
-    NativeModSig { module: "http", has_receiver: true, method: "addListener", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_on", args: &[NA_STR, NA_PTR], ret: NR_F64 },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "setHeader",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_set_header",
+        args: &[NA_STR, NA_STR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "getHeader",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_get_header",
+        args: &[NA_STR],
+        ret: NR_F64,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "removeHeader",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_remove_header",
+        args: &[NA_STR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "hasHeader",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_has_header",
+        args: &[NA_STR],
+        ret: NR_I32,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "writeHead",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_write_head",
+        args: &[NA_F64, NA_STR, NA_STR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "write",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_write",
+        args: &[NA_F64],
+        ret: NR_I32,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "end",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_end",
+        args: &[NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "flushHeaders",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_flush_headers",
+        args: &[],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "writeContinue",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_write_continue",
+        args: &[],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "writeProcessing",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_write_processing",
+        args: &[],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "on",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_on",
+        args: &[NA_STR, NA_PTR],
+        ret: NR_F64,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "addListener",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_on",
+        args: &[NA_STR, NA_PTR],
+        ret: NR_F64,
+    },
     // Method-call aliases for property-style accessors. Until the
     // HIR-level PropertyGet→__get_<name> rewrite lands (followup),
     // user code must use the method-call form: `req.method()` (calls
     // js_node_http_im_method) instead of `req.method` (property
     // read). Same shape as fastify's `request.method()` / `request.url()`.
-    NativeModSig { module: "http", has_receiver: true, method: "method", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_method", args: &[], ret: NR_STR },
-    NativeModSig { module: "http", has_receiver: true, method: "url", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_url", args: &[], ret: NR_STR },
-    NativeModSig { module: "http", has_receiver: true, method: "httpVersion", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_http_version", args: &[], ret: NR_STR },
-    NativeModSig { module: "http", has_receiver: true, method: "setStatus", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_set_status", args: &[NA_F64], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "getStatus", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_get_status", args: &[], ret: NR_F64 },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "method",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_method",
+        args: &[],
+        ret: NR_STR,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "url",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_url",
+        args: &[],
+        ret: NR_STR,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "httpVersion",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_http_version",
+        args: &[],
+        ret: NR_STR,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "setStatus",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_set_status",
+        args: &[NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "getStatus",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_get_status",
+        args: &[],
+        ret: NR_F64,
+    },
     // Property accessors as `__get_<name>` / `__set_<name>` synthetic methods
-    NativeModSig { module: "http", has_receiver: true, method: "__get_method", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_method", args: &[], ret: NR_STR },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_url", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_url", args: &[], ret: NR_STR },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_httpVersion", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_http_version", args: &[], ret: NR_STR },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_complete", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_complete", args: &[], ret: NR_I32 },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_aborted", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_aborted", args: &[], ret: NR_I32 },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_destroyed", class_filter: Some("IncomingMessage"), runtime: "js_node_http_im_destroyed", args: &[], ret: NR_I32 },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_statusCode", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_get_status", args: &[], ret: NR_F64 },
-    NativeModSig { module: "http", has_receiver: true, method: "__set_statusCode", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_set_status", args: &[NA_F64], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "__set_statusMessage", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_set_status_message", args: &[NA_STR], ret: NR_VOID },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_headersSent", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_headers_sent", args: &[], ret: NR_I32 },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_writableEnded", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_writable_ended", args: &[], ret: NR_I32 },
-    NativeModSig { module: "http", has_receiver: true, method: "__get_writableFinished", class_filter: Some("ServerResponse"), runtime: "js_node_http_res_writable_finished", args: &[], ret: NR_I32 },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_method",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_method",
+        args: &[],
+        ret: NR_STR,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_url",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_url",
+        args: &[],
+        ret: NR_STR,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_httpVersion",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_http_version",
+        args: &[],
+        ret: NR_STR,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_complete",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_complete",
+        args: &[],
+        ret: NR_I32,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_aborted",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_aborted",
+        args: &[],
+        ret: NR_I32,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_destroyed",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_node_http_im_destroyed",
+        args: &[],
+        ret: NR_I32,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_statusCode",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_get_status",
+        args: &[],
+        ret: NR_F64,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__set_statusCode",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_set_status",
+        args: &[NA_F64],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__set_statusMessage",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_set_status_message",
+        args: &[NA_STR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_headersSent",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_headers_sent",
+        args: &[],
+        ret: NR_I32,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_writableEnded",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_writable_ended",
+        args: &[],
+        ret: NR_I32,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "__get_writableFinished",
+        class_filter: Some("ServerResponse"),
+        runtime: "js_node_http_res_writable_finished",
+        args: &[],
+        ret: NR_I32,
+    },
     // ========== node:https server (issue #577 Phase 2) ==========
-    NativeModSig { module: "https", has_receiver: false, method: "createServer", class_filter: None, runtime: "js_node_https_create_server", args: &[NA_F64, NA_PTR], ret: NR_PTR },
-    NativeModSig { module: "https", has_receiver: true, method: "listen", class_filter: Some("HttpsServer"), runtime: "js_node_https_server_listen", args: &[NA_F64, NA_PTR], ret: NR_VOID },
-    NativeModSig { module: "https", has_receiver: true, method: "close", class_filter: Some("HttpsServer"), runtime: "js_node_https_server_close", args: &[NA_PTR], ret: NR_VOID },
-    NativeModSig { module: "https", has_receiver: true, method: "on", class_filter: Some("HttpsServer"), runtime: "js_node_https_server_on", args: &[NA_STR, NA_PTR], ret: NR_F64 },
+    NativeModSig {
+        module: "https",
+        has_receiver: false,
+        method: "createServer",
+        class_filter: None,
+        runtime: "js_node_https_create_server",
+        args: &[NA_F64, NA_PTR],
+        ret: NR_PTR,
+    },
+    NativeModSig {
+        module: "https",
+        has_receiver: true,
+        method: "listen",
+        class_filter: Some("HttpsServer"),
+        runtime: "js_node_https_server_listen",
+        args: &[NA_F64, NA_PTR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "https",
+        has_receiver: true,
+        method: "close",
+        class_filter: Some("HttpsServer"),
+        runtime: "js_node_https_server_close",
+        args: &[NA_PTR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "https",
+        has_receiver: true,
+        method: "on",
+        class_filter: Some("HttpsServer"),
+        runtime: "js_node_https_server_on",
+        args: &[NA_STR, NA_PTR],
+        ret: NR_F64,
+    },
     // ========== node:http2 server (issue #577 Phase 3) ==========
-    NativeModSig { module: "http2", has_receiver: false, method: "createSecureServer", class_filter: None, runtime: "js_node_http2_create_secure_server", args: &[NA_F64, NA_PTR], ret: NR_PTR },
-    NativeModSig { module: "http2", has_receiver: true, method: "listen", class_filter: Some("Http2SecureServer"), runtime: "js_node_http2_server_listen", args: &[NA_F64, NA_PTR], ret: NR_VOID },
-    NativeModSig { module: "http2", has_receiver: true, method: "close", class_filter: Some("Http2SecureServer"), runtime: "js_node_http2_server_close", args: &[NA_PTR], ret: NR_VOID },
-    NativeModSig { module: "http2", has_receiver: true, method: "on", class_filter: Some("Http2SecureServer"), runtime: "js_node_http2_server_on", args: &[NA_STR, NA_PTR], ret: NR_F64 },
+    NativeModSig {
+        module: "http2",
+        has_receiver: false,
+        method: "createSecureServer",
+        class_filter: None,
+        runtime: "js_node_http2_create_secure_server",
+        args: &[NA_F64, NA_PTR],
+        ret: NR_PTR,
+    },
+    NativeModSig {
+        module: "http2",
+        has_receiver: true,
+        method: "listen",
+        class_filter: Some("Http2SecureServer"),
+        runtime: "js_node_http2_server_listen",
+        args: &[NA_F64, NA_PTR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http2",
+        has_receiver: true,
+        method: "close",
+        class_filter: Some("Http2SecureServer"),
+        runtime: "js_node_http2_server_close",
+        args: &[NA_PTR],
+        ret: NR_VOID,
+    },
+    NativeModSig {
+        module: "http2",
+        has_receiver: true,
+        method: "on",
+        class_filter: Some("Http2SecureServer"),
+        runtime: "js_node_http2_server_on",
+        args: &[NA_STR, NA_PTR],
+        ret: NR_F64,
+    },
 ];
 
 /// Walk a statement to collect LocalIds declared inside a closure body —

@@ -559,7 +559,10 @@ fn inject_ios_deeplinks(
             .and_then(|s| s.as_array())
             .map(|a| a.len())
             .unwrap_or(0);
-        println!("  Deep links: {} URL scheme(s) → CFBundleURLTypes", scheme_count);
+        println!(
+            "  Deep links: {} URL scheme(s) → CFBundleURLTypes",
+            scheme_count
+        );
     }
     Some(info_plist.replace(
         "</dict>\n</plist>",
@@ -1948,8 +1951,7 @@ pub fn run_with_parse_cache(
                     exported_async_funcs.insert((path_str.clone(), func.name.clone()));
                 }
                 if func.params.last().is_some_and(|p| p.is_rest) {
-                    exported_func_has_rest
-                        .insert((path_str.clone(), func.name.clone()), true);
+                    exported_func_has_rest.insert((path_str.clone(), func.name.clone()), true);
                 }
             }
         }
@@ -2016,8 +2018,7 @@ pub fn run_with_parse_cache(
                             exported_async_funcs.insert((path_str.clone(), name.clone()));
                         }
                         if params.last().is_some_and(|p| p.is_rest) {
-                            exported_func_has_rest
-                                .insert((path_str.clone(), name.clone()), true);
+                            exported_func_has_rest.insert((path_str.clone(), name.clone()), true);
                         }
                     }
                 }
@@ -2324,8 +2325,7 @@ pub fn run_with_parse_cache(
                                                     .get(&key_src)
                                                     .copied()
                                                     .unwrap_or(false);
-                                                new_func_entries
-                                                    .push((key, param_count, has_rest));
+                                                new_func_entries.push((key, param_count, has_rest));
                                             }
                                         }
                                     }
@@ -2775,8 +2775,7 @@ pub fn run_with_parse_cache(
             // `random.make` vs `tracer.make` when multiple namespaces
             // export the same member name. Keyed by `(namespace_local,
             // member_name)` → `source_prefix`.
-            let mut namespace_member_prefixes:
-                std::collections::HashMap<(String, String), String> =
+            let mut namespace_member_prefixes: std::collections::HashMap<(String, String), String> =
                 std::collections::HashMap::new();
             let mut namespace_imports: Vec<String> = Vec::new();
             let mut imported_classes: Vec<perry_codegen::ImportedClass> = Vec::new();
@@ -2899,11 +2898,11 @@ pub fn run_with_parse_cache(
                                             .iter()
                                             .map(|m| m.params.len())
                                             .collect(),
-method_has_rest: class
-    .methods
-    .iter()
-    .map(|m| m.params.iter().any(|p| p.is_rest))
-    .collect(),
+                                        method_has_rest: class
+                                            .methods
+                                            .iter()
+                                            .map(|m| m.params.iter().any(|p| p.is_rest))
+                                            .collect(),
                                         static_method_names: class
                                             .static_methods
                                             .iter()
@@ -3029,11 +3028,11 @@ method_has_rest: class
                                                 .iter()
                                                 .map(|m| m.params.len())
                                                 .collect(),
-method_has_rest: class
-    .methods
-    .iter()
-    .map(|m| m.params.iter().any(|p| p.is_rest))
-    .collect(),
+                                            method_has_rest: class
+                                                .methods
+                                                .iter()
+                                                .map(|m| m.params.iter().any(|p| p.is_rest))
+                                                .collect(),
                                             static_method_names: class
                                                 .static_methods
                                                 .iter()
@@ -3239,11 +3238,11 @@ method_has_rest: class
                                 .iter()
                                 .map(|m| m.params.len())
                                 .collect(),
-method_has_rest: class
-    .methods
-    .iter()
-    .map(|m| m.params.iter().any(|p| p.is_rest))
-    .collect(),
+                            method_has_rest: class
+                                .methods
+                                .iter()
+                                .map(|m| m.params.iter().any(|p| p.is_rest))
+                                .collect(),
                             static_method_names: class
                                 .static_methods
                                 .iter()
@@ -3384,11 +3383,11 @@ method_has_rest: class
                                 .iter()
                                 .map(|m| m.params.len())
                                 .collect(),
-method_has_rest: class
-    .methods
-    .iter()
-    .map(|m| m.params.iter().any(|p| p.is_rest))
-    .collect(),
+                            method_has_rest: class
+                                .methods
+                                .iter()
+                                .map(|m| m.params.iter().any(|p| p.is_rest))
+                                .collect(),
                             static_method_names: class
                                 .static_methods
                                 .iter()
@@ -3669,11 +3668,11 @@ method_has_rest: class
                                 .iter()
                                 .map(|m| m.params.len())
                                 .collect(),
-method_has_rest: class
-    .methods
-    .iter()
-    .map(|m| m.params.iter().any(|p| p.is_rest))
-    .collect(),
+                            method_has_rest: class
+                                .methods
+                                .iter()
+                                .map(|m| m.params.iter().any(|p| p.is_rest))
+                                .collect(),
                             static_method_names: class
                                 .static_methods
                                 .iter()
@@ -3783,11 +3782,11 @@ method_has_rest: class
                                 .iter()
                                 .map(|m| m.params.len())
                                 .collect(),
-method_has_rest: class
-    .methods
-    .iter()
-    .map(|m| m.params.iter().any(|p| p.is_rest))
-    .collect(),
+                            method_has_rest: class
+                                .methods
+                                .iter()
+                                .map(|m| m.params.iter().any(|p| p.is_rest))
+                                .collect(),
                             static_method_names: class
                                 .static_methods
                                 .iter()
@@ -5159,8 +5158,8 @@ method_has_rest: class
         // The entitlements file is referenced by codesign at signing
         // time; the existing `perry publish` flow picks it up
         // automatically when present alongside the .app bundle.
-        let info_plist = inject_ios_deeplinks(&info_plist, &args.input, &app_dir, format)
-            .unwrap_or(info_plist);
+        let info_plist =
+            inject_ios_deeplinks(&info_plist, &args.input, &app_dir, format).unwrap_or(info_plist);
 
         fs::write(app_dir.join("Info.plist"), info_plist)?;
 

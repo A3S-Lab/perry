@@ -9,8 +9,8 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Response, StatusCode};
 use perry_ffi::{
-    alloc_string, get_handle, get_handle_mut, register_handle, JsClosure, JsValue, RawClosureHeader,
-    StringHeader,
+    alloc_string, get_handle, get_handle_mut, register_handle, JsClosure, JsValue,
+    RawClosureHeader, StringHeader,
 };
 use tokio::sync::oneshot;
 
@@ -53,8 +53,8 @@ impl HyperResponseShape {
     /// Build a hyper `Response<Full<Bytes>>` ready to return from the
     /// service fn.
     pub fn into_hyper(self) -> Response<Full<Bytes>> {
-        let mut builder = Response::builder()
-            .status(StatusCode::from_u16(self.status).unwrap_or(StatusCode::OK));
+        let mut builder =
+            Response::builder().status(StatusCode::from_u16(self.status).unwrap_or(StatusCode::OK));
         for (k, v) in self.headers {
             builder = builder.header(k, v);
         }
@@ -442,9 +442,7 @@ pub unsafe extern "C" fn js_node_http_res_on(
 // Allocation helper used by server.rs
 // ============================================================================
 
-pub(crate) fn alloc_server_response(
-    response_tx: oneshot::Sender<HyperResponseShape>,
-) -> i64 {
+pub(crate) fn alloc_server_response(response_tx: oneshot::Sender<HyperResponseShape>) -> i64 {
     register_handle(ServerResponse::new(response_tx))
 }
 

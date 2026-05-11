@@ -320,8 +320,7 @@ pub extern "C" fn Java_com_perry_app_PerryBridge_nativeInvokeNetworkCallback(
 ) {
     const TAG_FALSE: u64 = 0x7FFC_0000_0000_0003;
     const TAG_TRUE: u64 = 0x7FFC_0000_0000_0004;
-    let connected_jsval =
-        f64::from_bits(if connected != 0 { TAG_TRUE } else { TAG_FALSE });
+    let connected_jsval = f64::from_bits(if connected != 0 { TAG_TRUE } else { TAG_FALSE });
     let kind_str: String = env.get_string(&kind).map(|s| s.into()).unwrap_or_default();
     let bytes = kind_str.as_bytes();
     let kind_jsval = unsafe {

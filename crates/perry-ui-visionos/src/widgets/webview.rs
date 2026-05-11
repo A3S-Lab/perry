@@ -58,13 +58,21 @@ fn nanbox_str(s: &str) -> f64 {
 }
 
 unsafe fn url_from_action(action: *mut AnyObject) -> String {
-    if action.is_null() { return String::new(); }
+    if action.is_null() {
+        return String::new();
+    }
     let request: *mut AnyObject = msg_send![action, request];
-    if request.is_null() { return String::new(); }
+    if request.is_null() {
+        return String::new();
+    }
     let url: *mut AnyObject = msg_send![request, URL];
-    if url.is_null() { return String::new(); }
+    if url.is_null() {
+        return String::new();
+    }
     let abs: *mut AnyObject = msg_send![url, absoluteString];
-    if abs.is_null() { return String::new(); }
+    if abs.is_null() {
+        return String::new();
+    }
     let ns: &NSString = &*(abs as *const NSString);
     ns.to_string()
 }
@@ -85,8 +93,12 @@ fn host_of_url_string(s: &str) -> String {
 }
 
 fn host_in_allowlist(host: &str, allowlist: &[String]) -> bool {
-    if allowlist.is_empty() { return true; }
-    allowlist.iter().any(|d| host == d || host.ends_with(&format!(".{}", d)))
+    if allowlist.is_empty() {
+        return true;
+    }
+    allowlist
+        .iter()
+        .any(|d| host == d || host.ends_with(&format!(".{}", d)))
 }
 
 pub struct PerryWebViewDelegateIvars {
@@ -228,10 +240,11 @@ impl PerryWebViewDelegate {
 
     fn dispatch_error(&self, error: *mut AnyObject) {
         let key = self.ivars().callback_key.get();
-        let on_error = WEBVIEW_STATES.with(|s| {
-            s.borrow().get(&key).map(|st| st.on_error).unwrap_or(0.0)
-        });
-        if on_error == 0.0 { return; }
+        let on_error =
+            WEBVIEW_STATES.with(|s| s.borrow().get(&key).map(|st| st.on_error).unwrap_or(0.0));
+        if on_error == 0.0 {
+            return;
+        }
         crate::catch_callback_panic(
             "webview onError",
             std::panic::AssertUnwindSafe(|| unsafe {
@@ -241,7 +254,9 @@ impl PerryWebViewDelegate {
                     let m = if !descr.is_null() {
                         let ns: &NSString = &*(descr as *const NSString);
                         ns.to_string()
-                    } else { String::new() };
+                    } else {
+                        String::new()
+                    };
                     (c, m)
                 } else {
                     (0, String::new())
@@ -317,7 +332,9 @@ pub fn create(url_ptr: *const u8, width: f64, height: f64, ephemeral_hint: f64) 
 
 pub fn load_url(handle: i64, url_ptr: *const u8) {
     let url = str_from_header(url_ptr).to_string();
-    if url.is_empty() { return; }
+    if url.is_empty() {
+        return;
+    }
     if let Some(wv) = webview_for_handle(handle) {
         unsafe { load_url_on_webview(wv, &url) };
     }
@@ -327,28 +344,38 @@ unsafe fn load_url_on_webview(webview: *mut AnyObject, url: &str) {
     let url_cls = AnyClass::get(c"NSURL").unwrap();
     let url_str = NSString::from_str(url);
     let nsurl: *mut AnyObject = msg_send![url_cls, URLWithString: &*url_str];
-    if nsurl.is_null() { return; }
+    if nsurl.is_null() {
+        return;
+    }
     let req_cls = AnyClass::get(c"NSURLRequest").unwrap();
     let req: *mut AnyObject = msg_send![req_cls, requestWithURL: nsurl];
-    if req.is_null() { return; }
+    if req.is_null() {
+        return;
+    }
     let _: *mut AnyObject = msg_send![webview, loadRequest: req];
 }
 
 pub fn reload(handle: i64) {
     if let Some(wv) = webview_for_handle(handle) {
-        unsafe { let _: *mut AnyObject = msg_send![wv, reload]; }
+        unsafe {
+            let _: *mut AnyObject = msg_send![wv, reload];
+        }
     }
 }
 
 pub fn go_back(handle: i64) {
     if let Some(wv) = webview_for_handle(handle) {
-        unsafe { let _: *mut AnyObject = msg_send![wv, goBack]; }
+        unsafe {
+            let _: *mut AnyObject = msg_send![wv, goBack];
+        }
     }
 }
 
 pub fn go_forward(handle: i64) {
     if let Some(wv) = webview_for_handle(handle) {
-        unsafe { let _: *mut AnyObject = msg_send![wv, goForward]; }
+        unsafe {
+            let _: *mut AnyObject = msg_send![wv, goForward];
+        }
     }
 }
 
@@ -370,27 +397,29 @@ pub fn evaluate_js(handle: i64, js_ptr: *const u8, callback: f64) {
     };
     unsafe {
         let js_str = NSString::from_str(&js);
-        let block = block2::RcBlock::new(
-            move |result: *mut AnyObject, _error: *mut AnyObject| {
-                crate::catch_callback_panic(
-                    "webview evaluateJs callback",
-                    std::panic::AssertUnwindSafe(|| {
-                        let s = if !result.is_null() {
-                            let descr: *mut AnyObject = msg_send![result, description];
-                            if !descr.is_null() {
-                                let ns: &NSString = &*(descr as *const NSString);
-                                ns.to_string()
-                            } else { String::new() }
-                        } else { String::new() };
-                        let nb = nanbox_str(&s);
-                        let closure_ptr = js_nanbox_get_pointer(callback) as *const u8;
-                        if !closure_ptr.is_null() {
-                            js_closure_call1(closure_ptr, nb);
+        let block = block2::RcBlock::new(move |result: *mut AnyObject, _error: *mut AnyObject| {
+            crate::catch_callback_panic(
+                "webview evaluateJs callback",
+                std::panic::AssertUnwindSafe(|| {
+                    let s = if !result.is_null() {
+                        let descr: *mut AnyObject = msg_send![result, description];
+                        if !descr.is_null() {
+                            let ns: &NSString = &*(descr as *const NSString);
+                            ns.to_string()
+                        } else {
+                            String::new()
                         }
-                    }),
-                );
-            },
-        );
+                    } else {
+                        String::new()
+                    };
+                    let nb = nanbox_str(&s);
+                    let closure_ptr = js_nanbox_get_pointer(callback) as *const u8;
+                    if !closure_ptr.is_null() {
+                        js_closure_call1(closure_ptr, nb);
+                    }
+                }),
+            );
+        });
         let _: () = msg_send![wv, evaluateJavaScript: &*js_str, completionHandler: &*block];
     }
 }
@@ -402,9 +431,13 @@ pub fn clear_cookies(handle: i64) {
     };
     unsafe {
         let cfg: *mut AnyObject = msg_send![wv, configuration];
-        if cfg.is_null() { return; }
+        if cfg.is_null() {
+            return;
+        }
         let store: *mut AnyObject = msg_send![cfg, websiteDataStore];
-        if store.is_null() { return; }
+        if store.is_null() {
+            return;
+        }
         let store_cls = AnyClass::get(c"WKWebsiteDataStore").unwrap();
         let types: *mut AnyObject = msg_send![store_cls, allWebsiteDataTypes];
         let date_cls = AnyClass::get(c"NSDate").unwrap();
@@ -459,7 +492,9 @@ pub fn set_ephemeral(handle: i64, ephemeral: i64) {
     if let Some(wv) = webview_for_handle(handle) {
         unsafe {
             let cfg: *mut AnyObject = msg_send![wv, configuration];
-            if cfg.is_null() { return; }
+            if cfg.is_null() {
+                return;
+            }
             let store_cls = AnyClass::get(c"WKWebsiteDataStore").unwrap();
             let store: *mut AnyObject = if ephemeral != 0 {
                 msg_send![store_cls, nonPersistentDataStore]
@@ -502,9 +537,13 @@ pub fn set_on_error(handle: i64, closure: f64) {
 }
 
 fn webview_for_handle(handle: i64) -> Option<*mut AnyObject> {
-    HANDLE_TO_KEY.with(|m| m.borrow().get(&handle).copied()).and_then(|key| {
-        WEBVIEW_STATES.with(|s| {
-            s.borrow().get(&key).map(|st| st.webview_ptr as *mut AnyObject)
+    HANDLE_TO_KEY
+        .with(|m| m.borrow().get(&handle).copied())
+        .and_then(|key| {
+            WEBVIEW_STATES.with(|s| {
+                s.borrow()
+                    .get(&key)
+                    .map(|st| st.webview_ptr as *mut AnyObject)
+            })
         })
-    })
 }

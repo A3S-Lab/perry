@@ -248,7 +248,12 @@ pub extern "C" fn perry_ui_textarea_get_string(handle: i64) -> i64 {
 // --- WebView (WKWebView) — issue #658 Phase 1 ---
 
 #[no_mangle]
-pub extern "C" fn perry_ui_webview_create(url_ptr: i64, width: f64, height: f64, ephemeral: f64) -> i64 {
+pub extern "C" fn perry_ui_webview_create(
+    url_ptr: i64,
+    width: f64,
+    height: f64,
+    ephemeral: f64,
+) -> i64 {
     widgets::webview::create(url_ptr as *const u8, width, height, ephemeral)
 }
 #[no_mangle]

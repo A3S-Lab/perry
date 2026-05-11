@@ -109,10 +109,7 @@ pub unsafe extern "C" fn js_axios_get(url_ptr: *const StringHeader) -> *mut Prom
 
 /// axios.post(url, data) -> Promise<AxiosResponse>
 #[no_mangle]
-pub unsafe extern "C" fn js_axios_post(
-    url_ptr: *const StringHeader,
-    data: f64,
-) -> *mut Promise {
+pub unsafe extern "C" fn js_axios_post(url_ptr: *const StringHeader, data: f64) -> *mut Promise {
     let promise = js_promise_new();
 
     let url = match string_from_header(url_ptr) {
@@ -179,10 +176,7 @@ pub unsafe extern "C" fn js_axios_post(
 
 /// axios.put(url, data) -> Promise<AxiosResponse>
 #[no_mangle]
-pub unsafe extern "C" fn js_axios_put(
-    url_ptr: *const StringHeader,
-    data: f64,
-) -> *mut Promise {
+pub unsafe extern "C" fn js_axios_put(url_ptr: *const StringHeader, data: f64) -> *mut Promise {
     let promise = js_promise_new();
 
     let url = match string_from_header(url_ptr) {
@@ -301,10 +295,7 @@ pub unsafe extern "C" fn js_axios_delete(url_ptr: *const StringHeader) -> *mut P
 
 /// axios.patch(url, data) -> Promise<AxiosResponse>
 #[no_mangle]
-pub unsafe extern "C" fn js_axios_patch(
-    url_ptr: *const StringHeader,
-    data: f64,
-) -> *mut Promise {
+pub unsafe extern "C" fn js_axios_patch(url_ptr: *const StringHeader, data: f64) -> *mut Promise {
     let promise = js_promise_new();
 
     let url = match string_from_header(url_ptr) {

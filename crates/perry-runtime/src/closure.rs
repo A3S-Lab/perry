@@ -492,8 +492,7 @@ pub extern "C" fn js_closure_alloc(func_ptr: *const u8, capture_count: u32) -> *
     ptr
 }
 
-pub static CLOSURE_ALLOC_COUNT: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+pub static CLOSURE_ALLOC_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static CLOSURE_CAP_SINGLETON_HIT: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 pub static CLOSURE_CAP_SINGLETON_MISS: std::sync::atomic::AtomicU64 =
@@ -608,17 +607,15 @@ pub extern "C" fn js_closure_alloc_with_captures_singleton(
     // box pointer per invocation so they miss 100% of the time; the
     // bypass turns ~150 ns of cache-lookup overhead per call into a
     // ~50 ns direct `gc_malloc + memcpy`.
-    let streak = CAPTURED_MISS_STREAK.with(|m| {
-        m.borrow().get(&(func_ptr as usize)).copied().unwrap_or(0)
-    });
+    let streak =
+        CAPTURED_MISS_STREAK.with(|m| m.borrow().get(&(func_ptr as usize)).copied().unwrap_or(0));
     if streak == CAPTURED_DISABLED_SENTINEL {
         crate::promise::bump(&CLOSURE_CAP_SINGLETON_MISS);
         let allocated = js_closure_alloc(func_ptr, capture_count);
         if n > 0 && !captures_ptr.is_null() {
             unsafe {
-                let dest = (allocated as *mut u8)
-                    .add(std::mem::size_of::<ClosureHeader>())
-                    as *mut u64;
+                let dest =
+                    (allocated as *mut u8).add(std::mem::size_of::<ClosureHeader>()) as *mut u64;
                 std::ptr::copy_nonoverlapping(captures_ptr, dest, n);
             }
         }
@@ -780,12 +777,7 @@ unsafe fn dispatch_bound_method(closure: *const ClosureHeader, args: &[f64]) -> 
 #[cold]
 #[inline(never)]
 fn throw_not_callable() -> ! {
-    crate::error::js_throw_type_error_not_a_function(
-        std::ptr::null(),
-        0,
-        b"value".as_ptr(),
-        5,
-    )
+    crate::error::js_throw_type_error_not_a_function(std::ptr::null(), 0, b"value".as_ptr(), 5)
 }
 
 /// Validate a closure pointer and return its func_ptr if the closure is valid.

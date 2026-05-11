@@ -182,8 +182,7 @@ fn load_remote(handle: i64, url: String) {
                 None => return,
             };
             let ns: Retained<NSString> = NSString::from_str(&url);
-            let nsurl: *mut objc2::runtime::AnyObject =
-                msg_send![url_cls, URLWithString: &*ns];
+            let nsurl: *mut objc2::runtime::AnyObject = msg_send![url_cls, URLWithString: &*ns];
             if nsurl.is_null() {
                 return;
             }
@@ -226,11 +225,10 @@ fn load_remote(handle: i64, url: String) {
                         Some(v) => v,
                         None => return,
                     };
-                    let ns_data_cls =
-                        match objc2::runtime::AnyClass::get(c"NSData") {
-                            Some(c) => c,
-                            None => return,
-                        };
+                    let ns_data_cls = match objc2::runtime::AnyClass::get(c"NSData") {
+                        Some(c) => c,
+                        None => return,
+                    };
                     let ns_data: *mut objc2::runtime::AnyObject = msg_send![
                         ns_data_cls,
                         dataWithBytes: p.bytes.as_ptr() as *const std::ffi::c_void,

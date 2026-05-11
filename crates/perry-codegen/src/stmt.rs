@@ -387,9 +387,7 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                                     .and_then(|c| c.extends_name.clone());
                                 let mut found: Option<String> = None;
                                 while let Some(pname) = walker {
-                                    if let Some(parent_class) =
-                                        ctx.classes.get(&pname).copied()
-                                    {
+                                    if let Some(parent_class) = ctx.classes.get(&pname).copied() {
                                         if parent_class.constructor.is_some() {
                                             found = Some(pname);
                                             break;
@@ -474,17 +472,13 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                             // the inherited-ctor and the leaf (per JS spec
                             // each default-ctor class's field inits run after
                             // its super() returns).
-                            let post_mode = if let Some(stop_at) =
-                                inherited_ctor_class.clone()
-                            {
+                            let post_mode = if let Some(stop_at) = inherited_ctor_class.clone() {
                                 crate::lower_call::FieldInitMode::BetweenExclusiveTo(stop_at)
                             } else {
                                 crate::lower_call::FieldInitMode::SelfOnly
                             };
                             crate::lower_call::apply_field_initializers_recursive(
-                                ctx,
-                                class_name,
-                                post_mode,
+                                ctx, class_name, post_mode,
                             )?;
                         }
 
@@ -749,20 +743,14 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
                     // started returning `start-try-finally` instead of
                     // `start-try`.
                     if let perry_hir::Expr::LocalGet(src_id) = init_expr {
-                        if matches!(
-                            ctx.local_types.get(src_id),
-                            Some(perry_types::Type::String)
-                        ) {
+                        if matches!(ctx.local_types.get(src_id), Some(perry_types::Type::String)) {
                             let blk = ctx.block();
                             let s_ptr = blk.call(
                                 crate::types::I64,
                                 "js_get_string_pointer_unified",
                                 &[(DOUBLE, &v)],
                             );
-                            blk.call_void(
-                                "js_string_addref",
-                                &[(crate::types::I64, &s_ptr)],
-                            );
+                            blk.call_void("js_string_addref", &[(crate::types::I64, &s_ptr)]);
                         }
                     }
                     ctx.block().store(DOUBLE, &v, &slot);

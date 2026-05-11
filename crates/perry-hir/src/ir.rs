@@ -1876,12 +1876,21 @@ pub enum Expr {
     /// `urlInstance.pathname = value`. Issue #650: setter mutates the URL's
     /// pathname field and re-derives href so subsequent reads see the new
     /// composed URL string.
-    UrlSetPathname { url: Box<Expr>, value: Box<Expr> },
+    UrlSetPathname {
+        url: Box<Expr>,
+        value: Box<Expr>,
+    },
     /// `urlInstance.search = value`. Issue #650: setter normalizes leading
     /// `?` and re-parses the query string into the URL's searchParams.
-    UrlSetSearch { url: Box<Expr>, value: Box<Expr> },
+    UrlSetSearch {
+        url: Box<Expr>,
+        value: Box<Expr>,
+    },
     /// `urlInstance.hash = value`. Issue #650: setter normalizes leading `#`.
-    UrlSetHash { url: Box<Expr>, value: Box<Expr> },
+    UrlSetHash {
+        url: Box<Expr>,
+        value: Box<Expr>,
+    },
 
     // URLSearchParams operations
     /// new URLSearchParams(init?)

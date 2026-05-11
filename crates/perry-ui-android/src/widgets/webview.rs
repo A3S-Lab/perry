@@ -72,8 +72,8 @@ pub fn create(url_ptr: *const u8, _width: f64, _height: f64, ephemeral_hint: f64
         Ok(w) => w,
         Err(_) => {
             unsafe {
-        let _ = env.pop_local_frame(&jni::objects::JObject::null());
-    }
+                let _ = env.pop_local_frame(&jni::objects::JObject::null());
+            }
             return 0;
         }
     };
@@ -114,8 +114,8 @@ pub fn create(url_ptr: *const u8, _width: f64, _height: f64, ephemeral_hint: f64
         Ok(g) => g,
         Err(_) => {
             unsafe {
-        let _ = env.pop_local_frame(&jni::objects::JObject::null());
-    }
+                let _ = env.pop_local_frame(&jni::objects::JObject::null());
+            }
             return 0;
         }
     };
@@ -391,7 +391,10 @@ pub extern "system" fn Java_com_perry_app_PerryBridge_nativeWebViewError(
     code: jni::sys::jlong,
     message: jni::objects::JString,
 ) {
-    let msg: String = env.get_string(&message).map(|s| s.into()).unwrap_or_default();
+    let msg: String = env
+        .get_string(&message)
+        .map(|s| s.into())
+        .unwrap_or_default();
     let on_error = WEBVIEW_STATES.with(|s| {
         s.borrow()
             .get(&(widget_handle as i64))
@@ -418,7 +421,10 @@ pub extern "system" fn Java_com_perry_app_PerryBridge_nativeWebViewEvalResult(
     callback_key: jni::sys::jlong,
     result: jni::objects::JString,
 ) {
-    let raw: String = env.get_string(&result).map(|s| s.into()).unwrap_or_default();
+    let raw: String = env
+        .get_string(&result)
+        .map(|s| s.into())
+        .unwrap_or_default();
     let callback = EVAL_CALLBACKS.with(|m| m.borrow_mut().remove(&(callback_key as i64)));
     let callback = match callback {
         Some(c) if c != 0.0 => c,
@@ -504,12 +510,9 @@ pub fn set_user_agent(handle: i64, ua_ptr: *const u8) {
     };
     let mut env = jni_bridge::get_env();
     let _ = env.push_local_frame(8);
-    if let Ok(settings) = env.call_method(
-        &view,
-        "getSettings",
-        "()Landroid/webkit/WebSettings;",
-        &[],
-    ) {
+    if let Ok(settings) =
+        env.call_method(&view, "getSettings", "()Landroid/webkit/WebSettings;", &[])
+    {
         if let Ok(s) = settings.l() {
             if let Ok(jua) = env.new_string(ua) {
                 let _ = env.call_method(

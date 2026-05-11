@@ -536,8 +536,7 @@ fn extract_top_level_class_decls(source: &str) -> (String, Vec<String>, String) 
                     }
                     if depth == 0 && r > body_start {
                         // Successful brace-balanced match. Record the block.
-                        let block_text = std::str::from_utf8(&bytes[line_start..r])
-                            .unwrap_or("");
+                        let block_text = std::str::from_utf8(&bytes[line_start..r]).unwrap_or("");
                         if !hoisted_names.contains(&class_name) {
                             hoisted_blocks.push(block_text);
                             hoisted_names.push(class_name);
@@ -617,9 +616,10 @@ fn extract_exports_from_source(source: &str) -> Vec<String> {
     };
 
     // Shape 1: `exports.X = ...` / `module.exports.X = ...`
-    let dot_re =
-        regex::Regex::new(r"(?:^|[^A-Za-z0-9_$])(?:module\.)?exports\.([A-Za-z_$][A-Za-z0-9_$]*)\s*=")
-            .unwrap();
+    let dot_re = regex::Regex::new(
+        r"(?:^|[^A-Za-z0-9_$])(?:module\.)?exports\.([A-Za-z_$][A-Za-z0-9_$]*)\s*=",
+    )
+    .unwrap();
     for cap in dot_re.captures_iter(source) {
         if let Some(m) = cap.get(1) {
             push_unique(&mut names, m.as_str());
@@ -946,7 +946,10 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                ("RateLimiterMemory".to_string(), "./lib/RateLimiterMemory".to_string()),
+                (
+                    "RateLimiterMemory".to_string(),
+                    "./lib/RateLimiterMemory".to_string()
+                ),
                 ("Foo".to_string(), "./lib/Foo".to_string()),
             ]
         );

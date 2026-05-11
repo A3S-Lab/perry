@@ -243,11 +243,7 @@ pub fn show() {
                 WINDOW_EX_STYLE::default(),
                 PCWSTR(list_class.as_ptr()),
                 PCWSTR(list_text.as_ptr()),
-                WS_CHILD
-                    | WS_VISIBLE
-                    | WS_BORDER
-                    | WS_VSCROLL
-                    | WINDOW_STYLE(LBS_NOTIFY as u32),
+                WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | WINDOW_STYLE(LBS_NOTIFY as u32),
                 10,
                 48,
                 w - 20,

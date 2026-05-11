@@ -27,8 +27,8 @@
 use perry_runtime::{
     js_array_alloc, js_array_push, js_closure_call0, js_closure_call1, js_closure_call2,
     js_object_alloc, js_object_get_field_by_name, js_object_set_field, js_object_set_field_by_name,
-    js_object_set_keys, js_promise_new, js_promise_reject, js_promise_resolve, js_string_from_bytes,
-    ClosureHeader, JSValue, ObjectHeader, Promise,
+    js_object_set_keys, js_promise_new, js_promise_reject, js_promise_resolve,
+    js_string_from_bytes, ClosureHeader, JSValue, ObjectHeader, Promise,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
@@ -1331,7 +1331,10 @@ pub unsafe extern "C" fn js_streams_throw_byte_length_not_implemented() -> f64 {
 const SUBCLASS_HANDLE_FIELD: &[u8] = b"__perry_stream_handle__";
 
 unsafe fn subclass_handle_key() -> *const perry_runtime::StringHeader {
-    js_string_from_bytes(SUBCLASS_HANDLE_FIELD.as_ptr(), SUBCLASS_HANDLE_FIELD.len() as u32)
+    js_string_from_bytes(
+        SUBCLASS_HANDLE_FIELD.as_ptr(),
+        SUBCLASS_HANDLE_FIELD.len() as u32,
+    )
 }
 
 unsafe fn this_object_ptr(this_bits: f64) -> Option<*mut ObjectHeader> {

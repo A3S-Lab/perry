@@ -74,8 +74,7 @@ unsafe fn install_long_press(widget_handle: i64, view: &UIView, min_press_secs: 
     let gr_cls = AnyClass::get(c"UILongPressGestureRecognizer").unwrap();
     let alloc: *mut AnyObject = msg_send![gr_cls, alloc];
     let sel = Sel::register(c"handleLongPress:");
-    let recognizer: *mut AnyObject =
-        msg_send![alloc, initWithTarget: target_obj, action: sel];
+    let recognizer: *mut AnyObject = msg_send![alloc, initWithTarget: target_obj, action: sel];
     let _: () = msg_send![recognizer, setMinimumPressDuration: min_press_secs];
     let _: () = msg_send![view, addGestureRecognizer: recognizer];
 
@@ -87,7 +86,10 @@ unsafe fn install_long_press(widget_handle: i64, view: &UIView, min_press_secs: 
 
 fn present_overlay(widget_handle: i64) {
     let content_handle = BINDINGS.with(|b| {
-        b.borrow().get(&widget_handle).map(|x| x.content_handle).unwrap_or(0)
+        b.borrow()
+            .get(&widget_handle)
+            .map(|x| x.content_handle)
+            .unwrap_or(0)
     });
     if content_handle == 0 {
         return;
@@ -175,7 +177,8 @@ fn present_overlay(widget_handle: i64) {
         };
         let card_alloc: *mut AnyObject = msg_send![view_cls, alloc];
         let card_raw: *mut AnyObject = msg_send![card_alloc, initWithFrame: card_frame];
-        let card: Retained<UIView> = Retained::from_raw(card_raw as *mut UIView).expect("card init nil");
+        let card: Retained<UIView> =
+            Retained::from_raw(card_raw as *mut UIView).expect("card init nil");
 
         // Dark translucent background, 8pt corner radius, soft shadow.
         let bg: Retained<AnyObject> = msg_send![
@@ -190,14 +193,16 @@ fn present_overlay(widget_handle: i64) {
         if !card_layer.is_null() {
             let _: () = msg_send![card_layer, setCornerRadius: 8.0_f64];
             let _: () = msg_send![card_layer, setMasksToBounds: false];
-            let shadow_color: *mut AnyObject = msg_send![
-                AnyClass::get(c"UIColor").unwrap(), blackColor
-            ];
+            let shadow_color: *mut AnyObject =
+                msg_send![AnyClass::get(c"UIColor").unwrap(), blackColor];
             let cg_shadow: *mut AnyObject = msg_send![shadow_color, CGColor];
             let _: () = msg_send![card_layer, setShadowColor: cg_shadow];
             let _: () = msg_send![card_layer, setShadowOpacity: 0.3_f64 as f32];
             let _: () = msg_send![card_layer, setShadowRadius: 6.0_f64];
-            let shadow_off = CGSize { width: 0.0, height: 2.0 };
+            let shadow_off = CGSize {
+                width: 0.0,
+                height: 2.0,
+            };
             let _: () = msg_send![card_layer, setShadowOffset: shadow_off];
         }
 
@@ -223,8 +228,7 @@ fn present_overlay(widget_handle: i64) {
         let alloc: *mut AnyObject = msg_send![gr_cls, alloc];
         let sel = Sel::register(c"handleDismissTap:");
         let dismiss_obj: &AnyObject = &*dismiss_target;
-        let recognizer: *mut AnyObject =
-            msg_send![alloc, initWithTarget: dismiss_obj, action: sel];
+        let recognizer: *mut AnyObject = msg_send![alloc, initWithTarget: dismiss_obj, action: sel];
         let _: () = msg_send![&*backdrop, addGestureRecognizer: recognizer];
         let recognizer_retained: Retained<AnyObject> =
             Retained::retain(recognizer).expect("tap recognizer retain");

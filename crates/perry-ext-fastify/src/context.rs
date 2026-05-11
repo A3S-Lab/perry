@@ -372,10 +372,7 @@ pub unsafe extern "C" fn js_fastify_reply_header(
 /// `reply.type(value)` — Fastify alias for `reply.header("content-type", value)`.
 /// Returns the reply handle for chaining.
 #[no_mangle]
-pub unsafe extern "C" fn js_fastify_reply_type(
-    ctx_handle: Handle,
-    value: i64,
-) -> Handle {
+pub unsafe extern "C" fn js_fastify_reply_type(ctx_handle: Handle, value: i64) -> Handle {
     let value = match string_from_nanboxed(value) {
         Some(v) => v,
         None => return ctx_handle,

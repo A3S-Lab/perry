@@ -1527,6 +1527,7 @@ impl ValidPointerSet {
         // restricts that lookup to arena objects.
         std::mem::swap(&mut self.merged_sorted, &mut self.arena_sorted);
 
+<<<<<<< Updated upstream
         // Compute the `merged_sorted` (arena) range first, then
         // extend with the malloc range that was tracked separately
         // in `range_min` / `range_max` via the
@@ -1537,6 +1538,44 @@ impl ValidPointerSet {
         // arena address span.
         if let (Some(&first), Some(&last)) =
             (self.merged_sorted.first(), self.merged_sorted.last())
+=======
+        // Merge the two sorted vecs into one. Each `contains` call in
+        // the mark phase otherwise does TWO binary searches (one per
+        // region); a single merged vec halves that — material on
+        // ABC451D-shaped allocation-heavy workloads where `contains`
+        // is called millions of times per GC cycle. The merge is O(n)
+        // and runs once per cycle (here in finalize); the mark-phase
+        // savings are O(n × log n × calls), so even at million-entry
+        // scale the trade favors the merged layout.
+        if self.arena_sorted.is_empty() {
+            std::mem::swap(&mut self.merged_sorted, &mut self.malloc_sorted);
+        } else if self.malloc_sorted.is_empty() {
+            std::mem::swap(&mut self.merged_sorted, &mut self.arena_sorted);
+        } else {
+            self.merged_sorted
+                .reserve(self.arena_sorted.len() + self.malloc_sorted.len());
+            let (mut i, mut j) = (0usize, 0usize);
+            let (a, m) = (&self.arena_sorted, &self.malloc_sorted);
+            while i < a.len() && j < m.len() {
+                if a[i] <= m[j] {
+                    self.merged_sorted.push(a[i]);
+                    i += 1;
+                } else {
+                    self.merged_sorted.push(m[j]);
+                    j += 1;
+                }
+            }
+            self.merged_sorted.extend_from_slice(&a[i..]);
+            self.merged_sorted.extend_from_slice(&m[j..]);
+        }
+
+        // Compute the min/max range from the merged vec (sorted, so
+        // first/last are the extremes). Empty regions leave the
+        // sentinel values, which the `maybe_contains` short-circuit
+        // handles via `if ptr < min || ptr > max` — both extremes will
+        // exclude every input.
+        if let (Some(&first), Some(&last)) = (self.merged_sorted.first(), self.merged_sorted.last())
+>>>>>>> Stashed changes
         {
             if first < self.range_min {
                 self.range_min = first;

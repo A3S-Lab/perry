@@ -165,9 +165,7 @@ pub(crate) fn lower_array_method(
             // because the general method-dispatch fallback doesn't know
             // about copyWithin and silently no-op'd.
             if args.is_empty() {
-                bail!(
-                    "perry-codegen: Array.copyWithin expects 1-3 args, got 0",
-                );
+                bail!("perry-codegen: Array.copyWithin expects 1-3 args, got 0",);
             }
             let target_d = lower_expr(ctx, &args[0])?;
             let start_d = if args.len() >= 2 {
@@ -197,14 +195,26 @@ pub(crate) fn lower_array_method(
             Ok(nanbox_pointer_inline(blk, &result))
         }
         "flat" => {
-            // arr.flat() / arr.flat(depth) — depth is ignored for now.
-            for a in args {
-                let _ = lower_expr(ctx, a)?;
+            // ECMA-262 §23.1.3.10 `arr.flat(depth?)`. Default depth = 1.
+            // The depth-aware path routes to `js_array_flat_depth` (handles
+            // 0 = shallow copy, Infinity = full recursion); 0-arg keeps
+            // the legacy `js_array_flat` fast path.
+            if args.is_empty() {
+                let blk = ctx.block();
+                let recv_handle = unbox_to_i64(blk, &recv_box);
+                let result = blk.call(I64, "js_array_flat", &[(I64, &recv_handle)]);
+                Ok(nanbox_pointer_inline(blk, &result))
+            } else {
+                let depth_d = lower_expr(ctx, &args[0])?;
+                let blk = ctx.block();
+                let recv_handle = unbox_to_i64(blk, &recv_box);
+                let result = blk.call(
+                    I64,
+                    "js_array_flat_depth",
+                    &[(I64, &recv_handle), (DOUBLE, &depth_d)],
+                );
+                Ok(nanbox_pointer_inline(blk, &result))
             }
-            let blk = ctx.block();
-            let recv_handle = unbox_to_i64(blk, &recv_box);
-            let result = blk.call(I64, "js_array_flat", &[(I64, &recv_handle)]);
-            Ok(nanbox_pointer_inline(blk, &result))
         }
         "flatMap" => {
             if args.len() != 1 {

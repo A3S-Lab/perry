@@ -105,10 +105,7 @@ fn build_url_search_params_method_call(
 /// generic dispatch). Matches receiver shapes by AST first, then by the
 /// caller's `local_types` table — both source-level shapes the user typically
 /// writes for these objects.
-fn static_receiver_class(
-    ctx: &LoweringContext,
-    obj: &ast::Expr,
-) -> Option<&'static str> {
+fn static_receiver_class(ctx: &LoweringContext, obj: &ast::Expr) -> Option<&'static str> {
     if let ast::Expr::New(new_expr) = obj {
         if let ast::Expr::Ident(ident) = new_expr.callee.as_ref() {
             return match ident.sym.as_ref() {
@@ -173,19 +170,9 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
     // lowered, so `req.method` / `res.end(...)` inside the handler
     // dispatch through NATIVE_MODULE_TABLE instead of falling
     // through to generic property access.
-    if let Some((req_name, res_name)) =
-        pre_scan_node_http_create_server_params(ctx, call)
-    {
-        ctx.register_native_instance(
-            req_name,
-            "http".to_string(),
-            "IncomingMessage".to_string(),
-        );
-        ctx.register_native_instance(
-            res_name,
-            "http".to_string(),
-            "ServerResponse".to_string(),
-        );
+    if let Some((req_name, res_name)) = pre_scan_node_http_create_server_params(ctx, call) {
+        ctx.register_native_instance(req_name, "http".to_string(), "IncomingMessage".to_string());
+        ctx.register_native_instance(res_name, "http".to_string(), "ServerResponse".to_string());
     }
 
     // Issue #577 Phase 4 — `httpServer.on('upgrade', (req, wsId, head) => …)`
@@ -194,11 +181,7 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
     // `wsId.close()` inside the handler dispatch via the Client-class
     // entries in NATIVE_MODULE_TABLE.
     if let Some(ws_id_name) = pre_scan_node_http_upgrade_params(ctx, call) {
-        ctx.register_native_instance(
-            ws_id_name,
-            "ws".to_string(),
-            "Client".to_string(),
-        );
+        ctx.register_native_instance(ws_id_name, "ws".to_string(), "Client".to_string());
     }
 
     // perry/ui reactive Text: `Text(\`...${state.value}...\`)` where at least one
@@ -266,7 +249,9 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                          — use a static `import` instead \
                          (e.g. `import * as m from \"{}\"` \
                          or `import {{ x }} from \"{}\"`). Closes #668.",
-                        spec, spec, spec,
+                        spec,
+                        spec,
+                        spec,
                     );
                 }
             }
@@ -872,7 +857,8 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                             match arg {
                                                 Expr::Object(props) => {
                                                     for (key, val) in props {
-                                                        parts.push((Some(key.clone()), val.clone()));
+                                                        parts
+                                                            .push((Some(key.clone()), val.clone()));
                                                     }
                                                 }
                                                 _ => {
@@ -1361,8 +1347,7 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                     | "readable_stream_reader"
                                     | "writable_stream_writer"
                             );
-                            if is_stream_module
-                                && !is_stream_api_method(&module_name, &method_name)
+                            if is_stream_module && !is_stream_api_method(&module_name, &method_name)
                             {
                                 // Fall through — let the regular method-call
                                 // dispatch further down handle the user-class
@@ -2613,11 +2598,7 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                             if let ast::MemberProp::Ident(method_ident) = &member.prop {
                                 let method_name = method_ident.sym.as_ref();
                                 let recv = lower_expr(ctx, &member.obj)?;
-                                match build_url_search_params_method_call(
-                                    recv,
-                                    method_name,
-                                    args,
-                                ) {
+                                match build_url_search_params_method_call(recv, method_name, args) {
                                     Ok(expr) => return Ok(expr),
                                     Err(returned_args) => args = returned_args,
                                 }
@@ -2685,156 +2666,159 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                         // Receiver is statically a non-Date class (e.g. URL).
                         // Skip the Date arms below — fall through to generic.
                     } else {
-                    match method_name {
-                        "getTime" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetTime(Box::new(date_expr)));
-                        }
-                        "toISOString" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateToISOString(Box::new(date_expr)));
-                        }
-                        "getFullYear" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetFullYear(Box::new(date_expr)));
-                        }
-                        "getMonth" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetMonth(Box::new(date_expr)));
-                        }
-                        "getDate" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetDate(Box::new(date_expr)));
-                        }
-                        "getHours" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetHours(Box::new(date_expr)));
-                        }
-                        "getMinutes" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetMinutes(Box::new(date_expr)));
-                        }
-                        "getSeconds" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetSeconds(Box::new(date_expr)));
-                        }
-                        "getMilliseconds" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetMilliseconds(Box::new(date_expr)));
-                        }
-                        // UTC getters
-                        "getUTCDay" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetUtcDay(Box::new(date_expr)));
-                        }
-                        "getUTCFullYear" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetUtcFullYear(Box::new(date_expr)));
-                        }
-                        "getUTCMonth" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetUtcMonth(Box::new(date_expr)));
-                        }
-                        "getUTCDate" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetUtcDate(Box::new(date_expr)));
-                        }
-                        "getUTCHours" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetUtcHours(Box::new(date_expr)));
-                        }
-                        "getUTCMinutes" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetUtcMinutes(Box::new(date_expr)));
-                        }
-                        "getUTCSeconds" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetUtcSeconds(Box::new(date_expr)));
-                        }
-                        "getUTCMilliseconds" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetUtcMilliseconds(Box::new(date_expr)));
-                        }
-                        // Other getters/methods
-                        "valueOf" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateValueOf(Box::new(date_expr)));
-                        }
-                        "toDateString" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateToDateString(Box::new(date_expr)));
-                        }
-                        "toTimeString" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateToTimeString(Box::new(date_expr)));
-                        }
-                        "toLocaleDateString" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateToLocaleDateString(Box::new(date_expr)));
-                        }
-                        "toLocaleTimeString" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateToLocaleTimeString(Box::new(date_expr)));
-                        }
-                        "toLocaleString" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateToLocaleString(Box::new(date_expr)));
-                        }
-                        "getTimezoneOffset" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateGetTimezoneOffset(Box::new(date_expr)));
-                        }
-                        "toJSON" => {
-                            let date_expr = lower_expr(ctx, &member.obj)?;
-                            return Ok(Expr::DateToJSON(Box::new(date_expr)));
-                        }
-                        // UTC setters — mutate the local variable in place
-                        "setUTCFullYear" | "setUTCMonth" | "setUTCDate" | "setUTCHours"
-                        | "setUTCMinutes" | "setUTCSeconds" | "setUTCMilliseconds" => {
-                            if !args.is_empty() {
-                                let value_expr = args.into_iter().next().unwrap();
+                        match method_name {
+                            "getTime" => {
                                 let date_expr = lower_expr(ctx, &member.obj)?;
-                                let setter_call = match method_name {
-                                    "setUTCFullYear" => Expr::DateSetUtcFullYear {
-                                        date: Box::new(date_expr.clone()),
-                                        value: Box::new(value_expr),
-                                    },
-                                    "setUTCMonth" => Expr::DateSetUtcMonth {
-                                        date: Box::new(date_expr.clone()),
-                                        value: Box::new(value_expr),
-                                    },
-                                    "setUTCDate" => Expr::DateSetUtcDate {
-                                        date: Box::new(date_expr.clone()),
-                                        value: Box::new(value_expr),
-                                    },
-                                    "setUTCHours" => Expr::DateSetUtcHours {
-                                        date: Box::new(date_expr.clone()),
-                                        value: Box::new(value_expr),
-                                    },
-                                    "setUTCMinutes" => Expr::DateSetUtcMinutes {
-                                        date: Box::new(date_expr.clone()),
-                                        value: Box::new(value_expr),
-                                    },
-                                    "setUTCSeconds" => Expr::DateSetUtcSeconds {
-                                        date: Box::new(date_expr.clone()),
-                                        value: Box::new(value_expr),
-                                    },
-                                    "setUTCMilliseconds" => Expr::DateSetUtcMilliseconds {
-                                        date: Box::new(date_expr.clone()),
-                                        value: Box::new(value_expr),
-                                    },
-                                    _ => unreachable!(),
-                                };
-                                // If receiver is a local variable, mutate it in place by wrapping
-                                // the setter result in a LocalSet so the new timestamp is stored back.
-                                if let Expr::LocalGet(local_id) = &date_expr {
-                                    return Ok(Expr::LocalSet(*local_id, Box::new(setter_call)));
-                                }
-                                return Ok(setter_call);
+                                return Ok(Expr::DateGetTime(Box::new(date_expr)));
                             }
+                            "toISOString" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateToISOString(Box::new(date_expr)));
+                            }
+                            "getFullYear" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetFullYear(Box::new(date_expr)));
+                            }
+                            "getMonth" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetMonth(Box::new(date_expr)));
+                            }
+                            "getDate" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetDate(Box::new(date_expr)));
+                            }
+                            "getHours" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetHours(Box::new(date_expr)));
+                            }
+                            "getMinutes" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetMinutes(Box::new(date_expr)));
+                            }
+                            "getSeconds" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetSeconds(Box::new(date_expr)));
+                            }
+                            "getMilliseconds" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetMilliseconds(Box::new(date_expr)));
+                            }
+                            // UTC getters
+                            "getUTCDay" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetUtcDay(Box::new(date_expr)));
+                            }
+                            "getUTCFullYear" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetUtcFullYear(Box::new(date_expr)));
+                            }
+                            "getUTCMonth" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetUtcMonth(Box::new(date_expr)));
+                            }
+                            "getUTCDate" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetUtcDate(Box::new(date_expr)));
+                            }
+                            "getUTCHours" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetUtcHours(Box::new(date_expr)));
+                            }
+                            "getUTCMinutes" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetUtcMinutes(Box::new(date_expr)));
+                            }
+                            "getUTCSeconds" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetUtcSeconds(Box::new(date_expr)));
+                            }
+                            "getUTCMilliseconds" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetUtcMilliseconds(Box::new(date_expr)));
+                            }
+                            // Other getters/methods
+                            "valueOf" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateValueOf(Box::new(date_expr)));
+                            }
+                            "toDateString" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateToDateString(Box::new(date_expr)));
+                            }
+                            "toTimeString" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateToTimeString(Box::new(date_expr)));
+                            }
+                            "toLocaleDateString" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateToLocaleDateString(Box::new(date_expr)));
+                            }
+                            "toLocaleTimeString" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateToLocaleTimeString(Box::new(date_expr)));
+                            }
+                            "toLocaleString" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateToLocaleString(Box::new(date_expr)));
+                            }
+                            "getTimezoneOffset" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateGetTimezoneOffset(Box::new(date_expr)));
+                            }
+                            "toJSON" => {
+                                let date_expr = lower_expr(ctx, &member.obj)?;
+                                return Ok(Expr::DateToJSON(Box::new(date_expr)));
+                            }
+                            // UTC setters — mutate the local variable in place
+                            "setUTCFullYear" | "setUTCMonth" | "setUTCDate" | "setUTCHours"
+                            | "setUTCMinutes" | "setUTCSeconds" | "setUTCMilliseconds" => {
+                                if !args.is_empty() {
+                                    let value_expr = args.into_iter().next().unwrap();
+                                    let date_expr = lower_expr(ctx, &member.obj)?;
+                                    let setter_call = match method_name {
+                                        "setUTCFullYear" => Expr::DateSetUtcFullYear {
+                                            date: Box::new(date_expr.clone()),
+                                            value: Box::new(value_expr),
+                                        },
+                                        "setUTCMonth" => Expr::DateSetUtcMonth {
+                                            date: Box::new(date_expr.clone()),
+                                            value: Box::new(value_expr),
+                                        },
+                                        "setUTCDate" => Expr::DateSetUtcDate {
+                                            date: Box::new(date_expr.clone()),
+                                            value: Box::new(value_expr),
+                                        },
+                                        "setUTCHours" => Expr::DateSetUtcHours {
+                                            date: Box::new(date_expr.clone()),
+                                            value: Box::new(value_expr),
+                                        },
+                                        "setUTCMinutes" => Expr::DateSetUtcMinutes {
+                                            date: Box::new(date_expr.clone()),
+                                            value: Box::new(value_expr),
+                                        },
+                                        "setUTCSeconds" => Expr::DateSetUtcSeconds {
+                                            date: Box::new(date_expr.clone()),
+                                            value: Box::new(value_expr),
+                                        },
+                                        "setUTCMilliseconds" => Expr::DateSetUtcMilliseconds {
+                                            date: Box::new(date_expr.clone()),
+                                            value: Box::new(value_expr),
+                                        },
+                                        _ => unreachable!(),
+                                    };
+                                    // If receiver is a local variable, mutate it in place by wrapping
+                                    // the setter result in a LocalSet so the new timestamp is stored back.
+                                    if let Expr::LocalGet(local_id) = &date_expr {
+                                        return Ok(Expr::LocalSet(
+                                            *local_id,
+                                            Box::new(setter_call),
+                                        ));
+                                    }
+                                    return Ok(setter_call);
+                                }
+                            }
+                            _ => {} // Fall through to other handling
                         }
-                        _ => {} // Fall through to other handling
-                    }
                     } // close `else` of `if ambiguous && !allow_ambiguous_date`
                 }
 
@@ -3497,20 +3481,27 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                         // ArrayKeys fold. Mirrors lower.rs:6196.
                                         let ty_is_map = |t: &Type| matches!(t, Type::Generic { base, .. } if base == "Map" || base == "WeakMap");
                                         let ty_is_set = |t: &Type| matches!(t, Type::Generic { base, .. } if base == "Set" || base == "WeakSet");
-                                        let ty_is_array = |t: &Type| matches!(t, Type::Array(_) | Type::Tuple(_));
+                                        let ty_is_array =
+                                            |t: &Type| matches!(t, Type::Array(_) | Type::Tuple(_));
                                         let is_map = match &recv_ty {
                                             Some(t) if ty_is_map(t) => true,
-                                            Some(Type::Union(variants)) => variants.iter().any(ty_is_map),
+                                            Some(Type::Union(variants)) => {
+                                                variants.iter().any(ty_is_map)
+                                            }
                                             _ => false,
                                         };
                                         let is_set = match &recv_ty {
                                             Some(t) if ty_is_set(t) => true,
-                                            Some(Type::Union(variants)) => variants.iter().any(ty_is_set),
+                                            Some(Type::Union(variants)) => {
+                                                variants.iter().any(ty_is_set)
+                                            }
                                             _ => false,
                                         };
                                         let is_known_array = match &recv_ty {
                                             Some(t) if ty_is_array(t) => true,
-                                            Some(Type::Union(variants)) => variants.iter().any(ty_is_array),
+                                            Some(Type::Union(variants)) => {
+                                                variants.iter().any(ty_is_array)
+                                            }
                                             _ => false,
                                         };
                                         match method_name {
@@ -3823,7 +3814,8 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                             // return_type is statically Array. Otherwise
                                             // fall through to generic dispatch which
                                             // respects the imported's own `.join` method.
-                                            if matches!(extern_ref, Expr::ExternFuncRef { ref return_type, .. } if matches!(return_type, Type::Array(_))) {
+                                            if matches!(extern_ref, Expr::ExternFuncRef { ref return_type, .. } if matches!(return_type, Type::Array(_)))
+                                            {
                                                 let separator =
                                                     args.into_iter().next().map(Box::new);
                                                 return Ok(Expr::ArrayJoin {
@@ -4352,13 +4344,13 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                     // `crates/perry-codegen/src/lower_call.rs:1313`, which
                                     // routes `.forEach` / `.get` / `.has` / `.keys` /
                                     // `.values` / `.entries` through the Headers FFI.
-                                    let is_fetch_headers =
-                                        prop_ident.sym.as_ref() == "headers"
-                                            && matches!(
-                                                ctx.lookup_native_instance(obj_ident.sym.as_ref()),
-                                                Some(("fetch", _)) | Some(("Request", _))
-                                                    | Some(("Headers", _))
-                                            );
+                                    let is_fetch_headers = prop_ident.sym.as_ref() == "headers"
+                                        && matches!(
+                                            ctx.lookup_native_instance(obj_ident.sym.as_ref()),
+                                            Some(("fetch", _))
+                                                | Some(("Request", _))
+                                                | Some(("Headers", _))
+                                        );
                                     if is_fetch_headers {
                                         true
                                     } else {
@@ -4657,14 +4649,15 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                 );
                                 // Also fold when the receiver is statically Array-typed
                                 // via `lookup_local_type` (e.g. `const arr: string[] = ...`).
-                                let is_array_local = if let ast::Expr::Ident(ident) = member.obj.as_ref() {
-                                    matches!(
-                                        ctx.lookup_local_type(ident.sym.as_ref()),
-                                        Some(Type::Array(_))
-                                    )
-                                } else {
-                                    false
-                                };
+                                let is_array_local =
+                                    if let ast::Expr::Ident(ident) = member.obj.as_ref() {
+                                        matches!(
+                                            ctx.lookup_local_type(ident.sym.as_ref()),
+                                            Some(Type::Array(_))
+                                        )
+                                    } else {
+                                        false
+                                    };
                                 if is_array_producing || is_array_local {
                                     let separator = if args.is_empty() {
                                         None
@@ -4730,7 +4723,7 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
                                     });
                                 }
                             }
-                            "flat" => {
+                            "flat" if args.is_empty() => {
                                 let array_expr = lower_expr(ctx, &member.obj)?;
                                 return Ok(Expr::ArrayFlat {
                                     array: Box::new(array_expr),
@@ -5575,9 +5568,7 @@ pub(super) fn lower_call(ctx: &mut LoweringContext, call: &ast::CallExpr) -> Res
             // Fill in default arguments if callee is a known function
             let mut args = args;
             if let Expr::FuncRef(func_id) = &callee_expr {
-                if let Some((defaults, param_ids, rest_idx)) =
-                    ctx.lookup_func_defaults(*func_id)
-                {
+                if let Some((defaults, param_ids, rest_idx)) = ctx.lookup_func_defaults(*func_id) {
                     let defaults = defaults.to_vec();
                     let param_ids = param_ids.to_vec();
                     let num_provided = args.len();
@@ -5728,13 +5719,7 @@ fn is_stream_api_method(module: &str, method: &str) -> bool {
         "writable_stream" => matches!(method, "getWriter" | "abort" | "close" | "locked"),
         "writable_stream_writer" => matches!(
             method,
-            "write"
-                | "close"
-                | "abort"
-                | "releaseLock"
-                | "closed"
-                | "ready"
-                | "desiredSize"
+            "write" | "close" | "abort" | "releaseLock" | "closed" | "ready" | "desiredSize"
         ),
         "transform_stream" => matches!(method, "readable" | "writable"),
         _ => false,
@@ -5793,9 +5778,7 @@ fn register_super_stream_controller_params(
                 };
                 let pat: Option<&ast::Pat> = match kv.value.as_ref() {
                     ast::Expr::Arrow(arrow) => arrow.params.get(*idx),
-                    ast::Expr::Fn(fn_expr) => {
-                        fn_expr.function.params.get(*idx).map(|p| &p.pat)
-                    }
+                    ast::Expr::Fn(fn_expr) => fn_expr.function.params.get(*idx).map(|p| &p.pat),
                     _ => None,
                 };
                 if let Some(ast::Pat::Ident(pid)) = pat {

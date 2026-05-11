@@ -119,10 +119,7 @@ fn with_box_style_mut(handle: i64, f: impl FnOnce(&mut super::style::BoxStyle)) 
 /// (#679 follow-up: pre-fix Box(map_result) silently produced an
 /// empty container.)
 #[no_mangle]
-pub extern "C" fn js_perry_tui_box_add_children_array(
-    parent: i64,
-    children_array: i64,
-) -> f64 {
+pub extern "C" fn js_perry_tui_box_add_children_array(parent: i64, children_array: i64) -> f64 {
     const TAG_UNDEFINED: u64 = 0x7FFC_0000_0000_0001;
     if children_array == 0 {
         return f64::from_bits(TAG_UNDEFINED);
@@ -400,7 +397,11 @@ pub extern "C" fn js_perry_tui_input_at(value_ptr: *const StringHeader, cursor: 
         super::tree::box_add_child(parent, w);
     }
 
-    let cursor_ch = if c < len { chars[c].to_string() } else { " ".to_string() };
+    let cursor_ch = if c < len {
+        chars[c].to_string()
+    } else {
+        " ".to_string()
+    };
     let cursor_widget = super::tree::register(Node::Text {
         content: cursor_ch,
         fg: Color::Default,

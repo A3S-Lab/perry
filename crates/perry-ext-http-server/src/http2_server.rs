@@ -86,10 +86,7 @@ pub struct Http2SecureServer {
 /// `h2` and `http/1.1` so non-HTTP/2 clients are still served (matches
 /// Node's behavior with `allowHTTP1: true`, default in Node 14+).
 #[no_mangle]
-pub unsafe extern "C" fn js_node_http2_create_secure_server(
-    opts_f64: f64,
-    handler: i64,
-) -> i64 {
+pub unsafe extern "C" fn js_node_http2_create_secure_server(opts_f64: f64, handler: i64) -> i64 {
     ensure_gc_scanner_registered();
 
     let (key_pem, cert_pem) = parse_h2_opts(opts_f64);
@@ -324,9 +321,7 @@ async fn handle_h2_request(
 
 /// Non-blocking try_recv for HTTP/2 pending requests. Called by
 /// `js_node_http_server_process_pending` in `server.rs` each tick.
-pub(crate) fn try_recv_pending_h2_nonblocking(
-    server_handle: i64,
-) -> Option<HttpPendingRequest> {
+pub(crate) fn try_recv_pending_h2_nonblocking(server_handle: i64) -> Option<HttpPendingRequest> {
     if let Some(s) = get_handle_mut::<Http2SecureServer>(server_handle) {
         if let Some(rx) = s.base.request_rx.as_mut() {
             return rx.try_recv().ok();

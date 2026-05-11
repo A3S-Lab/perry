@@ -143,10 +143,7 @@ pub(super) fn build_optimized_libs(
     // through to `_ => &[]`), so this is a pure-add.
     let mut iteration_set: std::collections::BTreeSet<String> =
         ctx.native_module_imports.iter().cloned().collect();
-    if ctx.uses_fetch
-        && !iteration_set.contains("fetch")
-        && !iteration_set.contains("node-fetch")
-    {
+    if ctx.uses_fetch && !iteration_set.contains("fetch") && !iteration_set.contains("node-fetch") {
         iteration_set.insert("fetch".to_string());
     }
     if use_well_known {
@@ -166,13 +163,11 @@ pub(super) fn build_optimized_libs(
             // exists on disk (partial build / release tarball
             // missing the wrapper).
             if !needs_shared_tokio {
-                let Some(lib_path) =
-                    super::well_known::bundled_staticlib_path_for_target(
-                        workspace_root,
-                        binding,
-                        rust_target_triple(target),
-                    )
-                else {
+                let Some(lib_path) = super::well_known::bundled_staticlib_path_for_target(
+                    workspace_root,
+                    binding,
+                    rust_target_triple(target),
+                ) else {
                     if matches!(format, OutputFormat::Text) && verbose > 0 {
                         eprintln!(
                             "  well-known: skipping `{}` — bundled `lib{}.a` not found \

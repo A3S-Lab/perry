@@ -386,7 +386,8 @@ pub fn create(root_node: i64, on_select: f64) -> i64 {
         let tv: *mut AnyObject = msg_send![tv_alloc, initWithFrame: frame, style: 0i64];
         let _: () = msg_send![tv, setTranslatesAutoresizingMaskIntoConstraints: false];
 
-        let view: Retained<UIView> = Retained::retain(tv as *mut UIView).expect("UITableView retain");
+        let view: Retained<UIView> =
+            Retained::retain(tv as *mut UIView).expect("UITableView retain");
         let handle = super::register_widget(view);
 
         // Allocate the entry first so the delegate can find its slot.

@@ -194,7 +194,9 @@ pub fn handle_row_tap(widget_handle: i64, id: &str) {
         // Resolve id -> node handle, toggle expand if it has children.
         let node = find_node_by_id(state.root_node, id);
         let has_kids = node
-            .and_then(|n| TREE_NODES.with(|nm| nm.borrow().get(&n).map(|tn| !tn.children.is_empty())))
+            .and_then(|n| {
+                TREE_NODES.with(|nm| nm.borrow().get(&n).map(|tn| !tn.children.is_empty()))
+            })
             .unwrap_or(false);
         if let Some(n) = node {
             if has_kids {
@@ -276,7 +278,9 @@ fn flatten_visible(widget_handle: i64) -> (Vec<String>, Vec<String>) {
             rows: &mut Vec<String>,
             ids: &mut Vec<String>,
         ) {
-            let Some(node) = nodes.get(&handle) else { return };
+            let Some(node) = nodes.get(&handle) else {
+                return;
+            };
             let indent = "    ".repeat(depth);
             let chevron = if node.children.is_empty() {
                 "  "

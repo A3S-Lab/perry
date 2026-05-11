@@ -243,7 +243,13 @@ pub extern "C" fn js_fs_mkdir_sync(path_value: f64) -> i32 {
 // iterator's file type. Predicate closures capture the pre-computed
 // boolean so calling them is a single-slot read.
 
-unsafe fn build_dirent_object(name: &str, parent_path: &str, is_file: bool, is_dir: bool, is_symlink: bool) -> f64 {
+unsafe fn build_dirent_object(
+    name: &str,
+    parent_path: &str,
+    is_file: bool,
+    is_dir: bool,
+    is_symlink: bool,
+) -> f64 {
     use crate::string::js_string_from_bytes;
     use crate::value::js_nanbox_string;
 

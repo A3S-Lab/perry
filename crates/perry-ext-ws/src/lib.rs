@@ -432,9 +432,7 @@ pub unsafe extern "C" fn js_ws_on_client_i64(
     // next `js_ws_process_pending` tick fires this freshly-registered
     // listener against them.
     if event_name == "message" {
-        let queued: Vec<String> = if let Some(c) =
-            WS_CONNECTIONS.lock().unwrap().get_mut(&ws_id)
-        {
+        let queued: Vec<String> = if let Some(c) = WS_CONNECTIONS.lock().unwrap().get_mut(&ws_id) {
             std::mem::take(&mut c.messages)
         } else {
             Vec::new()
@@ -854,9 +852,7 @@ pub extern "C" fn js_ws_server_close(handle: i64) {
 /// The caller is responsible for firing whatever 'connection' /
 /// 'upgrade' event listeners are appropriate; this function does not
 /// push a `PendingWsEvent::Connection`.
-pub fn register_external_ws_stream<S>(
-    ws_stream: tokio_tungstenite::WebSocketStream<S>,
-) -> i64
+pub fn register_external_ws_stream<S>(ws_stream: tokio_tungstenite::WebSocketStream<S>) -> i64
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {

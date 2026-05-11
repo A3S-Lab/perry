@@ -37,7 +37,10 @@ pub(super) fn lower_builtin_new(
     // Names without a recorded import source (top-level globals, locally-
     // defined classes already filtered upstream, etc.) keep their pre-#602
     // behavior — the arm still fires.
-    let import_src = ctx.imported_class_sources.get(class_name).map(|s| s.as_str());
+    let import_src = ctx
+        .imported_class_sources
+        .get(class_name)
+        .map(|s| s.as_str());
     let arm_mismatches_source = match (class_name, import_src) {
         ("Client", Some(src)) => src != "pg",
         ("Pool", Some(src)) => src != "pg",

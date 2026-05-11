@@ -287,68 +287,68 @@ pub(crate) fn lower_native_method_call(
     // — use `extract_options_fields` to pull the fields out either way.
     if module == "perry/tui" && method == "Text" && object.is_none() && args.len() >= 2 {
         if let Some(props) = extract_options_fields(ctx, &args[1]) {
-        let content_ptr = get_raw_string_ptr(ctx, &args[0])?;
-        let mut fg_str = Expr::String(String::new());
-        let mut bg_str = Expr::String(String::new());
-        let mut style_bits: u8 = 0;
-        for (key, val) in &props {
-            match key.as_str() {
-                "fg" | "color" => fg_str = val.clone(),
-                "bg" | "backgroundColor" => bg_str = val.clone(),
-                "bold" => {
-                    if matches!(val, Expr::Bool(true)) {
-                        style_bits |= 0b0001;
+            let content_ptr = get_raw_string_ptr(ctx, &args[0])?;
+            let mut fg_str = Expr::String(String::new());
+            let mut bg_str = Expr::String(String::new());
+            let mut style_bits: u8 = 0;
+            for (key, val) in &props {
+                match key.as_str() {
+                    "fg" | "color" => fg_str = val.clone(),
+                    "bg" | "backgroundColor" => bg_str = val.clone(),
+                    "bold" => {
+                        if matches!(val, Expr::Bool(true)) {
+                            style_bits |= 0b0001;
+                        }
                     }
-                }
-                "italic" => {
-                    if matches!(val, Expr::Bool(true)) {
-                        style_bits |= 0b0010;
+                    "italic" => {
+                        if matches!(val, Expr::Bool(true)) {
+                            style_bits |= 0b0010;
+                        }
                     }
-                }
-                "underline" => {
-                    if matches!(val, Expr::Bool(true)) {
-                        style_bits |= 0b0100;
+                    "underline" => {
+                        if matches!(val, Expr::Bool(true)) {
+                            style_bits |= 0b0100;
+                        }
                     }
-                }
-                // ink uses "inverse"; #358 used "reverse". Accept both.
-                "reverse" | "inverse" => {
-                    if matches!(val, Expr::Bool(true)) {
-                        style_bits |= 0b0000_1000;
+                    // ink uses "inverse"; #358 used "reverse". Accept both.
+                    "reverse" | "inverse" => {
+                        if matches!(val, Expr::Bool(true)) {
+                            style_bits |= 0b0000_1000;
+                        }
                     }
-                }
-                // ink-shape parity (#679 Phase 5): dimColor + strikethrough.
-                "dimColor" | "dim" => {
-                    if matches!(val, Expr::Bool(true)) {
-                        style_bits |= 0b0001_0000;
+                    // ink-shape parity (#679 Phase 5): dimColor + strikethrough.
+                    "dimColor" | "dim" => {
+                        if matches!(val, Expr::Bool(true)) {
+                            style_bits |= 0b0001_0000;
+                        }
                     }
-                }
-                "strikethrough" => {
-                    if matches!(val, Expr::Bool(true)) {
-                        style_bits |= 0b0010_0000;
+                    "strikethrough" => {
+                        if matches!(val, Expr::Bool(true)) {
+                            style_bits |= 0b0010_0000;
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
-        let fg_ptr = get_raw_string_ptr(ctx, &fg_str)?;
-        let bg_ptr = get_raw_string_ptr(ctx, &bg_str)?;
-        let bits_lit = double_literal(style_bits as f64);
-        ctx.pending_declares.push((
-            "js_perry_tui_text_styled".to_string(),
-            I64,
-            vec![I64, I64, I64, DOUBLE],
-        ));
-        let handle = ctx.block().call(
-            I64,
-            "js_perry_tui_text_styled",
-            &[
-                (I64, &content_ptr),
-                (I64, &fg_ptr),
-                (I64, &bg_ptr),
-                (DOUBLE, &bits_lit),
-            ],
-        );
-        return Ok(nanbox_pointer_inline(ctx.block(), &handle));
+            let fg_ptr = get_raw_string_ptr(ctx, &fg_str)?;
+            let bg_ptr = get_raw_string_ptr(ctx, &bg_str)?;
+            let bits_lit = double_literal(style_bits as f64);
+            ctx.pending_declares.push((
+                "js_perry_tui_text_styled".to_string(),
+                I64,
+                vec![I64, I64, I64, DOUBLE],
+            ));
+            let handle = ctx.block().call(
+                I64,
+                "js_perry_tui_text_styled",
+                &[
+                    (I64, &content_ptr),
+                    (I64, &fg_ptr),
+                    (I64, &bg_ptr),
+                    (DOUBLE, &bits_lit),
+                ],
+            );
+            return Ok(nanbox_pointer_inline(ctx.block(), &handle));
         }
     }
 
@@ -360,11 +360,8 @@ pub(crate) fn lower_native_method_call(
     if module == "perry/tui" && method == "Input" && object.is_none() && args.len() >= 2 {
         let content_ptr = get_raw_string_ptr(ctx, &args[0])?;
         let cursor = lower_expr(ctx, &args[1])?;
-        ctx.pending_declares.push((
-            "js_perry_tui_input_at".to_string(),
-            I64,
-            vec![I64, DOUBLE],
-        ));
+        ctx.pending_declares
+            .push(("js_perry_tui_input_at".to_string(), I64, vec![I64, DOUBLE]));
         let handle = ctx.block().call(
             I64,
             "js_perry_tui_input_at",
@@ -451,11 +448,7 @@ pub(crate) fn lower_native_method_call(
             let handle = ctx.block().call(
                 I64,
                 "js_perry_tui_table",
-                &[
-                    (I64, &headers_h),
-                    (I64, &rows_h),
-                    (DOUBLE, &selected),
-                ],
+                &[(I64, &headers_h), (I64, &rows_h), (DOUBLE, &selected)],
             );
             return Ok(nanbox_pointer_inline(ctx.block(), &handle));
         }
@@ -498,11 +491,7 @@ pub(crate) fn lower_native_method_call(
             let handle = ctx.block().call(
                 I64,
                 "js_perry_tui_tabs",
-                &[
-                    (I64, &tabs_h),
-                    (DOUBLE, &active),
-                    (I64, &body_h),
-                ],
+                &[(I64, &tabs_h), (DOUBLE, &active), (I64, &body_h)],
             );
             return Ok(nanbox_pointer_inline(ctx.block(), &handle));
         }
@@ -1196,11 +1185,7 @@ pub(crate) fn lower_native_method_call(
     // table. Anything else on the object (placeholder / contentMode in
     // the documented surface) is silently dropped — those fields are
     // post-v1.
-    if module == "perry/ui"
-        && method == "Image"
-        && object.is_none()
-        && args.len() == 1
-    {
+    if module == "perry/ui" && method == "Image" && object.is_none() && args.len() == 1 {
         if let Some(props) = extract_options_fields(ctx, &args[0]) {
             let mut url_arg: Option<Expr> = None;
             let mut alt_arg: Option<Expr> = None;
@@ -1216,10 +1201,7 @@ pub(crate) fn lower_native_method_call(
                 }
             }
             if let Some(u) = url_arg {
-                let positional = vec![
-                    u,
-                    alt_arg.unwrap_or_else(|| Expr::String(String::new())),
-                ];
+                let positional = vec![u, alt_arg.unwrap_or_else(|| Expr::String(String::new()))];
                 if let Some(sig) = perry_ui_table_lookup("Image") {
                     return lower_perry_ui_table_call(ctx, sig, &positional);
                 }
@@ -1344,11 +1326,8 @@ pub(crate) fn lower_native_method_call(
             crate::types::VOID,
             vec![I64, DOUBLE],
         ));
-        ctx.pending_declares.push((
-            "js_is_truthy".to_string(),
-            I64,
-            vec![DOUBLE],
-        ));
+        ctx.pending_declares
+            .push(("js_is_truthy".to_string(), I64, vec![DOUBLE]));
 
         // v2-B: pass ephemeral as a creation-time arg so backends with
         // construction-time data-store choices (WebView2 userDataFolder,
@@ -1374,7 +1353,10 @@ pub(crate) fn lower_native_method_call(
             ],
         );
         if let Some(ua) = &user_agent_ptr {
-            blk.call_void("perry_ui_webview_set_user_agent", &[(I64, &handle), (I64, ua)]);
+            blk.call_void(
+                "perry_ui_webview_set_user_agent",
+                &[(I64, &handle), (I64, ua)],
+            );
         }
         if let Some(dom) = &allowed_domains_handle {
             blk.call_void(
@@ -1891,7 +1873,10 @@ pub(crate) fn lower_native_method_call(
         // `args[0]` (the inner spread expression), so we expect exactly
         // one arg with the source array.
         if args.len() != 1 {
-            bail!("array.push_spread expects exactly 1 arg, got {}", args.len());
+            bail!(
+                "array.push_spread expects exactly 1 arg, got {}",
+                args.len()
+            );
         }
         let src_box = lower_expr(ctx, &args[0])?;
         let arr_box = lower_expr(ctx, recv)?;

@@ -142,10 +142,8 @@ pub fn get_string(handle: i64) -> i64 {
                 }
             };
             let bytes = text.as_bytes();
-            let str_ptr = perry_runtime::string::js_string_from_bytes(
-                bytes.as_ptr(),
-                bytes.len() as u32,
-            );
+            let str_ptr =
+                perry_runtime::string::js_string_from_bytes(bytes.as_ptr(), bytes.len() as u32);
             return str_ptr as i64;
         }
     }
@@ -190,10 +188,8 @@ pub fn handle_change(handle: i64) {
                     return;
                 }
                 let bytes = text.as_bytes();
-                let str_ptr = perry_runtime::string::js_string_from_bytes(
-                    bytes.as_ptr(),
-                    bytes.len() as u32,
-                );
+                let str_ptr =
+                    perry_runtime::string::js_string_from_bytes(bytes.as_ptr(), bytes.len() as u32);
                 let nanboxed = unsafe { js_nanbox_string(str_ptr as i64) };
                 unsafe { js_closure_call1(ptr, nanboxed) };
             }

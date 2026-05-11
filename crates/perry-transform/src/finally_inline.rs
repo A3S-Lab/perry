@@ -95,11 +95,23 @@ pub fn inline_finally_into_returns(module: &mut Module) {
     let mut next_local_id = compute_max_local_id(module).saturating_add(1);
     let mut label_depths: HashMap<String, usize> = HashMap::new();
     for func in &mut module.functions {
-        process_stmts(&mut func.body, &[], 0, &mut label_depths, &mut next_local_id);
+        process_stmts(
+            &mut func.body,
+            &[],
+            0,
+            &mut label_depths,
+            &mut next_local_id,
+        );
     }
     for class in &mut module.classes {
         for method in &mut class.methods {
-            process_stmts(&mut method.body, &[], 0, &mut label_depths, &mut next_local_id);
+            process_stmts(
+                &mut method.body,
+                &[],
+                0,
+                &mut label_depths,
+                &mut next_local_id,
+            );
         }
         for static_method in &mut class.static_methods {
             process_stmts(
@@ -111,7 +123,13 @@ pub fn inline_finally_into_returns(module: &mut Module) {
             );
         }
         if let Some(ctor) = &mut class.constructor {
-            process_stmts(&mut ctor.body, &[], 0, &mut label_depths, &mut next_local_id);
+            process_stmts(
+                &mut ctor.body,
+                &[],
+                0,
+                &mut label_depths,
+                &mut next_local_id,
+            );
         }
         for getter in class.getters.iter_mut() {
             process_stmts(
@@ -413,7 +431,13 @@ fn process_stmts(
                         loop_depth_at_push: loop_depth,
                     });
                 }
-                process_stmts(&mut body, &extended, loop_depth, label_depths, next_local_id);
+                process_stmts(
+                    &mut body,
+                    &extended,
+                    loop_depth,
+                    label_depths,
+                    next_local_id,
+                );
                 if let Some(c) = &mut catch {
                     process_stmts(
                         &mut c.body,

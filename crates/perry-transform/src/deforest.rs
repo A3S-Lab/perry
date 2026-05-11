@@ -123,7 +123,12 @@ pub fn run(module: &mut Module) {
     // sites rewritten by phase 2 — phase 3 covers callers that are
     // NOT the producer itself (top-level scripts, sibling helpers,
     // etc.).
-    rewrite_call_sites_in_stmts(&mut module.init, &producers, &out_param_ids, &mut next_local);
+    rewrite_call_sites_in_stmts(
+        &mut module.init,
+        &producers,
+        &out_param_ids,
+        &mut next_local,
+    );
     for func in &mut module.functions {
         // Skip the producers themselves — their bodies were already
         // rewritten in phase 2 (which knows the param substitution).
@@ -675,9 +680,7 @@ fn stmt_has_closure(stmt: &Stmt) -> bool {
             finally,
         } => {
             body_has_closure(body)
-                || catch
-                    .as_ref()
-                    .is_some_and(|c| body_has_closure(&c.body))
+                || catch.as_ref().is_some_and(|c| body_has_closure(&c.body))
                 || finally.as_ref().is_some_and(|f| body_has_closure(f))
         }
         Stmt::Switch {
@@ -729,8 +732,7 @@ fn stmt_contains_return(stmt: &Stmt) -> bool {
             body.iter().any(stmt_contains_return)
         }
         Stmt::For { init, body, .. } => {
-            init.as_ref()
-                .is_some_and(|i| stmt_contains_return(i))
+            init.as_ref().is_some_and(|i| stmt_contains_return(i))
                 || body.iter().any(stmt_contains_return)
         }
         Stmt::Try {
@@ -845,7 +847,10 @@ impl OutUsageAnalyzer {
                     }
                 }
             }
-            Stmt::Switch { discriminant, cases } => {
+            Stmt::Switch {
+                discriminant,
+                cases,
+            } => {
                 self.visit_expr(discriminant);
                 for c in cases {
                     if let Some(e) = &c.test {
@@ -927,16 +932,31 @@ impl OutUsageAnalyzer {
 fn walk_expr_children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     use Expr::*;
     match e {
-        Undefined | Null | Bool(_) | Number(_) | Integer(_) | BigInt(_) | String(_)
-        | WtfString(_) | LocalGet(_) | GlobalGet(_) | FuncRef(_) | ExternFuncRef { .. }
+        Undefined
+        | Null
+        | Bool(_)
+        | Number(_)
+        | Integer(_)
+        | BigInt(_)
+        | String(_)
+        | WtfString(_)
+        | LocalGet(_)
+        | GlobalGet(_)
+        | FuncRef(_)
+        | ExternFuncRef { .. }
         | NativeModuleRef(_) => {}
         I18nString { params, .. } => {
             for (_, e) in params {
                 f(e);
             }
         }
-        LocalSet(_, e) | GlobalSet(_, e) | Unary { operand: e, .. } | TypeOf(e) | Void(e)
-        | Await(e) | InstanceOf { expr: e, .. } => f(e),
+        LocalSet(_, e)
+        | GlobalSet(_, e)
+        | Unary { operand: e, .. }
+        | TypeOf(e)
+        | Void(e)
+        | Await(e)
+        | InstanceOf { expr: e, .. } => f(e),
         Update { .. } => {}
         Binary { left, right, .. } | Compare { left, right, .. } | Logical { left, right, .. } => {
             f(left);
@@ -1381,16 +1401,32 @@ impl SubstituteLocal {
 fn walk_expr_children_mut(e: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
     use Expr::*;
     match e {
-        Undefined | Null | Bool(_) | Number(_) | Integer(_) | BigInt(_) | String(_)
-        | WtfString(_) | LocalGet(_) | GlobalGet(_) | FuncRef(_) | ExternFuncRef { .. }
-        | NativeModuleRef(_) | Update { .. } => {}
+        Undefined
+        | Null
+        | Bool(_)
+        | Number(_)
+        | Integer(_)
+        | BigInt(_)
+        | String(_)
+        | WtfString(_)
+        | LocalGet(_)
+        | GlobalGet(_)
+        | FuncRef(_)
+        | ExternFuncRef { .. }
+        | NativeModuleRef(_)
+        | Update { .. } => {}
         I18nString { params, .. } => {
             for (_, e) in params {
                 f(e);
             }
         }
-        LocalSet(_, e) | GlobalSet(_, e) | Unary { operand: e, .. } | TypeOf(e) | Void(e)
-        | Await(e) | InstanceOf { expr: e, .. } => f(e),
+        LocalSet(_, e)
+        | GlobalSet(_, e)
+        | Unary { operand: e, .. }
+        | TypeOf(e)
+        | Void(e)
+        | Await(e)
+        | InstanceOf { expr: e, .. } => f(e),
         Binary { left, right, .. } | Compare { left, right, .. } | Logical { left, right, .. } => {
             f(left);
             f(right);
@@ -1525,13 +1561,7 @@ fn rewrite_call_sites_in_stmts(
     out_param_ids: &HashMap<FuncId, LocalId>,
     next_local: &mut LocalId,
 ) {
-    rewrite_call_sites_in_stmts_with_local_pass(
-        stmts,
-        producers,
-        out_param_ids,
-        next_local,
-        None,
-    );
+    rewrite_call_sites_in_stmts_with_local_pass(stmts, producers, out_param_ids, next_local, None);
 }
 
 /// Like `rewrite_call_sites_in_stmts` but additionally aware of an
@@ -1550,11 +1580,9 @@ fn rewrite_call_sites_in_stmts_with_local_pass(
     while i < stmts.len() {
         // Try the consumer-fuse pattern first: `let X = f(args);` followed
         // by `for(j) outer.push(X[j]);`.
-        if let Some((consumed_steps, replacement)) = try_consumer_fuse_pattern(
-            &stmts[i..],
-            producers,
-            out_param_ids,
-        ) {
+        if let Some((consumed_steps, replacement)) =
+            try_consumer_fuse_pattern(&stmts[i..], producers, out_param_ids)
+        {
             // Remove `consumed_steps` stmts starting at i, replace with
             // `replacement`.
             stmts.drain(i..i + consumed_steps);
@@ -1666,7 +1694,10 @@ fn rewrite_call_sites_in_stmts_with_local_pass(
                 }
             }
             Stmt::Labeled { body, .. } => {
-                let mut tmp = vec![std::mem::replace(body.as_mut(), Stmt::Expr(Expr::Undefined))];
+                let mut tmp = vec![std::mem::replace(
+                    body.as_mut(),
+                    Stmt::Expr(Expr::Undefined),
+                )];
                 rewrite_call_sites_in_stmts_with_local_pass(
                     &mut tmp,
                     producers,
@@ -1880,7 +1911,12 @@ fn try_rewrite_single_stmt(
             name,
             ty,
             mutable,
-            init: Some(Expr::Call { callee, args, type_args }),
+            init:
+                Some(Expr::Call {
+                    callee,
+                    args,
+                    type_args,
+                }),
         } => match callee.as_ref() {
             Expr::FuncRef(fid) if producers.contains_key(fid) => {
                 let info = producers.get(fid)?;

@@ -113,13 +113,7 @@ where
                     .headers()
                     .get(reqwest::header::CONTENT_TYPE)
                     .and_then(|v| v.to_str().ok())
-                    .map(|s| {
-                        s.split(';')
-                            .next()
-                            .unwrap_or(s)
-                            .trim()
-                            .to_ascii_lowercase()
-                    })
+                    .map(|s| s.split(';').next().unwrap_or(s).trim().to_ascii_lowercase())
                     .unwrap_or_default();
                 let data = response
                     .text()
@@ -166,10 +160,7 @@ pub unsafe extern "C" fn js_axios_get(url_ptr: *const StringHeader) -> *mut Prom
 /// pass-as-double path; Rust's calling convention puts it in d0 / a
 /// vector register on AArch64, matching what the codegen emits.
 #[no_mangle]
-pub unsafe extern "C" fn js_axios_post(
-    url_ptr: *const StringHeader,
-    data: f64,
-) -> *mut Promise {
+pub unsafe extern "C" fn js_axios_post(url_ptr: *const StringHeader, data: f64) -> *mut Promise {
     let url = read_str(url_ptr).ok_or("Invalid URL");
     let body = read_body_as_string(data);
     run_request("POST", url, move |client, url| {
@@ -188,10 +179,7 @@ pub unsafe extern "C" fn js_axios_post(
 /// `url_ptr` must be null or a Perry-runtime `StringHeader`. `data` is
 /// a NaN-boxed JSValue.
 #[no_mangle]
-pub unsafe extern "C" fn js_axios_put(
-    url_ptr: *const StringHeader,
-    data: f64,
-) -> *mut Promise {
+pub unsafe extern "C" fn js_axios_put(url_ptr: *const StringHeader, data: f64) -> *mut Promise {
     let url = read_str(url_ptr).ok_or("Invalid URL");
     let body = read_body_as_string(data);
     run_request("PUT", url, move |client, url| {
@@ -221,10 +209,7 @@ pub unsafe extern "C" fn js_axios_delete(url_ptr: *const StringHeader) -> *mut P
 /// `url_ptr` must be null or a Perry-runtime `StringHeader`. `data` is
 /// a NaN-boxed JSValue.
 #[no_mangle]
-pub unsafe extern "C" fn js_axios_patch(
-    url_ptr: *const StringHeader,
-    data: f64,
-) -> *mut Promise {
+pub unsafe extern "C" fn js_axios_patch(url_ptr: *const StringHeader, data: f64) -> *mut Promise {
     let url = read_str(url_ptr).ok_or("Invalid URL");
     let body = read_body_as_string(data);
     run_request("PATCH", url, move |client, url| {
@@ -290,8 +275,7 @@ pub extern "C" fn js_axios_response_data_parsed(handle: Handle) -> f64 {
     // looking string body served with `text/plain`. The `+json` suffix
     // form (e.g. `application/vnd.api+json`) also gets parsed by npm
     // axios per the standard, so accept either shape.
-    let is_json_ct =
-        content_type == "application/json" || content_type.ends_with("+json");
+    let is_json_ct = content_type == "application/json" || content_type.ends_with("+json");
     if is_json_ct {
         // Cross the FFI boundary into the runtime's JSON parser. The
         // runtime returns `undefined` (TAG_UNDEFINED) on parse error,

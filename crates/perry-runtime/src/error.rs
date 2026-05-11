@@ -359,7 +359,10 @@ pub extern "C" fn js_throw_type_error_immutable_write(
         }
     };
     let msg = match kind {
-        0 => format!("Cannot assign to read only property '{}' of object '#<Object>'", key),
+        0 => format!(
+            "Cannot assign to read only property '{}' of object '#<Object>'",
+            key
+        ),
         1 => format!("Cannot add property {}, object is not extensible", key),
         2 => format!("Cannot delete property '{}' of #<Object>", key),
         _ => format!("Cannot modify object: '{}'", key),

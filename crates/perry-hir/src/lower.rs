@@ -57,8 +57,7 @@ pub struct LoweringContext {
     /// The rest-param index (if any) is the position of `...rest`; the fill
     /// loop must stop before it because rest params get bundled at runtime
     /// from trailing positional args, not filled with `undefined`.
-    pub(crate) func_defaults:
-        Vec<(FuncId, Vec<Option<Expr>>, Vec<LocalId>, Option<usize>)>,
+    pub(crate) func_defaults: Vec<(FuncId, Vec<Option<Expr>>, Vec<LocalId>, Option<usize>)>,
     /// Classes: name -> id
     pub(crate) classes: Vec<(String, ClassId)>,
     /// Static members of classes: class_name -> (static_field_names, static_method_names)
@@ -3807,10 +3806,7 @@ fn lower_module_decl(
                                         .classes
                                         .iter()
                                         .any(|c| c.name == class_name)
-                                        || ctx
-                                            .pending_classes
-                                            .iter()
-                                            .any(|c| c.name == class_name);
+                                        || ctx.pending_classes.iter().any(|c| c.name == class_name);
                                     let module_name: Option<String> = if let Some((m, _)) =
                                         ctx.lookup_native_module(class_name)
                                     {
@@ -3851,14 +3847,12 @@ fn lower_module_decl(
                                         let class_name = class_ident.sym.as_ref();
                                         // Same user-class shadowing rule as the
                                         // non-await new-expr path above.
-                                        let user_class_defined = module
-                                            .classes
-                                            .iter()
-                                            .any(|c| c.name == class_name)
-                                            || ctx
-                                                .pending_classes
-                                                .iter()
-                                                .any(|c| c.name == class_name);
+                                        let user_class_defined =
+                                            module.classes.iter().any(|c| c.name == class_name)
+                                                || ctx
+                                                    .pending_classes
+                                                    .iter()
+                                                    .any(|c| c.name == class_name);
                                         let module_name: Option<String> = if let Some((m, _)) =
                                             ctx.lookup_native_module(class_name)
                                         {
@@ -4023,7 +4017,9 @@ fn lower_module_decl(
                                         let factory_class: Option<&'static str> = ctx
                                             .lookup_native_module(func_name)
                                             .and_then(|(m, method)| match (m, method) {
-                                                ("http", Some("createServer")) => Some("HttpServer"),
+                                                ("http", Some("createServer")) => {
+                                                    Some("HttpServer")
+                                                }
                                                 ("https", Some("createServer")) => {
                                                     Some("HttpsServer")
                                                 }
@@ -4534,9 +4530,7 @@ fn lower_module_decl(
                                 .iter()
                                 .any(|(n, _)| n == &exported)
                             {
-                                module
-                                    .exported_functions
-                                    .push((exported.clone(), func_id));
+                                module.exported_functions.push((exported.clone(), func_id));
                             }
                         }
 
@@ -5640,9 +5634,7 @@ fn lower_stmt(ctx: &mut LoweringContext, module: &mut Module, stmt: &ast::Stmt) 
                                 let http_class = match (mod_name.as_str(), method.as_str()) {
                                     ("http", "createServer") => Some("HttpServer"),
                                     ("https", "createServer") => Some("HttpsServer"),
-                                    ("http2", "createSecureServer") => {
-                                        Some("Http2SecureServer")
-                                    }
+                                    ("http2", "createSecureServer") => Some("Http2SecureServer"),
                                     _ => None,
                                 };
                                 if let Some(cn) = http_class {

@@ -36,12 +36,7 @@ pub fn set_handler(callback: f64) {
     let bridge_class =
         jni_bridge::with_cache(|c| env.new_local_ref(c.perry_bridge_class.as_obj()).unwrap());
     let bridge_cls: &jni::objects::JClass = (&bridge_class).into();
-    let _ = env.call_static_method(
-        bridge_cls,
-        "appOnOpenUrl",
-        "(J)V",
-        &[JValue::Long(key)],
-    );
+    let _ = env.call_static_method(bridge_cls, "appOnOpenUrl", "(J)V", &[JValue::Long(key)]);
 
     unsafe {
         env.pop_local_frame(&jni::objects::JObject::null());
@@ -57,21 +52,17 @@ pub fn launch_url() -> String {
     let bridge_class =
         jni_bridge::with_cache(|c| env.new_local_ref(c.perry_bridge_class.as_obj()).unwrap());
     let bridge_cls: &jni::objects::JClass = (&bridge_class).into();
-    let result_str: String = match env.call_static_method(
-        bridge_cls,
-        "appGetLaunchUrl",
-        "()Ljava/lang/String;",
-        &[],
-    ) {
-        Ok(v) => match v.l() {
-            Ok(obj) => {
-                let jstr: jni::objects::JString = obj.into();
-                env.get_string(&jstr).map(|s| s.into()).unwrap_or_default()
-            }
+    let result_str: String =
+        match env.call_static_method(bridge_cls, "appGetLaunchUrl", "()Ljava/lang/String;", &[]) {
+            Ok(v) => match v.l() {
+                Ok(obj) => {
+                    let jstr: jni::objects::JString = obj.into();
+                    env.get_string(&jstr).map(|s| s.into()).unwrap_or_default()
+                }
+                Err(_) => String::new(),
+            },
             Err(_) => String::new(),
-        },
-        Err(_) => String::new(),
-    };
+        };
 
     unsafe {
         env.pop_local_frame(&jni::objects::JObject::null());

@@ -939,8 +939,7 @@ fn transform_generator_function(
                             done_id,
                             Box::new(Expr::Bool(true)),
                         )));
-                        case_body
-                            .push(Stmt::Return(Some(make_iter_result(Expr::Undefined, true))));
+                        case_body.push(Stmt::Return(Some(make_iter_result(Expr::Undefined, true))));
                     }
                 } else {
                     // No explicit return: add done + default return
@@ -1163,10 +1162,7 @@ fn transform_generator_function(
             state_id,
             Box::new(Expr::Number(post_catch_state as f64)),
         )));
-        throw_body.push(Stmt::Return(Some(make_iter_result(
-            Expr::Undefined,
-            false,
-        ))));
+        throw_body.push(Stmt::Return(Some(make_iter_result(Expr::Undefined, false))));
     } else {
         // Issue #619: no user catch was seen during linearization — rethrow so
         // the async-step driver's outer try can re-deliver the error and
@@ -2304,10 +2300,11 @@ fn linearize_body(
             // (typically undefined) to x — both wrong.
             Stmt::Let {
                 id,
-                init: Some(Expr::Yield {
-                    value: Some(inner),
-                    delegate: true,
-                }),
+                init:
+                    Some(Expr::Yield {
+                        value: Some(inner),
+                        delegate: true,
+                    }),
                 mutable,
                 ty,
                 name,
@@ -2721,9 +2718,7 @@ fn body_contains_return(stmts: &[Stmt]) -> bool {
                     }
                 }
             }
-            Stmt::While { body, .. }
-            | Stmt::DoWhile { body, .. }
-            | Stmt::For { body, .. } => {
+            Stmt::While { body, .. } | Stmt::DoWhile { body, .. } | Stmt::For { body, .. } => {
                 if body_contains_return(body) {
                     return true;
                 }
@@ -2836,9 +2831,7 @@ fn rewrite_returns_to_labeled_break(stmts: &mut Vec<Stmt>, label: &str) {
 fn rewrite_returns_to_labeled_break_in_stmt(stmt: &mut Stmt, label: &str) {
     match stmt {
         Stmt::Return(_) => {
-            unreachable!(
-                "rewrite_returns_to_labeled_break_in_stmt should not see a bare Return"
-            );
+            unreachable!("rewrite_returns_to_labeled_break_in_stmt should not see a bare Return");
         }
         Stmt::If {
             then_branch,

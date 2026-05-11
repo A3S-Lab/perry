@@ -52,20 +52,20 @@ use std::sync::Once;
 
 use perry_ffi::{gc_register_root_scanner, iter_handles_of};
 
-mod types;
-mod server;
+mod http2_server;
+mod https_server;
 mod request;
 mod response;
+mod server;
 mod tls;
-mod https_server;
-mod http2_server;
+mod types;
 mod upgrade;
 
-pub use server::*;
+pub use http2_server::*;
+pub use https_server::*;
 pub use request::*;
 pub use response::*;
-pub use https_server::*;
-pub use http2_server::*;
+pub use server::*;
 
 const POINTER_TAG: u64 = 0x7FFD_0000_0000_0000;
 const PTR_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;

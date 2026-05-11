@@ -514,8 +514,7 @@ pub extern "C" fn js_set_to_array(set: *const SetHeader) -> *mut crate::array::A
         let result = crate::array::js_array_alloc(size as u32);
         if size > 0 {
             let src = (*set).elements as *const f64;
-            let dst = (result as *mut u8)
-                .add(std::mem::size_of::<crate::array::ArrayHeader>())
+            let dst = (result as *mut u8).add(std::mem::size_of::<crate::array::ArrayHeader>())
                 as *mut f64;
             ptr::copy_nonoverlapping(src, dst, size);
             (*result).length = size as u32;

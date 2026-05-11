@@ -3310,7 +3310,10 @@ fn resolve_tooltip_text(expr: &Expr, bindings: &HashMap<LocalId, Expr>) -> Optio
     for _ in 0..16 {
         match cur {
             Expr::NativeMethodCall {
-                module, method, args, ..
+                module,
+                method,
+                args,
+                ..
             } if module == "perry/ui" && method == "Text" => {
                 if let Some(Expr::String(s)) = args.first() {
                     return Some(s.clone());
@@ -8402,11 +8405,7 @@ mod tests {
         let mut m = empty_module();
         m.init.push(app_with_body(nmc(
             "RichTextEditor",
-            vec![
-                Expr::Number(320.0),
-                Expr::Number(200.0),
-                closure_stub(),
-            ],
+            vec![Expr::Number(320.0), Expr::Number(200.0), closure_stub()],
         )));
         let r = emit_index_ets(&mut m).unwrap().unwrap();
         assert!(r.ets_source.contains("RichEditor("));
@@ -8435,7 +8434,9 @@ mod tests {
         assert!(r.ets_source.contains("new Date(2026, 4, 1)"));
         assert!(r.ets_source.contains(".onChange((value: Date) => {"));
         assert!(r.ets_source.contains("value.toISOString().split('T')[0]"));
-        assert!(r.ets_source.contains("perryEntry.invokeCallback1(0, __iso)"));
+        assert!(r
+            .ets_source
+            .contains("perryEntry.invokeCallback1(0, __iso)"));
         assert_eq!(r.callbacks.len(), 1);
     }
 
@@ -8843,7 +8844,8 @@ mod tests {
         m.init.push(app_with_body(Expr::LocalGet(btn_id)));
         let r = emit_index_ets(&mut m).unwrap().unwrap();
         assert!(
-            r.ets_source.contains(".bindPopup(false, { message: 'Press to save now' })"),
+            r.ets_source
+                .contains(".bindPopup(false, { message: 'Press to save now' })"),
             "expected bindPopup modifier:\n{}",
             r.ets_source
         );
@@ -8872,7 +8874,8 @@ mod tests {
         m.init.push(app_with_body(Expr::LocalGet(btn_id)));
         let r = emit_index_ets(&mut m).unwrap().unwrap();
         assert!(
-            r.ets_source.contains(".bindPopup(false, { message: 'inline tip' })"),
+            r.ets_source
+                .contains(".bindPopup(false, { message: 'inline tip' })"),
             "expected bindPopup modifier:\n{}",
             r.ets_source
         );
