@@ -1565,6 +1565,51 @@ object PerryBridge {
         }
     }
 
+    // ============================================================
+    // Issue #481 — Calendar widget (android.widget.CalendarView).
+    // ============================================================
+    //
+    // CalendarView's `setOnDateChangeListener` fires with (year, monthZeroBased,
+    // day); we format `yyyy-MM-dd` (POSIX/ISO) here so the cross-platform
+    // string matches the macOS / gtk4 / iOS twins exactly.
+
+    @JvmStatic
+    fun calendarCreate(year: Long, month: Long, callbackKey: Long): android.widget.CalendarView {
+        val cv = android.widget.CalendarView(activity)
+        if (year > 0L && month in 1L..12L) {
+            val cal = java.util.Calendar.getInstance()
+            cal.set(year.toInt(), (month - 1).toInt(), 1)
+            cv.date = cal.timeInMillis
+        }
+        if (callbackKey != 0L) {
+            cv.setOnDateChangeListener { _, y, m, d ->
+                val iso = String.format("%04d-%02d-%02d", y, m + 1, d)
+                nativeInvokeCallbackWithString(callbackKey, iso)
+            }
+        }
+        return cv
+    }
+
+    @JvmStatic
+    fun calendarSetDate(cv: android.widget.CalendarView, year: Long, month: Long, day: Long) {
+        if (year <= 0L || month !in 1L..12L || day !in 1L..31L) return
+        val cal = java.util.Calendar.getInstance()
+        cal.set(year.toInt(), (month - 1).toInt(), day.toInt())
+        uiHandler.post {
+            cv.date = cal.timeInMillis
+        }
+    }
+
+    @JvmStatic
+    fun calendarGetSelectedDate(cv: android.widget.CalendarView): String {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = cv.date
+        val y = cal.get(java.util.Calendar.YEAR)
+        val m = cal.get(java.util.Calendar.MONTH) + 1
+        val d = cal.get(java.util.Calendar.DAY_OF_MONTH)
+        return String.format("%04d-%02d-%02d", y, m, d)
+    }
+
     // Issue #552 — extra invoke shapes for the geolocation success callback
     // (4 doubles) and the image-picker callback (string array).
     @JvmStatic
