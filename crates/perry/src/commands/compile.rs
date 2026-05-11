@@ -3089,6 +3089,84 @@ pub fn run_with_parse_cache(
 
                     // Imported classes
                     if let Some(class) = exported_classes.get(&key) {
+                        // Issue #665: when the user wrote `import X from "pkg"`
+                        // and `pkg`'s default export is a class, the importer
+                        // still registers `exported_name="default"` into
+                        // `import_function_prefixes` above. Codegen's wrapper-
+                        // emission loop iterates that map and — for any name
+                        // NOT in `imported_class_names` — emits a function
+                        // wrapper that calls `perry_fn_<src>__default`, which
+                        // the source module never defines (the source only has
+                        // a `_Child_constructor` symbol). That declares an
+                        // unresolved extern and the link step errors with
+                        // `Undefined symbols: ___perry_wrap_perry_fn_<src>__default`.
+                        // Push a SECOND ImportedClass entry whose `local_alias`
+                        // is the exported_name (`"default"` for default imports,
+                        // or the original-name for `{ Foo as Bar }`-style
+                        // renames). codegen's `imported_class_names` builder
+                        // adds both `ic.name` and `ic.local_alias`, so the
+                        // exported_name lands in the set and the wrapper-
+                        // emission loop takes the `is_class` no-op-stub branch
+                        // instead of declaring a phantom function. The second
+                        // entry also registers `class_ids[exported_name]`,
+                        // letting consumer-side `Expr::ExternFuncRef { name:
+                        // exported_name }` resolve to the class-id NaN-box.
+                        if local_name != exported_name {
+                            imported_classes.push(perry_codegen::ImportedClass {
+                                name: class.name.clone(),
+                                local_alias: Some(exported_name.clone()),
+                                source_prefix: effective_prefix.clone(),
+                                constructor_param_count: class
+                                    .constructor
+                                    .as_ref()
+                                    .map(|c| c.params.len())
+                                    .unwrap_or(0),
+                                method_names: class
+                                    .methods
+                                    .iter()
+                                    .map(|m| m.name.clone())
+                                    .collect(),
+                                method_param_counts: class
+                                    .methods
+                                    .iter()
+                                    .map(|m| m.params.len())
+                                    .collect(),
+                                static_method_names: class
+                                    .static_methods
+                                    .iter()
+                                    .map(|m| m.name.clone())
+                                    .collect(),
+                                static_field_names: class
+                                    .static_fields
+                                    .iter()
+                                    .map(|f| f.name.clone())
+                                    .collect(),
+                                getter_names: class
+                                    .getters
+                                    .iter()
+                                    .map(|(n, _)| n.clone())
+                                    .collect(),
+                                setter_names: class
+                                    .setters
+                                    .iter()
+                                    .map(|(n, _)| n.clone())
+                                    .collect(),
+                                parent_name: class.extends_name.clone(),
+                                field_names: class
+                                    .fields
+                                    .iter()
+                                    .filter(|f| f.key_expr.is_none())
+                                    .map(|f| f.name.clone())
+                                    .collect(),
+                                field_types: class
+                                    .fields
+                                    .iter()
+                                    .filter(|f| f.key_expr.is_none())
+                                    .map(|f| f.ty.clone())
+                                    .collect(),
+                                source_class_id: Some(class.id),
+                            });
+                        }
                         imported_classes.push(perry_codegen::ImportedClass {
                             name: class.name.clone(),
                             local_alias: if local_name != class.name {

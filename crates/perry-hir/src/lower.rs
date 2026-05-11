@@ -4595,6 +4595,34 @@ fn lower_module_decl(
                     local: "default".to_string(),
                     exported: "default".to_string(),
                 });
+            } else if let Expr::ClassRef(class_name) = &lowered {
+                // Issue #665: `export default <ClassName>` where the
+                // identifier names a class declared in this module — the
+                // shape cjs_wrap emits for `module.exports = ClassName`
+                // (e.g. rate-limiter-flexible's `RateLimiterMemory`).
+                // Mirror both the `ExportDefaultDecl::Class` path AND the
+                // `export { X }` Fix-#482 path: register the class
+                // binding as the default export AND flip the class's
+                // `is_exported` bit so the CLI driver's
+                // `exported_classes` lookup (which filters on
+                // `class.is_exported`) carries the class into the
+                // importer's `imported_classes` registry. Without this,
+                // the importer hits the fallback branch below: a
+                // synthetic `default` Any-typed local whose value
+                // happens to be the class but whose class identity HIR
+                // lost — `new (default-import)(...)` then falls through
+                // to the empty-object placeholder with every method
+                // undefined.
+                module.exports.push(Export::Named {
+                    local: class_name.clone(),
+                    exported: "default".to_string(),
+                });
+                for class in module.classes.iter_mut() {
+                    if &class.name == class_name {
+                        class.is_exported = true;
+                        break;
+                    }
+                }
             } else {
                 // For other expressions (closures, calls, etc.), create a synthetic "default" variable
                 let id = ctx.define_local("default".to_string(), Type::Any);
