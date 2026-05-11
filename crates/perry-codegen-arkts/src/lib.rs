@@ -3225,6 +3225,7 @@ fn is_widget_factory(name: &str) -> bool {
             | "Slider"
             | "Picker"
             | "Combobox"
+            | "RichTextEditor"
             | "ProgressView"
             | "Section"
             | "Tabs"
@@ -4178,6 +4179,10 @@ fn emit_widget(
                 // the emitted Select shows the `initial` value as its
                 // only option. Tracked for v1.1 follow-up.
                 "Combobox" => emit_combobox(args, callbacks),
+                // Issue #478 — RichTextEditor(width, height, onChange)
+                // maps to ArkUI RichEditor. HTML round-trip + per-span
+                // bold/italic/underline toggles are #478 v1.1.
+                "RichTextEditor" => emit_richtexteditor(args, callbacks),
                 "ProgressView" => emit_progressview(args),
                 "Section" => emit_section(
                     args,
@@ -5888,6 +5893,65 @@ fn emit_combobox(args: &[Expr], callbacks: &mut Vec<Expr>) -> String {
     format!(
         "Select([{{ value: {init} }}]).selected(0).value({init}){onchange}",
         init = initial_lit,
+        onchange = onchange,
+    )
+}
+
+/// Issue #478 — `RichTextEditor(width, height, onChange)` → ArkUI
+/// `RichEditor({controller})`. ArkUI's RichEditor takes a
+/// `RichEditorController` for programmatic content manipulation and fires
+/// `.aboutToIMEInput` / `.onIMEInputComplete` lifecycle callbacks.
+///
+/// v1 mapping decisions:
+///   - `width` / `height` flow through to `.width()` / `.height()` modifiers.
+///   - `onChange` fires from `.onIMEInputComplete` — ArkUI's closest analog
+///     to NSTextView's didChange notification. Forwards the plain-text view
+///     of the editor content via `invokeCallback1(idx, plainText)`.
+///   - `richTextToggleBold` / `Italic` / `Underline` would map to
+///     `RichEditorController.updateSpanStyle({textStyle: ...})` on a
+///     stored controller. v1 emits the editor + the controller field;
+///     the mutator dispatch for the toggles is a v1.1 follow-up so the
+///     emitted ArkTS still compiles and the editor itself renders.
+///   - `richTextSetString` / `richTextGetString` map to the controller's
+///     `addTextSpan` / `getSpans`; `setHtml` / `getHtml` are still
+///     TODOs (ArkUI RichEditor doesn't ship a 1:1 HTML round-trip).
+fn emit_richtexteditor(args: &[Expr], callbacks: &mut Vec<Expr>) -> String {
+    let width = numeric_arg(args, 0).unwrap_or(0.0);
+    let height = numeric_arg(args, 1).unwrap_or(0.0);
+
+    let onchange = match args.get(2) {
+        Some(closure @ Expr::Closure { .. }) => {
+            let idx = callbacks.len();
+            callbacks.push(closure.clone());
+            // RichEditor's onIMEInputComplete gives us a TextRange/value
+            // shape; for v1 we forward an empty string placeholder so the
+            // TS side sees a valid arg slot. Wiring the actual plain-text
+            // payload requires reading the controller post-event — v1.1.
+            format!(
+                ".onIMEInputComplete(() => {{\n    \
+                 perryEntry.invokeCallback1({}, '');\n    \
+                 {drain}\
+                 }})",
+                idx,
+                drain = drain_loop_body()
+            )
+        }
+        _ => String::new(),
+    };
+
+    // Width / height modifiers only emitted when non-zero so a caller
+    // passing 0 (TS default) doesn't zero out the editor's intrinsic size.
+    let mut sizing = String::new();
+    if width > 0.0 {
+        sizing.push_str(&format!(".width({})", fmt_num(width)));
+    }
+    if height > 0.0 {
+        sizing.push_str(&format!(".height({})", fmt_num(height)));
+    }
+
+    format!(
+        "RichEditor({{ controller: new RichEditorController() }}){sizing}{onchange}",
+        sizing = sizing,
         onchange = onchange,
     )
 }
@@ -8197,6 +8261,46 @@ mod tests {
         // surface after onSelect returns.
         assert!(r.ets_source.contains("perryEntry.drainToast()"));
         assert_eq!(r.callbacks.len(), 1);
+    }
+
+    #[test]
+    fn rich_text_editor_emits_arkui_richeditor() {
+        // Issue #478 — RichTextEditor(width, height, onChange) emits
+        // an ArkUI RichEditor with a fresh controller; width/height
+        // flow through to sizing modifiers; the onChange closure is
+        // captured and routed through onIMEInputComplete.
+        let mut m = empty_module();
+        m.init.push(app_with_body(nmc(
+            "RichTextEditor",
+            vec![
+                Expr::Number(320.0),
+                Expr::Number(200.0),
+                closure_stub(),
+            ],
+        )));
+        let r = emit_index_ets(&mut m).unwrap().unwrap();
+        assert!(r.ets_source.contains("RichEditor("));
+        assert!(r.ets_source.contains("new RichEditorController()"));
+        assert!(r.ets_source.contains(".width(320)"));
+        assert!(r.ets_source.contains(".height(200)"));
+        assert!(r.ets_source.contains(".onIMEInputComplete("));
+        assert!(r.ets_source.contains("perryEntry.invokeCallback1(0, ''"));
+        assert_eq!(r.callbacks.len(), 1);
+    }
+
+    #[test]
+    fn rich_text_editor_zero_size_skips_width_height_modifiers() {
+        // 0 width/height means "use intrinsic" — emitting .width(0)
+        // would zero the editor. Test confirms the elision.
+        let mut m = empty_module();
+        m.init.push(app_with_body(nmc(
+            "RichTextEditor",
+            vec![Expr::Number(0.0), Expr::Number(0.0), Expr::Number(0.0)],
+        )));
+        let r = emit_index_ets(&mut m).unwrap().unwrap();
+        assert!(r.ets_source.contains("RichEditor("));
+        assert!(!r.ets_source.contains(".width(0)"));
+        assert!(!r.ets_source.contains(".height(0)"));
     }
 
     #[test]
