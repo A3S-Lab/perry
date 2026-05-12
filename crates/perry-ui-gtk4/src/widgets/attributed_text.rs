@@ -77,8 +77,11 @@ pub fn append(
         return;
     };
 
-    BUFFERS.with(|b| {
-        let mut map = b.borrow_mut();
+    // `bufs` not `b` — the outer fn's `b: f64` (blue color component)
+    // would otherwise be shadowed inside the closure, causing E0308 on
+    // `to16(b)` below ("expected f64, found &RefCell<...>").
+    BUFFERS.with(|bufs| {
+        let mut map = bufs.borrow_mut();
         let Some(buf) = map.get_mut(&handle) else {
             return;
         };
