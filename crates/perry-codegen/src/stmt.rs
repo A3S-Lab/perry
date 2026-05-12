@@ -972,8 +972,7 @@ pub(crate) fn lower_stmt(ctx: &mut FnCtx<'_>, stmt: &Stmt) -> Result<()> {
             let val = lower_expr(ctx, expr)?;
             if ctx.is_async_fn && ctx.try_depth == 0 {
                 let blk = ctx.block();
-                let handle =
-                    blk.call(crate::types::I64, "js_promise_rejected", &[(DOUBLE, &val)]);
+                let handle = blk.call(crate::types::I64, "js_promise_rejected", &[(DOUBLE, &val)]);
                 let boxed = crate::expr::nanbox_pointer_inline_pub(blk, &handle);
                 blk.ret(DOUBLE, &boxed);
             } else {
