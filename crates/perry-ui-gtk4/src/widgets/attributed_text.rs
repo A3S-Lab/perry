@@ -95,23 +95,28 @@ pub fn append(
             buf.attrs.insert(attr);
         };
 
+        // pango-rs sub-attribute types (`AttrInt`, `AttrSize`, `AttrColor`)
+        // are subclasses of `pango::Attribute` in the glib type system.
+        // `.upcast()` lifts them to the parent type the push closure
+        // expects. Without the upcast the build fails with E0308
+        // mismatched-types (introduced in PR #716, surfaced when the
+        // release-packages workflow built perry-ui-gtk4 cross-arch).
+        use gtk4::glib::object::Cast;
         if bold != 0 {
-            push(pango::AttrInt::new_weight(pango::Weight::Bold));
+            push(pango::AttrInt::new_weight(pango::Weight::Bold).upcast());
         }
         if italic != 0 {
-            push(pango::AttrInt::new_style(pango::Style::Italic));
+            push(pango::AttrInt::new_style(pango::Style::Italic).upcast());
         }
         if underline != 0 {
-            push(pango::AttrInt::new_underline(pango::Underline::Single));
+            push(pango::AttrInt::new_underline(pango::Underline::Single).upcast());
         }
         if font_size > 0.0 {
-            push(pango::AttrSize::new(
-                (font_size * pango::SCALE as f64) as i32,
-            ));
+            push(pango::AttrSize::new((font_size * pango::SCALE as f64) as i32).upcast());
         }
         if a > 0.0 {
             let to16 = |v: f64| (v.clamp(0.0, 1.0) * 65535.0) as u16;
-            push(pango::AttrColor::new_foreground(to16(r), to16(g), to16(b)));
+            push(pango::AttrColor::new_foreground(to16(r), to16(g), to16(b)).upcast());
         }
 
         label.set_text(&buf.text);
