@@ -280,10 +280,15 @@ jobs:
         run: |
           set -e
           # Format: "<platform>:<device-triple>:<sim-triple>"
+          # watchOS dropped v0.5.888: ring 0.17.14 has a pointer-size
+          # assertion that fails for `arm64_32-apple-watchos` (32-bit
+          # pointers with 64-bit regs). Sim target (aarch64-apple-watchos-sim)
+          # also dropped to keep the matrix simple — re-add both when
+          # ring publishes a fix or we pin to a working pre-0.17.14
+          # version.
           for entry in \
             "tvos:aarch64-apple-tvos:aarch64-apple-tvos-sim" \
-            "visionos:aarch64-apple-visionos:aarch64-apple-visionos-sim" \
-            "watchos:arm64_32-apple-watchos:aarch64-apple-watchos-sim"; do
+            "visionos:aarch64-apple-visionos:aarch64-apple-visionos-sim"; do
             plat="${entry%%:*}"
             rest="${entry#*:}"
             dev="${rest%%:*}"
@@ -346,10 +351,10 @@ jobs:
             # Closes #396 / #397 / #398: same pattern as iOS for the Tier-3
             # Apple platforms. Device triple varies (watchOS = arm64_32) so
             # we drive the staging copy from the explicit triple list above.
+            # watchOS dropped — see the build step above.
             for entry in \
               "tvos:aarch64-apple-tvos:aarch64-apple-tvos-sim" \
-              "visionos:aarch64-apple-visionos:aarch64-apple-visionos-sim" \
-              "watchos:arm64_32-apple-watchos:aarch64-apple-watchos-sim"; do
+              "visionos:aarch64-apple-visionos:aarch64-apple-visionos-sim"; do
               plat="${entry%%:*}"
               rest="${entry#*:}"
               dev_triple="${rest%%:*}"
