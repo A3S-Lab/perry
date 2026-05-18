@@ -24,6 +24,66 @@ pub fn transform_generators(module: &mut Module) {
     }
 }
 
+/// Issue #1021: apply the same generator + async-step-driver transform that
+/// `transform_generators` runs on top-level functions to a single
+/// `Expr::Closure` body. Used by `transform_async_to_generator` for async
+/// arrow callbacks (`app.listen(port, async () => { await fetch(self) })`)
+/// that would otherwise lower to the busy-wait at `expr.rs:10588` and
+/// deadlock self-fetch inside a V8 trampoline frame.
+///
+/// Preconditions: the body has already had `hoist_awaits_in_stmts` and
+/// `rewrite_stmts` applied (i.e. all `Expr::Await` have been turned into
+/// `Expr::Yield` and the body is in linearizable form). The caller (in
+/// `async_to_generator.rs`) is responsible for that.
+///
+/// Returns the rewritten body. The closure's `params` are unchanged. The
+/// caller should set `is_async = false` on the closure and register the
+/// closure's `func_id` in `module.async_step_closures`.
+pub fn transform_plain_async_closure_body(
+    body: Vec<Stmt>,
+    params: &[perry_hir::Param],
+    outer_captures: &[LocalId],
+    outer_mutable_captures: &[LocalId],
+    outer_captures_this: bool,
+    outer_enclosing_class: Option<String>,
+    next_local_id: &mut LocalId,
+    next_func_id: &mut FuncId,
+) -> Vec<Stmt> {
+    // Construct a temporary Function so we can reuse the existing
+    // `transform_generator_function_with_extra_captures` plumbing
+    // verbatim. Fields not consulted by the transform are stubbed.
+    let synth_func_id = {
+        let id = *next_func_id;
+        *next_func_id += 1;
+        id
+    };
+    let mut synth = Function {
+        id: synth_func_id,
+        name: "__async_closure_body".to_string(),
+        type_params: Vec::new(),
+        params: params.to_vec(),
+        return_type: Type::Any,
+        body,
+        is_async: false,
+        is_generator: true,
+        is_exported: false,
+        captures: Vec::new(),
+        decorators: Vec::new(),
+        was_plain_async: true,
+        was_unrolled: false,
+    };
+    transform_generator_function_with_extra_captures(
+        &mut synth,
+        next_local_id,
+        next_func_id,
+        outer_captures,
+        outer_mutable_captures,
+        outer_captures_this,
+        outer_enclosing_class,
+    );
+    synth.body
+}
+
 /// Find the maximum local ID used in the module.
 fn compute_max_local_id(module: &Module) -> LocalId {
     let mut max_id: LocalId = 0;
@@ -812,6 +872,37 @@ fn transform_generator_function(
     next_local_id: &mut u32,
     next_func_id: &mut u32,
 ) {
+    transform_generator_function_with_extra_captures(
+        func,
+        next_local_id,
+        next_func_id,
+        &[],
+        &[],
+        false,
+        None,
+    );
+}
+
+/// Issue #1021: variant that augments the internally-generated
+/// next/return/throw/step closures with extra captures from an enclosing
+/// scope. Used when this transform is applied to a synthetic Function
+/// built from an `Expr::Closure` body — the body's `LocalGet`s to
+/// outer-scope variables (e.g. `server` in `app.listen(port, async () =>
+/// { ... server.close() })`) need those LocalIds in the step closure's
+/// captures so Perry's transitive closure-capture mechanism (see
+/// `expr.rs:4984-4997`) resolves them via the enclosing closure pointer.
+///
+/// For top-level fns (`extra_captures` empty) the behavior is identical
+/// to the pre-refactor implementation.
+fn transform_generator_function_with_extra_captures(
+    func: &mut Function,
+    next_local_id: &mut u32,
+    next_func_id: &mut u32,
+    extra_captures: &[LocalId],
+    extra_mutable_captures: &[LocalId],
+    captures_this: bool,
+    enclosing_class: Option<String>,
+) {
     // Remember whether this was an async generator (`async function*`).
     // Async generators are still lowered via the same state-machine
     // transform, but:
@@ -999,6 +1090,52 @@ fn transform_generator_function(
     // Build the new function body
     let mut new_body: Vec<Stmt> = Vec::new();
 
+    // Hoist variable declarations from the original body — collected
+    // here (before the prealloc emit) so the prealloc set is complete.
+    let hoisted = collect_hoisted_vars(&func.body);
+
+    // Issue #1029: the state-machine internals (`state`, `done`, `sent`)
+    // plus hoisted user-vars and the transform-allocated `extra_local_ids`
+    // are all captured-by-reference into the synthesized next/return/throw/
+    // step closures (they're in `mutable_captures` of those closures).
+    // Without an explicit box, the captures lower to NaN-boxed VALUES
+    // (TAG_FALSE / TAG_UNDEFINED / 0), and the closure cache at
+    // `js_closure_alloc_with_captures_singleton` (closure.rs:712) keys on
+    // capture-bit-equality — every call to f() produces the same bits, so
+    // the cache returns the SAME closure, whose slots still hold the
+    // terminal-state values (done=true) from call 1. Subsequent calls
+    // hit the `if (__gen_done) return iter_result(undefined, true)` short-
+    // circuit and never run the body. Symptom: call 1 of any state-
+    // machined fn returns the right value; calls 2+ return undefined.
+    //
+    // Emit a `Stmt::PreallocateBoxes` BEFORE the Lets. This:
+    //   1. Marks every listed id in `ctx.boxed_vars` via
+    //      `collect_prealloc_box_ids_in_stmts` (boxed_vars.rs:48-99) so
+    //      LocalGet/LocalSet inside the step body route through
+    //      js_box_get/js_box_set.
+    //   2. Allocates a fresh box per call (stmt.rs:1082-1102 emits
+    //      js_box_alloc into the entry block — runs every call).
+    //   3. Makes the closure cache key the BOX POINTER (distinct address
+    //      per call) — cache miss → fresh closure per call → correct
+    //      idempotency.
+    //
+    // The subsequent Stmt::Let { id, init } no longer allocates a new
+    // box; it routes through the prealloc_boxes branch in stmt.rs:594-614
+    // and just js_box_set's the init value into the existing per-call
+    // box. Net effect per call: one js_box_alloc + one js_box_set per id,
+    // versus the pre-fix path which did one js_box_alloc inside the Let
+    // (same cost, but the cache then hit on stale captures).
+    let mut prealloc_ids: Vec<LocalId> = vec![state_id, done_id, sent_id];
+    for (var_id, _, _) in &hoisted {
+        prealloc_ids.push(*var_id);
+    }
+    for extra_id in &extra_local_ids {
+        prealloc_ids.push(*extra_id);
+    }
+    prealloc_ids.sort();
+    prealloc_ids.dedup();
+    new_body.push(Stmt::PreallocateBoxes(prealloc_ids));
+
     // let __state = 0
     new_body.push(Stmt::Let {
         id: state_id,
@@ -1017,8 +1154,9 @@ fn transform_generator_function(
         init: Some(Expr::Bool(false)),
     });
 
-    // Hoist variable declarations from the original body
-    let hoisted = collect_hoisted_vars(&func.body);
+    // Re-emit hoisted Let stubs (prealloc already covered the boxes;
+    // these Lets now route through the prealloc-boxes path and just
+    // set the box value via js_box_set).
     for (var_id, var_name, var_ty) in &hoisted {
         new_body.push(Stmt::Let {
             id: *var_id,
@@ -1061,6 +1199,16 @@ fn transform_generator_function(
     for extra_id in &extra_local_ids {
         captures.push(*extra_id);
         mutable_captures.push(*extra_id);
+    }
+    // Issue #1021: when transforming a closure body, the body may reference
+    // LocalIds captured from outer scope. Add them so the internally-built
+    // next/return/throw/step closures can resolve them transitively through
+    // the enclosing closure pointer.
+    for cap_id in extra_captures {
+        captures.push(*cap_id);
+    }
+    for mcap_id in extra_mutable_captures {
+        mutable_captures.push(*mcap_id);
     }
     captures.sort();
     captures.dedup();
@@ -1108,8 +1256,8 @@ fn transform_generator_function(
         body: return_body,
         captures: captures.clone(),
         mutable_captures: mutable_captures.clone(),
-        captures_this: false,
-        enclosing_class: None,
+        captures_this,
+        enclosing_class: enclosing_class.clone(),
         is_async: false,
     };
 
@@ -1231,8 +1379,8 @@ fn transform_generator_function(
         body: throw_body,
         captures: captures.clone(),
         mutable_captures: mutable_captures.clone(),
-        captures_this: false,
-        enclosing_class: None,
+        captures_this,
+        enclosing_class: enclosing_class.clone(),
         is_async: false,
     };
 
@@ -1279,6 +1427,8 @@ fn transform_generator_function(
             throw_closure_for_step,
             next_local_id,
             next_func_id,
+            captures_this,
+            enclosing_class.clone(),
         );
         for s in wrapper_stmts {
             new_body.push(s);
@@ -1304,8 +1454,8 @@ fn transform_generator_function(
             body: next_body,
             captures: captures.clone(),
             mutable_captures: mutable_captures.clone(),
-            captures_this: false,
-            enclosing_class: None,
+            captures_this,
+            enclosing_class: enclosing_class.clone(),
             is_async: false,
         };
         let iter_obj = Expr::Object(vec![
@@ -1362,6 +1512,8 @@ fn build_async_step_driver_direct(
     throw_closure_expr: Option<Expr>,
     next_local_id: &mut u32,
     next_func_id: &mut u32,
+    captures_this: bool,
+    enclosing_class: Option<String>,
 ) -> Vec<Stmt> {
     // When `throw_closure_expr` is None, the function had no awaiting
     // try/catch so the throw path is a plain rethrow — we inline it
@@ -1563,8 +1715,8 @@ fn build_async_step_driver_direct(
         body: step_body,
         captures: step_captures,
         mutable_captures: step_mut_captures,
-        captures_this: false,
-        enclosing_class: None,
+        captures_this,
+        enclosing_class: enclosing_class.clone(),
         is_async: false,
     };
 

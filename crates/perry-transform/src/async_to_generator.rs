@@ -42,16 +42,33 @@
 //! body in a microtask. The microtask runs after all currently-executing
 //! synchronous code finishes — exactly the spec ordering.
 //!
-//! ## Scope and limitations (v1)
+//! ## Scope and limitations
 //!
-//! - **Top-level functions only**: nested async closures (arrow/function
-//!   expressions assigned to locals) are NOT yet rewritten. They keep
-//!   the pre-fix direct-call/busy-wait behavior. Follow-up.
+//! - **Top-level functions and async closures (since #1021 phase 2)**:
+//!   `Expr::Closure { is_async: true }` whose body contains awaits is now
+//!   also rewritten — the closure body goes through
+//!   `transform_plain_async_closure_body` (in `generator.rs`) which reuses
+//!   the same state-machine + async-step-driver path. Detected closures'
+//!   func_ids land in `Module.async_step_closures`. Without this, the
+//!   busy-wait at `expr.rs:10588` deadlocks self-fetch from inside V8
+//!   trampoline frames (issue #1021).
 //! - **No new HIR variants or runtime helpers**: the rewrite produces
 //!   only existing variants (Yield, Closure, Promise.then chains via
 //!   GlobalGet(0)). The async-step driver is built inline in the
 //!   generator transform. This sidesteps the LLVM constant-folding
 //!   mystery the prior prototype hit (issue #256 background section 1).
+//! - **State-machine idempotency (issue #1029, fixed in this branch)**:
+//!   the underlying state machine was not idempotent across re-invocation
+//!   (call 2+ returned undefined) because the generator transform's
+//!   internally-built next/return/throw/step closures listed state/done/
+//!   sent in `mutable_captures` but the boxing analysis missed them, so
+//!   `js_closure_alloc_with_captures_singleton` cached on capture-VALUE
+//!   bits — identical every call → stale closure reused. Fixed by
+//!   prepending `Stmt::PreallocateBoxes` for the state-machine internals
+//!   in `transform_generator_function_with_extra_captures` so captures
+//!   lower to box pointers (distinct per call). This applies uniformly
+//!   to top-level async fns and to the async closures rewritten by
+//!   #1021 phase 2.
 
 use perry_hir::ir::*;
 use perry_types::{LocalId, Type};
@@ -111,6 +128,365 @@ pub fn transform_async_to_generator(module: &mut Module) {
             }
         }
     }
+
+    // Issue #1021 phase 2: rewrite async closures (`Expr::Closure {
+    // is_async: true }` with awaits) into state machines. Without this,
+    // `app.listen(port, async () => { await fetch(self) })` callbacks
+    // busy-wait at `expr.rs:10588` while holding a V8 trampoline scope,
+    // blocking deno's executor from settling the accept-loop continuation
+    // and deadlocking self-fetch.
+    //
+    // Populate the worklist of candidate closures NOW (after the
+    // capturing-classes bailout has cleared) so the set stays consistent
+    // with what's actually rewritten — i.e. it's never populated without
+    // a matching rewrite, and `module.async_step_closures` is a reliable
+    // ground-truth for "this closure body returns a Promise via the
+    // async-step driver" rather than just "would have been rewritten if
+    // the module-level bailout hadn't fired".
+    collect_async_step_closures(module);
+
+    if !module.async_step_closures.is_empty() {
+        let mut next_func_id: perry_types::FuncId = compute_max_func_id_module(module) + 1;
+        // Walk the HIR, rewriting matched async closures in-place. The
+        // walker descends into nested closures so chains like
+        // `async () => { items.map(async x => await f(x)) }` are
+        // handled.
+        let work = module.async_step_closures.clone();
+        for func in &mut module.functions {
+            rewrite_async_closures_in_stmts(
+                &mut func.body,
+                &work,
+                &mut next_local_id,
+                &mut next_func_id,
+            );
+        }
+        rewrite_async_closures_in_stmts(
+            &mut module.init,
+            &work,
+            &mut next_local_id,
+            &mut next_func_id,
+        );
+        for class in &mut module.classes {
+            for m in &mut class.methods {
+                rewrite_async_closures_in_stmts(
+                    &mut m.body,
+                    &work,
+                    &mut next_local_id,
+                    &mut next_func_id,
+                );
+            }
+            for m in &mut class.static_methods {
+                rewrite_async_closures_in_stmts(
+                    &mut m.body,
+                    &work,
+                    &mut next_local_id,
+                    &mut next_func_id,
+                );
+            }
+            if let Some(ctor) = &mut class.constructor {
+                rewrite_async_closures_in_stmts(
+                    &mut ctor.body,
+                    &work,
+                    &mut next_local_id,
+                    &mut next_func_id,
+                );
+            }
+            for getter in &mut class.getters {
+                rewrite_async_closures_in_stmts(
+                    &mut getter.1.body,
+                    &work,
+                    &mut next_local_id,
+                    &mut next_func_id,
+                );
+            }
+            for setter in &mut class.setters {
+                rewrite_async_closures_in_stmts(
+                    &mut setter.1.body,
+                    &work,
+                    &mut next_local_id,
+                    &mut next_func_id,
+                );
+            }
+        }
+    }
+}
+
+fn compute_max_func_id_module(module: &Module) -> perry_types::FuncId {
+    let mut m: perry_types::FuncId = 0;
+    for func in &module.functions {
+        m = m.max(func.id);
+    }
+    // Scan all closures' func_ids in the HIR so we don't collide with an
+    // existing closure id when synthesizing transform-internal func_ids.
+    let mut max_closure_id: perry_types::FuncId = 0;
+    for func in &module.functions {
+        scan_stmts_for_max_closure_id(&func.body, &mut max_closure_id);
+    }
+    for stmt in &module.init {
+        scan_stmt_for_max_closure_id(stmt, &mut max_closure_id);
+    }
+    for class in &module.classes {
+        for mb in &class.methods {
+            scan_stmts_for_max_closure_id(&mb.body, &mut max_closure_id);
+        }
+        for mb in &class.static_methods {
+            scan_stmts_for_max_closure_id(&mb.body, &mut max_closure_id);
+        }
+        if let Some(ctor) = &class.constructor {
+            scan_stmts_for_max_closure_id(&ctor.body, &mut max_closure_id);
+        }
+        for g in &class.getters {
+            scan_stmts_for_max_closure_id(&g.1.body, &mut max_closure_id);
+        }
+        for s in &class.setters {
+            scan_stmts_for_max_closure_id(&s.1.body, &mut max_closure_id);
+        }
+    }
+    m.max(max_closure_id)
+}
+
+fn scan_stmts_for_max_closure_id(stmts: &[Stmt], m: &mut perry_types::FuncId) {
+    for s in stmts {
+        scan_stmt_for_max_closure_id(s, m);
+    }
+}
+
+fn scan_stmt_for_max_closure_id(stmt: &Stmt, m: &mut perry_types::FuncId) {
+    match stmt {
+        Stmt::Let { init: Some(e), .. } => scan_expr_for_max_closure_id(e, m),
+        Stmt::Expr(e) | Stmt::Throw(e) => scan_expr_for_max_closure_id(e, m),
+        Stmt::Return(Some(e)) => scan_expr_for_max_closure_id(e, m),
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            scan_expr_for_max_closure_id(condition, m);
+            scan_stmts_for_max_closure_id(then_branch, m);
+            if let Some(eb) = else_branch {
+                scan_stmts_for_max_closure_id(eb, m);
+            }
+        }
+        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+            scan_expr_for_max_closure_id(condition, m);
+            scan_stmts_for_max_closure_id(body, m);
+        }
+        Stmt::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(i) = init {
+                scan_stmt_for_max_closure_id(i, m);
+            }
+            if let Some(c) = condition {
+                scan_expr_for_max_closure_id(c, m);
+            }
+            if let Some(u) = update {
+                scan_expr_for_max_closure_id(u, m);
+            }
+            scan_stmts_for_max_closure_id(body, m);
+        }
+        Stmt::Try {
+            body,
+            catch,
+            finally,
+        } => {
+            scan_stmts_for_max_closure_id(body, m);
+            if let Some(c) = catch {
+                scan_stmts_for_max_closure_id(&c.body, m);
+            }
+            if let Some(f) = finally {
+                scan_stmts_for_max_closure_id(f, m);
+            }
+        }
+        Stmt::Switch {
+            discriminant,
+            cases,
+        } => {
+            scan_expr_for_max_closure_id(discriminant, m);
+            for case in cases {
+                scan_stmts_for_max_closure_id(&case.body, m);
+            }
+        }
+        Stmt::Labeled { body, .. } => scan_stmt_for_max_closure_id(body, m),
+        _ => {}
+    }
+}
+
+fn scan_expr_for_max_closure_id(expr: &Expr, m: &mut perry_types::FuncId) {
+    if let Expr::Closure { func_id, body, .. } = expr {
+        *m = (*m).max(*func_id);
+        scan_stmts_for_max_closure_id(body, m);
+        return;
+    }
+    perry_hir::walker::walk_expr_children(expr, &mut |e| scan_expr_for_max_closure_id(e, m));
+}
+
+fn rewrite_async_closures_in_stmts(
+    stmts: &mut Vec<Stmt>,
+    work: &std::collections::HashSet<perry_types::FuncId>,
+    next_local_id: &mut LocalId,
+    next_func_id: &mut perry_types::FuncId,
+) {
+    for s in stmts {
+        rewrite_async_closures_in_stmt(s, work, next_local_id, next_func_id);
+    }
+}
+
+fn rewrite_async_closures_in_stmt(
+    stmt: &mut Stmt,
+    work: &std::collections::HashSet<perry_types::FuncId>,
+    next_local_id: &mut LocalId,
+    next_func_id: &mut perry_types::FuncId,
+) {
+    match stmt {
+        Stmt::Let { init: Some(e), .. } => {
+            rewrite_async_closures_in_expr(e, work, next_local_id, next_func_id)
+        }
+        Stmt::Expr(e) | Stmt::Throw(e) => {
+            rewrite_async_closures_in_expr(e, work, next_local_id, next_func_id)
+        }
+        Stmt::Return(Some(e)) => {
+            rewrite_async_closures_in_expr(e, work, next_local_id, next_func_id)
+        }
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_async_closures_in_expr(condition, work, next_local_id, next_func_id);
+            rewrite_async_closures_in_stmts(then_branch, work, next_local_id, next_func_id);
+            if let Some(eb) = else_branch {
+                rewrite_async_closures_in_stmts(eb, work, next_local_id, next_func_id);
+            }
+        }
+        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+            rewrite_async_closures_in_expr(condition, work, next_local_id, next_func_id);
+            rewrite_async_closures_in_stmts(body, work, next_local_id, next_func_id);
+        }
+        Stmt::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(i) = init {
+                rewrite_async_closures_in_stmt(i, work, next_local_id, next_func_id);
+            }
+            if let Some(c) = condition {
+                rewrite_async_closures_in_expr(c, work, next_local_id, next_func_id);
+            }
+            if let Some(u) = update {
+                rewrite_async_closures_in_expr(u, work, next_local_id, next_func_id);
+            }
+            rewrite_async_closures_in_stmts(body, work, next_local_id, next_func_id);
+        }
+        Stmt::Try {
+            body,
+            catch,
+            finally,
+        } => {
+            rewrite_async_closures_in_stmts(body, work, next_local_id, next_func_id);
+            if let Some(c) = catch {
+                rewrite_async_closures_in_stmts(&mut c.body, work, next_local_id, next_func_id);
+            }
+            if let Some(f) = finally {
+                rewrite_async_closures_in_stmts(f, work, next_local_id, next_func_id);
+            }
+        }
+        Stmt::Switch {
+            discriminant,
+            cases,
+        } => {
+            rewrite_async_closures_in_expr(discriminant, work, next_local_id, next_func_id);
+            for case in cases.iter_mut() {
+                if let Some(t) = &mut case.test {
+                    rewrite_async_closures_in_expr(t, work, next_local_id, next_func_id);
+                }
+                rewrite_async_closures_in_stmts(&mut case.body, work, next_local_id, next_func_id);
+            }
+        }
+        Stmt::Labeled { body, .. } => {
+            rewrite_async_closures_in_stmt(body, work, next_local_id, next_func_id)
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_async_closures_in_expr(
+    expr: &mut Expr,
+    work: &std::collections::HashSet<perry_types::FuncId>,
+    next_local_id: &mut LocalId,
+    next_func_id: &mut perry_types::FuncId,
+) {
+    // Match-and-rewrite at the current level.
+    let should_rewrite = if let Expr::Closure {
+        func_id, is_async, ..
+    } = expr
+    {
+        *is_async && work.contains(func_id)
+    } else {
+        false
+    };
+    if should_rewrite {
+        if let Expr::Closure {
+            params,
+            body,
+            captures,
+            mutable_captures,
+            captures_this,
+            enclosing_class,
+            is_async,
+            ..
+        } = expr
+        {
+            // Step A: descend into the body first to handle nested async
+            // closures bottom-up. After that, the body has no nested async
+            // closures-with-awaits remaining (they've been turned into
+            // state-machine bodies returning Promises).
+            rewrite_async_closures_in_stmts(body, work, next_local_id, next_func_id);
+
+            // Step B: hoist + await→yield over THIS closure's body.
+            hoist_awaits_in_stmts(body, next_local_id);
+            let mut had_await = false;
+            rewrite_stmts(body, &mut had_await);
+            if had_await {
+                let owned_body = std::mem::take(body);
+                let owned_params = params.clone();
+                let owned_captures = captures.clone();
+                let owned_mutable_captures = mutable_captures.clone();
+                // Issue #1021 follow-up: propagate `captures_this` +
+                // `enclosing_class` through to the synthesized state-machine
+                // helpers so `Expr::This` references in the original body
+                // (which end up inlined inside the step closure) still
+                // resolve to the outer scope's receiver. Without this, an
+                // async arrow inside a class method that uses both `this`
+                // AND `await` silently halts (the step closure has
+                // captures_this=false and Expr::This doesn't lower).
+                let owned_captures_this = *captures_this;
+                let owned_enclosing_class = enclosing_class.clone();
+                let new_body = crate::generator::transform_plain_async_closure_body(
+                    owned_body,
+                    &owned_params,
+                    &owned_captures,
+                    &owned_mutable_captures,
+                    owned_captures_this,
+                    owned_enclosing_class,
+                    next_local_id,
+                    next_func_id,
+                );
+                *body = new_body;
+                *is_async = false;
+            }
+            return;
+        }
+    }
+    // Otherwise descend into children.
+    perry_hir::walker::walk_expr_children_mut(expr, &mut |child| {
+        rewrite_async_closures_in_expr(child, work, next_local_id, next_func_id);
+    });
 }
 
 /// Detect if the module has any classes with `__perry_cap_*` instance
@@ -1046,4 +1422,247 @@ fn rewrite_expr(expr: &mut Expr, had_await: &mut bool) {
         return;
     }
     perry_hir::walker::walk_expr_children_mut(expr, &mut |e| rewrite_expr(e, had_await));
+}
+
+// ─── #1021: async-closure detection ────────────────────────────────────────
+//
+// Walks the entire HIR (top-level fn bodies, class members, module init, and
+// recursively through nested closures) collecting func_ids of every
+// `Expr::Closure { is_async: true }` whose body contains at least one
+// `Expr::Await`. These are the closures that today lower to a busy-wait at
+// `expr.rs:10588` and deadlock self-fetch from inside a V8 trampoline
+// (issue #1021).
+//
+// Phase 1 (this commit): populate `module.async_step_closures` so the rest
+// of the compiler can see the set. No HIR rewriting yet — `compile_closure`
+// reads the set but does not act on it.
+//
+// Phase 2 (follow-up): rewrite each detected closure's body via
+// `hoist_awaits_in_stmts` + await→yield, then run the generator
+// state-machine transform on the body so the closure returns a Promise
+// immediately and resumes via `js_async_step_chain` / `Task::AsyncStep`.
+//
+// Phase 3 (follow-up): `compile_closure` emits the wrapped form when the
+// closure's func_id is in `module.async_step_closures`.
+fn collect_async_step_closures(module: &mut Module) {
+    let mut found: std::collections::HashSet<perry_types::FuncId> =
+        std::collections::HashSet::new();
+    for func in &module.functions {
+        scan_stmts_for_async_closures(&func.body, &mut found);
+    }
+    for stmt in &module.init {
+        scan_stmt_for_async_closures(stmt, &mut found);
+    }
+    for class in &module.classes {
+        for m in &class.methods {
+            scan_stmts_for_async_closures(&m.body, &mut found);
+        }
+        for m in &class.static_methods {
+            scan_stmts_for_async_closures(&m.body, &mut found);
+        }
+        if let Some(ctor) = &class.constructor {
+            scan_stmts_for_async_closures(&ctor.body, &mut found);
+        }
+        for getter in &class.getters {
+            scan_stmts_for_async_closures(&getter.1.body, &mut found);
+        }
+        for setter in &class.setters {
+            scan_stmts_for_async_closures(&setter.1.body, &mut found);
+        }
+    }
+    module.async_step_closures = found;
+}
+
+fn scan_stmts_for_async_closures(
+    stmts: &[Stmt],
+    found: &mut std::collections::HashSet<perry_types::FuncId>,
+) {
+    for s in stmts {
+        scan_stmt_for_async_closures(s, found);
+    }
+}
+
+fn scan_stmt_for_async_closures(
+    stmt: &Stmt,
+    found: &mut std::collections::HashSet<perry_types::FuncId>,
+) {
+    match stmt {
+        Stmt::Let { init: Some(e), .. } => scan_expr_for_async_closures(e, found),
+        Stmt::Expr(e) | Stmt::Throw(e) => scan_expr_for_async_closures(e, found),
+        Stmt::Return(Some(e)) => scan_expr_for_async_closures(e, found),
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            scan_expr_for_async_closures(condition, found);
+            scan_stmts_for_async_closures(then_branch, found);
+            if let Some(eb) = else_branch {
+                scan_stmts_for_async_closures(eb, found);
+            }
+        }
+        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+            scan_expr_for_async_closures(condition, found);
+            scan_stmts_for_async_closures(body, found);
+        }
+        Stmt::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(i) = init {
+                scan_stmt_for_async_closures(i, found);
+            }
+            if let Some(c) = condition {
+                scan_expr_for_async_closures(c, found);
+            }
+            if let Some(u) = update {
+                scan_expr_for_async_closures(u, found);
+            }
+            scan_stmts_for_async_closures(body, found);
+        }
+        Stmt::Try {
+            body,
+            catch,
+            finally,
+        } => {
+            scan_stmts_for_async_closures(body, found);
+            if let Some(c) = catch {
+                scan_stmts_for_async_closures(&c.body, found);
+            }
+            if let Some(f) = finally {
+                scan_stmts_for_async_closures(f, found);
+            }
+        }
+        Stmt::Switch {
+            discriminant,
+            cases,
+        } => {
+            scan_expr_for_async_closures(discriminant, found);
+            for case in cases {
+                if let Some(t) = &case.test {
+                    scan_expr_for_async_closures(t, found);
+                }
+                scan_stmts_for_async_closures(&case.body, found);
+            }
+        }
+        Stmt::Labeled { body, .. } => scan_stmt_for_async_closures(body, found),
+        _ => {}
+    }
+}
+
+fn scan_expr_for_async_closures(
+    expr: &Expr,
+    found: &mut std::collections::HashSet<perry_types::FuncId>,
+) {
+    if let Expr::Closure {
+        func_id,
+        body,
+        is_async,
+        ..
+    } = expr
+    {
+        if *is_async && body_contains_await(body) {
+            found.insert(*func_id);
+        }
+        // Descend into the closure body too — nested async closures inside
+        // an outer closure body are independent candidates.
+        scan_stmts_for_async_closures(body, found);
+        return;
+    }
+    perry_hir::walker::walk_expr_children(expr, &mut |e| scan_expr_for_async_closures(e, found));
+}
+
+fn body_contains_await(stmts: &[Stmt]) -> bool {
+    let mut found = false;
+    for s in stmts {
+        if stmt_contains_await(s, &mut found) {
+            return true;
+        }
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
+fn stmt_contains_await(stmt: &Stmt, found: &mut bool) -> bool {
+    if *found {
+        return true;
+    }
+    match stmt {
+        Stmt::Let { init: Some(e), .. } => expr_contains_await_shallow(e, found),
+        Stmt::Expr(e) | Stmt::Throw(e) => expr_contains_await_shallow(e, found),
+        Stmt::Return(Some(e)) => expr_contains_await_shallow(e, found),
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_contains_await_shallow(condition, found)
+                || body_contains_await(then_branch)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|eb| body_contains_await(eb))
+        }
+        Stmt::While { condition, body } | Stmt::DoWhile { body, condition } => {
+            expr_contains_await_shallow(condition, found) || body_contains_await(body)
+        }
+        Stmt::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            init.as_ref().is_some_and(|i| stmt_contains_await(i, found))
+                || condition
+                    .as_ref()
+                    .is_some_and(|c| expr_contains_await_shallow(c, found))
+                || update
+                    .as_ref()
+                    .is_some_and(|u| expr_contains_await_shallow(u, found))
+                || body_contains_await(body)
+        }
+        Stmt::Try {
+            body,
+            catch,
+            finally,
+        } => {
+            body_contains_await(body)
+                || catch.as_ref().is_some_and(|c| body_contains_await(&c.body))
+                || finally.as_ref().is_some_and(|f| body_contains_await(f))
+        }
+        Stmt::Switch {
+            discriminant,
+            cases,
+        } => {
+            expr_contains_await_shallow(discriminant, found)
+                || cases.iter().any(|c| body_contains_await(&c.body))
+        }
+        Stmt::Labeled { body, .. } => stmt_contains_await(body, found),
+        _ => false,
+    }
+}
+
+/// Shallow: matches `Expr::Await` at any depth in this expression, but
+/// STOPS at nested closures — an `await` inside a different closure
+/// belongs to that closure's body, not the current one.
+fn expr_contains_await_shallow(expr: &Expr, found: &mut bool) -> bool {
+    if *found {
+        return true;
+    }
+    if matches!(expr, Expr::Await(_)) {
+        *found = true;
+        return true;
+    }
+    if matches!(expr, Expr::Closure { .. }) {
+        return false;
+    }
+    perry_hir::walker::walk_expr_children(expr, &mut |e| {
+        if !*found {
+            expr_contains_await_shallow(e, found);
+        }
+    });
+    *found
 }
