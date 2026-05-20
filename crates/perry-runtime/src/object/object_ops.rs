@@ -160,6 +160,7 @@ pub extern "C" fn js_object_group_by(
             for (i, v) in items_for_key.iter().enumerate() {
                 std::ptr::write(arr_data.add(i), *v);
             }
+            super::rebuild_array_layout_from_slots(arr);
             // NaN-box the array pointer with POINTER_TAG before storing.
             let arr_boxed = f64::from_bits((arr as u64) | 0x7FFD_0000_0000_0000);
             js_object_set_field_by_name(obj, key_str_ptr, arr_boxed);
@@ -463,6 +464,7 @@ unsafe fn ensure_key_in_keys_array(obj: *mut ObjectHeader, key: *const crate::St
             *dst_data.add(i) = *src_data.add(i);
         }
         (*cloned).length = key_count as u32;
+        super::rebuild_array_layout_from_slots(cloned);
         set_object_keys_array(obj, cloned);
         cloned
     } else {
@@ -508,6 +510,7 @@ pub extern "C" fn js_object_get_own_property_descriptor(obj_value: f64, key_valu
                     *fields.add(1) = f64::from_bits(TAG_TRUE);
                     *fields.add(2) = f64::from_bits(TAG_FALSE);
                     *fields.add(3) = f64::from_bits(TAG_TRUE);
+                    super::rebuild_object_field_layout(desc, 4);
                     return f64::from_bits((desc as u64) | 0x7FFD_0000_0000_0000);
                 }
             }
@@ -568,6 +571,7 @@ pub extern "C" fn js_object_get_own_property_descriptor(obj_value: f64, key_valu
             };
             *fields.add(2) = bool_to_f64(attrs.enumerable());
             *fields.add(3) = bool_to_f64(attrs.configurable());
+            super::rebuild_object_field_layout(desc, 4);
             return f64::from_bits((desc as u64) | 0x7FFD_0000_0000_0000);
         }
 
@@ -586,6 +590,7 @@ pub extern "C" fn js_object_get_own_property_descriptor(obj_value: f64, key_valu
         *fields.add(1) = bool_to_f64(attrs.writable()); // writable
         *fields.add(2) = bool_to_f64(attrs.enumerable()); // enumerable
         *fields.add(3) = bool_to_f64(attrs.configurable()); // configurable
+        super::rebuild_object_field_layout(desc, 4);
         f64::from_bits((desc as u64) | 0x7FFD_0000_0000_0000)
     }
 }

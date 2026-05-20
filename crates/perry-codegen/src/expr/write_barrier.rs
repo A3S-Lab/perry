@@ -8,7 +8,7 @@ use perry_hir::Expr;
 use super::{lower_expr, FnCtx};
 use crate::block::LlBlock;
 use crate::nanbox::double_literal;
-use crate::types::{DOUBLE, I64};
+use crate::types::{DOUBLE, I32, I64};
 
 /// Gen-GC Phase C2 helper: emit a write barrier after heap-store sites
 /// when `PERRY_WRITE_BARRIERS=1`. Sites with a precise field/element
@@ -35,6 +35,24 @@ pub(crate) fn emit_write_barrier_slot_on_block(
     blk.call_void(
         "js_write_barrier_slot",
         &[(I64, parent_bits), (I64, slot_addr), (I64, child_bits)],
+    );
+}
+
+/// GC layout-note emission (refs #1090) — at heap-slot stores whose
+/// content is known statically, record the per-slot value type so the
+/// generational GC can decide whether the slot can be pointer-free
+/// (skipped during minor scan). Unlike `emit_write_barrier_slot_on_block`
+/// this fires unconditionally — the runtime fn is a no-op when slot
+/// tracking is off.
+pub(crate) fn emit_layout_note_slot_on_block(
+    blk: &mut LlBlock,
+    parent_bits: &str,
+    slot_index: &str,
+    value_bits: &str,
+) {
+    blk.call_void(
+        "js_gc_note_slot_layout",
+        &[(I64, parent_bits), (I32, slot_index), (I64, value_bits)],
     );
 }
 

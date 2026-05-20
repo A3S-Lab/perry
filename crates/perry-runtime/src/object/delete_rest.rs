@@ -69,6 +69,7 @@ pub extern "C" fn js_object_delete_field(
             *dst_elements.add(j) = *src_elements.add(j + 1);
         }
         (*keys_cloned).length = new_count as u32;
+        super::rebuild_array_layout_from_slots(keys_cloned);
         set_object_keys_array(obj, keys_cloned);
 
         // 1) Shift values down: for slot j in i..new_count, copy slot j+1
@@ -81,6 +82,7 @@ pub extern "C" fn js_object_delete_field(
                 let fields_ptr =
                     (obj as *mut u8).add(std::mem::size_of::<ObjectHeader>()) as *mut JSValue;
                 ptr::write(fields_ptr.add(j), next);
+                super::note_object_field_slot(obj, j, next.bits());
             } else {
                 overflow_set(obj as usize, j, next.bits());
             }
@@ -90,6 +92,7 @@ pub extern "C" fn js_object_delete_field(
             let fields_ptr =
                 (obj as *mut u8).add(std::mem::size_of::<ObjectHeader>()) as *mut JSValue;
             ptr::write(fields_ptr.add(new_count), JSValue::undefined());
+            super::note_object_field_slot(obj, new_count, crate::value::TAG_UNDEFINED);
         } else {
             overflow_set(obj as usize, new_count, crate::value::TAG_UNDEFINED);
         }

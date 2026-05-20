@@ -289,6 +289,7 @@ fn overflow_set(obj_ptr: usize, field_index: usize, vbits: u64) {
         }
     });
     if hit {
+        crate::gc::layout_note_slot(obj_ptr, field_index, vbits);
         return;
     }
     OVERFLOW_FIELDS.with(|m| {
@@ -303,6 +304,7 @@ fn overflow_set(obj_ptr: usize, field_index: usize, vbits: u64) {
             *c.get() = (obj_ptr, vec_ptr);
         });
     });
+    crate::gc::layout_note_slot(obj_ptr, field_index, vbits);
 }
 
 /// Per-property attribute flags set by `Object.defineProperty` / `Object.freeze` / `Object.seal`.
@@ -820,13 +822,29 @@ fn transition_cache_insert(
 /// cache is thread-local-by-discipline (perry user code is single-
 /// threaded), so the unsafe deref is sound.
 pub fn scan_transition_cache_roots(mark: &mut dyn FnMut(f64)) {
-    let base: *const TransitionEntry = (&raw const TRANSITION_CACHE_GLOBAL).cast();
+    let mut visitor = crate::gc::RuntimeRootVisitor::for_copy(mark);
+    scan_transition_cache_roots_mut(&mut visitor);
+}
+
+pub fn scan_transition_cache_roots_mut(visitor: &mut crate::gc::RuntimeRootVisitor<'_>) {
+    let base: *mut TransitionEntry = (&raw mut TRANSITION_CACHE_GLOBAL).cast();
     unsafe {
         for i in 0..TRANSITION_CACHE_SIZE {
-            let entry = &*base.add(i);
+            let entry = &mut *base.add(i);
             if entry.next_keys != 0 {
-                let jsval = JSValue::pointer(entry.next_keys as *const u8);
-                mark(f64::from_bits(jsval.bits()));
+                let mut invalidate = false;
+                invalidate |= visitor.visit_metadata_usize_slot(&mut entry.prev_keys);
+                invalidate |= visitor.visit_metadata_usize_slot(&mut entry.key_ptr);
+                visitor.visit_usize_slot(&mut entry.next_keys);
+                if invalidate {
+                    *entry = TransitionEntry {
+                        prev_keys: 0,
+                        key_ptr: 0,
+                        next_keys: 0,
+                        slot_idx: 0,
+                        _pad: 0,
+                    };
+                }
             }
         }
     }
@@ -837,22 +855,21 @@ pub fn scan_transition_cache_roots(mark: &mut dyn FnMut(f64)) {
 /// pointers; without this scanner, GC would free those arrays, leaving
 /// every object with that shape holding a dangling `keys_array` pointer.
 pub fn scan_shape_cache_roots(mark: &mut dyn FnMut(f64)) {
+    let mut visitor = crate::gc::RuntimeRootVisitor::for_copy(mark);
+    scan_shape_cache_roots_mut(&mut visitor);
+}
+
+pub fn scan_shape_cache_roots_mut(visitor: &mut crate::gc::RuntimeRootVisitor<'_>) {
     SHAPE_INLINE_CACHE.with(|cache| {
-        let entries = unsafe { *cache.get() };
-        for entry in entries.iter() {
-            if !entry.keys_array.is_null() {
-                let jsval = JSValue::pointer(entry.keys_array as *const u8);
-                mark(f64::from_bits(jsval.bits()));
-            }
+        let entries = unsafe { &mut *cache.get() };
+        for entry in entries.iter_mut() {
+            visitor.visit_raw_mut_ptr_slot(&mut entry.keys_array);
         }
     });
     SHAPE_CACHE_OVERFLOW.with(|cache| {
-        let cache = cache.borrow();
-        for &arr_ptr in cache.values() {
-            if !arr_ptr.is_null() {
-                let jsval = JSValue::pointer(arr_ptr as *const u8);
-                mark(f64::from_bits(jsval.bits()));
-            }
+        let mut cache = cache.borrow_mut();
+        for arr_ptr in cache.values_mut() {
+            visitor.visit_raw_mut_ptr_slot(arr_ptr);
         }
     });
 }
@@ -863,18 +880,139 @@ pub fn scan_shape_cache_roots(mark: &mut dyn FnMut(f64)) {
 /// arrays, other objects) that are ONLY referenced via OVERFLOW_FIELDS. Without this scanner,
 /// GC would free those referenced objects.
 pub fn scan_overflow_fields_roots(mark: &mut dyn FnMut(f64)) {
+    let mut visitor = crate::gc::RuntimeRootVisitor::for_copy(mark);
+    scan_overflow_fields_roots_mut(&mut visitor);
+}
+
+pub fn scan_overflow_fields_roots_mut(visitor: &mut crate::gc::RuntimeRootVisitor<'_>) {
+    let mut moved = Vec::new();
+    let mut moved_any = false;
     OVERFLOW_FIELDS.with(|m| {
-        let m = m.borrow();
-        for fields in m.values() {
-            for &val_bits in fields.iter() {
-                // Mark any NaN-boxed heap pointer (POINTER_TAG, STRING_TAG, BIGINT_TAG)
-                let tag = val_bits >> 48;
-                if tag == 0x7FFD || tag == 0x7FFF || tag == 0x7FFA {
-                    mark(f64::from_bits(val_bits));
+        let mut m = m.borrow_mut();
+        for (&owner, fields) in m.iter_mut() {
+            let mut new_owner = owner;
+            if visitor.visit_metadata_usize_slot(&mut new_owner) {
+                moved.push((owner, new_owner));
+            }
+            if crate::gc::layout_visit_pointer_slots_for_user(new_owner, fields.len(), |i| {
+                if let Some(val_bits) = fields.get_mut(i) {
+                    visitor.visit_nanbox_u64_slot(val_bits);
                 }
+            }) {
+                continue;
+            }
+            for val_bits in fields.iter_mut() {
+                visitor.visit_nanbox_u64_slot(val_bits);
+            }
+        }
+        for (old_owner, new_owner) in moved.drain(..) {
+            if let Some(fields) = m.remove(&old_owner) {
+                m.insert(new_owner, fields);
+                moved_any = true;
             }
         }
     });
+    if moved_any {
+        OVERFLOW_LAST.with(|c| unsafe {
+            *c.get() = (0, std::ptr::null_mut());
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_seed_shape_cache_root(shape_id: u32, keys_array: *mut ArrayHeader) {
+    SHAPE_INLINE_CACHE.with(|cache| {
+        let slot = (shape_id as usize) & (SHAPE_INLINE_CACHE_SIZE - 1);
+        unsafe {
+            (*cache.get())[slot] = ShapeCacheEntry {
+                shape_id,
+                keys_array,
+            };
+        }
+    });
+    SHAPE_CACHE_OVERFLOW.with(|cache| {
+        cache.borrow_mut().clear();
+        cache.borrow_mut().insert(shape_id, keys_array);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn test_shape_cache_root(shape_id: u32) -> (usize, usize) {
+    let inline = SHAPE_INLINE_CACHE.with(|cache| {
+        let slot = (shape_id as usize) & (SHAPE_INLINE_CACHE_SIZE - 1);
+        unsafe { (*cache.get())[slot].keys_array as usize }
+    });
+    let overflow = SHAPE_CACHE_OVERFLOW.with(|cache| {
+        cache
+            .borrow()
+            .get(&shape_id)
+            .map(|ptr| *ptr as usize)
+            .unwrap_or(0)
+    });
+    (inline, overflow)
+}
+
+#[cfg(test)]
+pub(crate) fn test_seed_transition_cache_root(next_keys: usize) {
+    unsafe {
+        TRANSITION_CACHE_GLOBAL[0] = TransitionEntry {
+            prev_keys: 0,
+            key_ptr: 0,
+            next_keys,
+            slot_idx: 0,
+            _pad: 0,
+        };
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_transition_cache_root() -> usize {
+    unsafe { TRANSITION_CACHE_GLOBAL[0].next_keys }
+}
+
+#[cfg(test)]
+pub(crate) fn test_clear_transition_cache_root() {
+    unsafe {
+        TRANSITION_CACHE_GLOBAL[0] = TransitionEntry {
+            prev_keys: 0,
+            key_ptr: 0,
+            next_keys: 0,
+            slot_idx: 0,
+            _pad: 0,
+        };
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_seed_overflow_fields_root(owner: usize, value_bits: u64) {
+    OVERFLOW_FIELDS.with(|m| {
+        let mut m = m.borrow_mut();
+        m.clear();
+        m.insert(owner, vec![value_bits]);
+    });
+    crate::gc::layout_note_slot(owner, 0, value_bits);
+    OVERFLOW_LAST.with(|c| unsafe {
+        *c.get() = (0, std::ptr::null_mut());
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn test_clear_overflow_fields_root() {
+    OVERFLOW_FIELDS.with(|m| m.borrow_mut().clear());
+    OVERFLOW_LAST.with(|c| unsafe {
+        *c.get() = (0, std::ptr::null_mut());
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn test_overflow_fields_root() -> (usize, u64) {
+    OVERFLOW_FIELDS.with(|m| {
+        let m = m.borrow();
+        let Some((&owner, fields)) = m.iter().next() else {
+            return (0, 0);
+        };
+        (owner, fields.first().copied().unwrap_or(0))
+    })
 }
 
 /// Remove OVERFLOW_FIELDS entry for a freed object pointer.
@@ -2463,6 +2601,30 @@ unsafe fn set_object_keys_array(obj: *mut ObjectHeader, keys_array: *mut ArrayHe
     );
 }
 
+#[inline]
+pub(super) unsafe fn note_object_field_slot(
+    obj: *mut ObjectHeader,
+    field_index: usize,
+    value_bits: u64,
+) {
+    crate::gc::layout_note_slot(obj as usize, field_index, value_bits);
+}
+
+#[inline]
+pub(super) unsafe fn rebuild_object_field_layout(obj: *mut ObjectHeader, slot_count: usize) {
+    let fields = (obj as *mut u8).add(std::mem::size_of::<ObjectHeader>()) as *const u64;
+    crate::gc::layout_rebuild_from_slots(obj as *mut u8, fields, slot_count);
+}
+
+#[inline]
+pub(super) unsafe fn rebuild_array_layout_from_slots(arr: *mut ArrayHeader) {
+    if arr.is_null() {
+        return;
+    }
+    let len = (*arr).length as usize;
+    let slots = (arr as *mut u8).add(std::mem::size_of::<ArrayHeader>()) as *const u64;
+    crate::gc::layout_rebuild_from_slots(arr as *mut u8, slots, len);
+}
 /// Call a method on an object with dynamic dispatch
 /// This is used for runtime method calls when the method cannot be resolved statically.
 /// object: NaN-boxed f64 containing an object pointer
@@ -5771,6 +5933,7 @@ unsafe fn http_methods_array() -> f64 {
             crate::value::STRING_TAG | (str_ptr as u64 & crate::value::POINTER_MASK),
         );
         *elements_ptr.add(i) = nanboxed;
+        crate::gc::layout_note_slot(arr as usize, i, nanboxed.to_bits());
     }
     let value = crate::value::js_nanbox_pointer(arr as i64);
     CACHED.store(value.to_bits(), Ordering::Relaxed);

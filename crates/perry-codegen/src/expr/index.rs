@@ -3,7 +3,9 @@
 
 use anyhow::{anyhow, Result};
 
-use super::{emit_write_barrier_slot_on_block, nanbox_pointer_inline, FnCtx};
+use super::{
+    emit_layout_note_slot_on_block, emit_write_barrier_slot_on_block, nanbox_pointer_inline, FnCtx,
+};
 use crate::block::LlBlock;
 use crate::nanbox::POINTER_MASK_I64;
 use crate::types::{DOUBLE, I32, I64, I8};
@@ -146,6 +148,7 @@ pub(crate) fn lower_index_set_fast(
         let blk = ctx.block();
         let element_addr = store_element(blk, &arr_handle, &idx_i32, val_double);
         let val_bits = blk.bitcast_double_to_i64(val_double);
+        emit_layout_note_slot_on_block(blk, &arr_handle, &idx_i32, &val_bits);
         emit_write_barrier_slot_on_block(blk, &arr_handle, &element_addr, &val_bits);
         blk.br(&merge_label);
     }
@@ -173,6 +176,7 @@ pub(crate) fn lower_index_set_fast(
         let len_ptr = blk.inttoptr(I64, &arr_handle); // length is at offset 0
         blk.store(I32, &new_len, &len_ptr);
         let val_bits = blk.bitcast_double_to_i64(val_double);
+        emit_layout_note_slot_on_block(blk, &arr_handle, &idx_i32, &val_bits);
         emit_write_barrier_slot_on_block(blk, &arr_handle, &element_addr, &val_bits);
         blk.br(&merge_label);
     }

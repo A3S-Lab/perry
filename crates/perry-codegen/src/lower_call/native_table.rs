@@ -4817,6 +4817,38 @@ pub(super) const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         args: &[],
         ret: NR_F64,
     },
+    // PR #1146 belt-and-braces: bare-name dispatch for the same three
+    // client-IncomingMessage properties, for sites where the HIR rewrite
+    // to `__get_<prop>` doesn't fire (receiver isn't statically tagged
+    // as ("http", "IncomingMessage"), e.g. one assigned through a local
+    // before the property read).
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "statusCode",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_http_status_code",
+        args: &[],
+        ret: NR_F64,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "statusMessage",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_http_status_message",
+        args: &[],
+        ret: NR_STR,
+    },
+    NativeModSig {
+        module: "http",
+        has_receiver: true,
+        method: "headers",
+        class_filter: Some("IncomingMessage"),
+        runtime: "js_http_response_headers",
+        args: &[],
+        ret: NR_F64,
+    },
     NativeModSig {
         module: "http",
         has_receiver: true,

@@ -54,6 +54,7 @@ pub extern "C" fn js_object_alloc_with_parent(
         for i in 0..alloc_field_count {
             ptr::write(fields_ptr.add(i), JSValue::undefined());
         }
+        crate::gc::layout_init_pointer_free(ptr as *mut u8);
 
         ptr
     }
@@ -78,6 +79,7 @@ pub extern "C" fn js_object_alloc_fast(class_id: u32, field_count: u32) -> *mut 
         (*ptr).parent_class_id = 0;
         (*ptr).field_count = field_count;
         (*ptr).keys_array = ptr::null_mut();
+        crate::gc::layout_init_pointer_free(ptr as *mut u8);
     }
 
     ptr
@@ -108,6 +110,7 @@ pub extern "C" fn js_object_alloc_fast_with_parent(
         (*ptr).parent_class_id = parent_class_id;
         (*ptr).field_count = field_count;
         (*ptr).keys_array = ptr::null_mut();
+        crate::gc::layout_init_pointer_free(ptr as *mut u8);
     }
 
     ptr
@@ -150,6 +153,7 @@ pub extern "C" fn js_object_alloc_class_inline_keys(
         (*ptr).parent_class_id = parent_class_id;
         (*ptr).field_count = field_count;
         (*ptr).keys_array = keys_array;
+        crate::gc::layout_init_pointer_free(ptr as *mut u8);
     }
     ptr
 }
@@ -200,6 +204,7 @@ pub extern "C" fn js_build_class_keys_array(
         );
         unsafe {
             *elements_ptr.add(i) = nanboxed;
+            crate::gc::layout_note_slot(arr as usize, i, nanboxed.to_bits());
         }
     }
     shape_cache_insert(shape_id, arr);
@@ -241,6 +246,7 @@ pub extern "C" fn js_object_alloc_class_with_keys(
         (*ptr).class_id = class_id;
         (*ptr).parent_class_id = parent_class_id;
         (*ptr).field_count = field_count;
+        crate::gc::layout_init_pointer_free(ptr as *mut u8);
     }
 
     // Use class_id as shape_id for caching the keys array.
@@ -318,6 +324,7 @@ pub extern "C" fn js_object_alloc_with_shape(
         for i in 0..alloc_field_count {
             ptr::write(fields_ptr.add(i), JSValue::undefined());
         }
+        crate::gc::layout_init_pointer_free(obj_ptr as *mut u8);
     }
 
     let cached = shape_cache_get(shape_id);
@@ -408,6 +415,7 @@ pub unsafe extern "C" fn js_object_clone_with_extra(
         for i in 0..phys_slots as usize {
             ptr::write(fields_ptr.add(i), crate::value::TAG_UNDEFINED);
         }
+        crate::gc::layout_init_pointer_free(new_ptr as *mut u8);
         // Empty keys array with capacity reserved for the static props to come.
         let new_keys_arr = crate::array::js_array_alloc(extra_count);
         (*new_ptr).keys_array = new_keys_arr;
@@ -451,6 +459,7 @@ pub unsafe extern "C" fn js_object_clone_with_extra(
     for i in src_field_count as usize..phys_slots as usize {
         ptr::write(dst_fields.add(i), crate::value::TAG_UNDEFINED);
     }
+    rebuild_object_field_layout(new_ptr, src_field_count as usize);
 
     // Build keys array: copy ONLY src keys. Static keys are NOT added here — codegen uses
     // js_object_set_field_by_name for each static prop, which appends new keys via
@@ -467,6 +476,7 @@ pub unsafe extern "C" fn js_object_clone_with_extra(
             *new_keys_elements.add(i) = *src_key_elements.add(i);
         }
         (*new_keys_arr).length = copy_count as u32;
+        rebuild_array_layout_from_slots(new_keys_arr);
     } else {
         (*new_keys_arr).length = 0;
     }

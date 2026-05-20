@@ -4,7 +4,7 @@
 use anyhow::Result;
 use perry_hir::Expr;
 
-use super::{lower_expr, nanbox_pointer_inline, FnCtx};
+use super::{emit_layout_note_slot_on_block, lower_expr, nanbox_pointer_inline, FnCtx};
 use crate::types::{DOUBLE, I32, I64, I8, PTR};
 
 /// Lower an array literal `[a, b, c, …]`.
@@ -62,6 +62,10 @@ pub(crate) fn lower_array_literal(ctx: &mut FnCtx<'_>, elements: &[Expr]) -> Res
         const ELEMENT_SIZE: u64 = 8;
         const GC_TYPE_ARRAY: u64 = 1;
         const GC_FLAG_ARENA: u64 = 0x02;
+        // PR #1146: pointer-free hint for slot-layout tracking — empty
+        // inline literals only. The element-store loop below issues
+        // per-slot `js_gc_note_slot_layout` for non-empty literals.
+        const GC_LAYOUT_POINTER_FREE: u64 = 0x4000;
 
         let total_size = GC_HEADER_SIZE + ARRAY_HEADER_SIZE + (n as u64) * ELEMENT_SIZE;
         let total_size_str = total_size.to_string();
@@ -128,8 +132,14 @@ pub(crate) fn lower_array_literal(ctx: &mut FnCtx<'_>, elements: &[Expr]) -> Res
         );
 
         // Packed GcHeader (bits 0..7 obj_type, 8..15 gc_flags, 16..31
-        // _reserved, 32..63 size).
-        let gc_packed: u64 = GC_TYPE_ARRAY | (GC_FLAG_ARENA << 8) | (total_size << 32);
+        // _reserved, 32..63 size). PR #1146 packs the layout-tag in the
+        // reserved bits so the GC sees the array as pointer-free until
+        // the element-store loop overrides per-slot via
+        // `js_gc_note_slot_layout` below.
+        let gc_packed: u64 = GC_TYPE_ARRAY
+            | (GC_FLAG_ARENA << 8)
+            | (GC_LAYOUT_POINTER_FREE << 16)
+            | (total_size << 32);
         blk.store(I64, &gc_packed.to_string(), &raw);
 
         // Packed ArrayHeader at raw+8 (length low 32 / capacity high 32).
@@ -137,18 +147,22 @@ pub(crate) fn lower_array_literal(ctx: &mut FnCtx<'_>, elements: &[Expr]) -> Res
         let arr_header_packed = (n as u64) | ((n as u64) << 32);
         blk.store(I64, &arr_header_packed.to_string(), &arr_header_addr);
 
+        // User pointer = raw + GC_HEADER_SIZE. Computed before the
+        // element loop so the per-slot layout notes target the correct
+        // user-visible address.
+        let user_ptr = blk.gep(I8, &raw, &[(I64, "8")]);
+        let user_ptr_as_i64 = blk.ptrtoint(&user_ptr, I64);
+
         // Elements at raw+16 + i*8.
         for (i, v) in vals.iter().enumerate() {
             let offset = (16 + i * 8).to_string();
             let elem_ptr = blk.gep_inbounds(I8, &raw, &[(I64, &offset)]);
             blk.store(DOUBLE, v, &elem_ptr);
+            let value_bits = blk.bitcast_double_to_i64(v);
+            let slot_index = i.to_string();
+            emit_layout_note_slot_on_block(blk, &user_ptr_as_i64, &slot_index, &value_bits);
         }
 
-        // User pointer = raw + GC_HEADER_SIZE. This is the same address
-        // `js_array_alloc_literal` returns and that the rest of the
-        // codegen expects (ArrayHeader at offset 0, elements at offset 8).
-        let user_ptr = blk.gep(I8, &raw, &[(I64, "8")]);
-        let user_ptr_as_i64 = blk.ptrtoint(&user_ptr, I64);
         return Ok(nanbox_pointer_inline(ctx.block(), &user_ptr_as_i64));
     }
 
@@ -165,6 +179,9 @@ pub(crate) fn lower_array_literal(ctx: &mut FnCtx<'_>, elements: &[Expr]) -> Res
         let offset = (8 + i * 8).to_string();
         let elem_ptr = ctx.block().gep_inbounds(I8, &arr_ptr, &[(I64, &offset)]);
         ctx.block().store(DOUBLE, v, &elem_ptr);
+        let value_bits = ctx.block().bitcast_double_to_i64(v);
+        let slot_index = i.to_string();
+        emit_layout_note_slot_on_block(ctx.block(), &arr, &slot_index, &value_bits);
     }
 
     Ok(nanbox_pointer_inline(ctx.block(), &arr))

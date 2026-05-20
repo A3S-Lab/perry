@@ -73,7 +73,8 @@ pub(crate) use v8_interop::{
     emit_v8_export_call, emit_v8_member_method_call, import_origin_suffix, try_static_class_name,
 };
 pub(crate) use write_barrier::{
-    emit_write_barrier, emit_write_barrier_slot_on_block, lower_stream_super_init,
+    emit_layout_note_slot_on_block, emit_write_barrier, emit_write_barrier_slot_on_block,
+    lower_stream_super_init,
 };
 
 /// Per-function codegen context. Held briefly during lowering, never stored.
@@ -402,6 +403,10 @@ pub(crate) struct FnCtx<'a> {
     /// the frame reflects the live pointer state at the following
     /// safepoint. Today — just tracked, not consumed.
     pub shadow_slot_map: std::collections::HashMap<u32, u32>,
+    /// Top-level statement index → shadow-frame slot indices that can be
+    /// cleared after lowering that statement. Built once per user function
+    /// from HIR local-reference last-use information.
+    pub shadow_slot_clears_after_stmt: std::collections::HashMap<usize, Vec<u32>>,
 
     /// Cached pointer to this function's `InlineArenaState` slot —
     /// allocated lazily on the first `new ClassName()` site that uses
@@ -689,6 +694,66 @@ pub(crate) struct FnCtx<'a> {
     /// after the function finishes lowering the caller bumps the module
     /// counter by the number of slots it used (closes #71).
     pub buffer_alias_base: u32,
+}
+
+pub(crate) fn expr_is_known_non_pointer_shadow_value(ctx: &FnCtx<'_>, expr: &Expr) -> bool {
+    match expr {
+        Expr::Undefined | Expr::Null | Expr::Bool(_) | Expr::Number(_) | Expr::Integer(_) => true,
+        Expr::LocalGet(id) => matches!(
+            ctx.local_types.get(id),
+            Some(
+                HirType::Number
+                    | HirType::Int32
+                    | HirType::Boolean
+                    | HirType::Null
+                    | HirType::Void
+                    | HirType::Never
+                    | HirType::Symbol
+            )
+        ),
+        Expr::Compare { .. } | Expr::Void(_) => true,
+        Expr::Unary { .. } => true,
+        Expr::Binary { op, .. } => !matches!(op, BinaryOp::Add),
+        Expr::Conditional {
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            expr_is_known_non_pointer_shadow_value(ctx, then_expr)
+                && expr_is_known_non_pointer_shadow_value(ctx, else_expr)
+        }
+        Expr::Sequence(exprs) => exprs
+            .last()
+            .is_some_and(|last| expr_is_known_non_pointer_shadow_value(ctx, last)),
+        _ => false,
+    }
+}
+
+pub(crate) fn emit_shadow_slot_clear(ctx: &mut FnCtx<'_>, slot_idx: u32) {
+    ctx.block().call_void(
+        "js_shadow_slot_set",
+        &[(I32, &slot_idx.to_string()), (I64, "0")],
+    );
+}
+
+pub(crate) fn emit_shadow_slot_update_for_expr(
+    ctx: &mut FnCtx<'_>,
+    local_id: u32,
+    value_reg: &str,
+    rhs: &Expr,
+) {
+    let Some(slot_idx) = ctx.shadow_slot_map.get(&local_id).copied() else {
+        return;
+    };
+    if expr_is_known_non_pointer_shadow_value(ctx, rhs) {
+        emit_shadow_slot_clear(ctx, slot_idx);
+    } else {
+        let v_i64 = ctx.block().bitcast_double_to_i64(value_reg);
+        ctx.block().call_void(
+            "js_shadow_slot_set",
+            &[(I32, &slot_idx.to_string()), (I64, &v_i64)],
+        );
+    }
 }
 
 /// (Issue #50) Info about a flat-folded const 2D int array.
@@ -1036,7 +1101,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 {
                     if let Expr::LocalGet(left_id) = left.as_ref() {
                         if left_id == id {
-                            return lower_string_self_append(ctx, *id, right);
+                            let v = lower_string_self_append(ctx, *id, right)?;
+                            emit_shadow_slot_update_for_expr(ctx, *id, &v, value);
+                            return Ok(v);
                         }
                     }
                 }
@@ -1072,6 +1139,9 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     } else if let Some(global_name) = ctx.module_globals.get(id).cloned() {
                         let g_ref = format!("@{}", global_name);
                         ctx.block().store(DOUBLE, &v_dbl, &g_ref);
+                    }
+                    if let Some(slot_idx) = ctx.shadow_slot_map.get(id).copied() {
+                        emit_shadow_slot_clear(ctx, slot_idx);
                     }
                     return Ok(v_dbl);
                 }
@@ -1129,13 +1199,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 // writes into the shadow frame. See stmt.rs::Let
                 // for the allocation-site mirror; LocalSet is the
                 // reassignment-site mirror.
-                if let Some(&slot_idx) = ctx.shadow_slot_map.get(id) {
-                    let v_i64 = ctx.block().bitcast_double_to_i64(&v);
-                    ctx.block().call_void(
-                        "js_shadow_slot_set",
-                        &[(I32, &slot_idx.to_string()), (I64, &v_i64)],
-                    );
-                }
+                emit_shadow_slot_update_for_expr(ctx, *id, &v, value);
                 // Mirror to the parallel i32 slot allocated for int32-stable
                 // locals (issue #48). Without this, the i32 slot would go
                 // stale on every `sum = (sum + i) | 0` write.
@@ -2932,6 +2996,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         let element_ptr = blk.inttoptr(I64, &element_addr);
                         blk.store(DOUBLE, &val_double, &element_ptr);
                         let val_bits = blk.bitcast_double_to_i64(&val_double);
+                        emit_layout_note_slot_on_block(blk, &arr_handle, &idx_i32, &val_bits);
                         emit_write_barrier_slot_on_block(
                             blk,
                             &arr_handle,
@@ -3290,6 +3355,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     blk.store(DOUBLE, &val_double, &field_ptr);
                     let field_addr = blk.ptrtoint(&field_ptr, I64);
                     let val_bits = blk.bitcast_double_to_i64(&val_double);
+                    emit_layout_note_slot_on_block(blk, &obj_handle, &idx_str, &val_bits);
                     emit_write_barrier_slot_on_block(blk, &obj_bits, &field_addr, &val_bits);
                     return Ok(val_double);
                 }
@@ -4313,6 +4379,8 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     let new_length = blk.add(I32, &length, "1");
                     let arr_ptr = blk.inttoptr(I64, &arr_handle);
                     blk.store(I32, &new_length, &arr_ptr);
+                    let value_bits = blk.bitcast_double_to_i64(&v);
+                    emit_layout_note_slot_on_block(blk, &arr_handle, &length, &value_bits);
                     blk.br(&merge_label);
                 }
 

@@ -207,6 +207,7 @@ pub extern "C" fn js_object_set_field(obj: *mut ObjectHeader, field_index: u32, 
         let fields_ptr = (obj as *mut u8).add(std::mem::size_of::<ObjectHeader>()) as *mut JSValue;
         let slot = fields_ptr.add(field_index as usize);
         ptr::write(slot, value);
+        super::note_object_field_slot(obj, field_index as usize, value.bits());
         crate::gc::runtime_write_barrier_slot(obj as usize, slot as usize, value.bits());
     }
 }
@@ -2158,6 +2159,7 @@ pub extern "C" fn js_object_set_field_by_name(
                         (obj as *mut u8).add(std::mem::size_of::<ObjectHeader>()) as *mut JSValue;
                     let slot = fields_ptr.add(slot_idx as usize);
                     ptr::write(slot, JSValue::from_bits(vbits));
+                    super::note_object_field_slot(obj, slot_idx as usize, vbits);
                     crate::gc::runtime_write_barrier_slot(obj as usize, slot as usize, vbits);
                     // Bump field_count only for inline slots — leaving
                     // it at the physical capacity is what steers
@@ -2297,6 +2299,7 @@ pub extern "C" fn js_object_set_field_by_name(
                     *dst_data.add(i) = *src_data.add(i);
                 }
                 (*cloned).length = key_count as u32;
+                super::rebuild_array_layout_from_slots(cloned);
                 set_object_keys_array(obj, cloned);
                 cloned
             } else {
@@ -2451,6 +2454,7 @@ pub extern "C" fn js_object_set_field_by_name(
                 *dst_data.add(i) = *src_data.add(i);
             }
             (*cloned).length = key_count as u32;
+            super::rebuild_array_layout_from_slots(cloned);
             set_object_keys_array(obj, cloned);
             cloned
         } else {

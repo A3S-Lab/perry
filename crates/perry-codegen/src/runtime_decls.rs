@@ -1563,6 +1563,7 @@ pub fn declare_phase_b_arrays(module: &mut LlModule) {
     module.declare_function("js_shadow_frame_push", I64, &[I32]);
     module.declare_function("js_shadow_frame_pop", VOID, &[I64]);
     module.declare_function("js_shadow_slot_set", VOID, &[I32, I64]);
+    module.declare_function("js_gc_write_barriers_emitted", VOID, &[I32]);
 
     // Write barrier for the generational GC (Phase C per the
     // gen-GC plan). Called by codegen-emitted heap-store sites
@@ -1571,8 +1572,10 @@ pub fn declare_phase_b_arrays(module: &mut LlModule) {
     // GC can scan precise roots + RS instead of the full old-gen.
     //   js_write_barrier(parent_bits: u64, child_bits: u64)
     //   js_write_barrier_slot(parent_bits: u64, slot_addr: u64, child_bits: u64)
+    //   js_gc_note_slot_layout(parent_bits: u64, slot_index: u32, value_bits: u64)
     module.declare_function("js_write_barrier", VOID, &[I64, I64]);
     module.declare_function("js_write_barrier_slot", VOID, &[I64, I64, I64]);
+    module.declare_function("js_gc_note_slot_layout", VOID, &[I64, I32, I64]);
 
     // Array methods (Phase B.12).
     // - js_array_pop_f64(arr) -> f64    (last element, NaN if empty)
