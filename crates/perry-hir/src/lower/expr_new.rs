@@ -324,6 +324,29 @@ pub(super) fn lower_new(ctx: &mut LoweringContext, new_expr: &ast::NewExpr) -> R
                     handler: Box::new(handler),
                 });
             }
+            if matches!(class_name.as_str(), "Number" | "String" | "Boolean") {
+                let mut args = new_expr
+                    .args
+                    .as_ref()
+                    .map(|args| {
+                        args.iter()
+                            .map(|a| lower_expr(ctx, &a.expr))
+                            .collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                let kind = match class_name.as_str() {
+                    "Number" => crate::BoxedPrimitiveKind::Number,
+                    "String" => crate::BoxedPrimitiveKind::String,
+                    "Boolean" => crate::BoxedPrimitiveKind::Boolean,
+                    _ => unreachable!(),
+                };
+                let arg = args.drain(..).next().unwrap_or(Expr::Undefined);
+                return Ok(Expr::BoxedPrimitiveNew {
+                    kind,
+                    arg: Box::new(arg),
+                });
+            }
             if ctx.proxy_locals.contains(&class_name) {
                 let args = new_expr
                     .args

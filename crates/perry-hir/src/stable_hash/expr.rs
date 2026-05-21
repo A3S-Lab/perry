@@ -251,7 +251,7 @@ impl SH for Expr {
             Expr::OsVersion => tag(h, 220),
             Expr::BufferFrom { data, encoding } => { tag(h, 215); data.as_ref().hash(h); encoding.hash(h); }
             Expr::BufferFromArrayBuffer { data, byte_offset, length, } => { tag(h, 11220); data.as_ref().hash(h); byte_offset.as_ref().hash(h); length.hash(h); }
-            Expr::BufferAlloc { size, fill } => { tag(h, 216); size.as_ref().hash(h); fill.hash(h); }
+            Expr::BufferAlloc { size, fill, encoding } => { tag(h, 216); size.as_ref().hash(h); fill.hash(h); encoding.hash(h); }
             Expr::BufferAllocUnsafe(e) => { tag(h, 217); e.as_ref().hash(h); }
             Expr::BufferConcat(e) => { tag(h, 218); e.as_ref().hash(h); }
             Expr::BufferIsBuffer(e) => { tag(h, 219); e.as_ref().hash(h); }
@@ -348,6 +348,11 @@ impl SH for Expr {
             Expr::Sequence(es) => { tag(h, 309); es.hash(h); }
             Expr::DateNow => tag(h, 310),
             Expr::DateNew(es) => { tag(h, 311); es.hash(h); }
+            Expr::BoxedPrimitiveNew { kind, arg } => {
+                tag(h, 11221);
+                (*kind as u8).hash(h);
+                arg.as_ref().hash(h);
+            }
             Expr::DateGetTime(e) => { tag(h, 312); e.as_ref().hash(h); }
             Expr::DateToISOString(e) => { tag(h, 313); e.as_ref().hash(h); }
             Expr::DateGetFullYear(e) => { tag(h, 314); e.as_ref().hash(h); }

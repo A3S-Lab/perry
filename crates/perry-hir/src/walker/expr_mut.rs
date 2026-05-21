@@ -721,6 +721,7 @@ where
                 f(a);
             }
         }
+        Expr::BoxedPrimitiveNew { arg, .. } => f(arg),
         Expr::DateSetUtcFullYear { date, value }
         | Expr::DateSetUtcMonth { date, value }
         | Expr::DateSetUtcDate { date, value }
@@ -887,9 +888,16 @@ where
                 f(e);
             }
         }
-        Expr::BufferAlloc { size, fill } => {
+        Expr::BufferAlloc {
+            size,
+            fill,
+            encoding,
+        } => {
             f(size);
             if let Some(v) = fill {
+                f(v);
+            }
+            if let Some(v) = encoding {
                 f(v);
             }
         }
