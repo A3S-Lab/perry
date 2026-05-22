@@ -98,11 +98,12 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     .scalar_ctor_target
                     .last()
                     .and_then(|tid| ctx.scalar_replaced.get(tid))
-                    .and_then(|fs| fs.get(property.as_str()))
-                    .cloned()
                 {
+                    let maybe_slot = slot.get(property.as_str()).cloned();
                     let val_double = lower_expr(ctx, value)?;
-                    ctx.block().store(DOUBLE, &val_double, &slot);
+                    if let Some(slot) = maybe_slot {
+                        ctx.block().store(DOUBLE, &val_double, &slot);
+                    }
                     return Ok(val_double);
                 }
             }
