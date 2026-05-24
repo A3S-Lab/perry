@@ -818,30 +818,6 @@
     "category": "bug-open",
     "reason": "node:stream: transform() callback with Error doesn't propagate as `error` event. Flips to PASS when #1532 lands."
   },
-  "node-suite/stream/web/imports": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web submodule not exposed. Flips to PASS when #1545 lands."
-  },
-  "node-suite/stream/web/byte-length-queuing-strategy": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web.ByteLengthQueuingStrategy not implemented. Flips to PASS when #1545 lands."
-  },
-  "node-suite/stream/web/count-queuing-strategy": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web.CountQueuingStrategy not implemented. Flips to PASS when #1545 lands."
-  },
-  "node-suite/stream/web/transform-stream": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web.TransformStream + pipeThrough not implemented. Flips to PASS when #1545 lands."
-  },
   "node-suite/stream/readable/from-string": {
     "issue": "1532",
     "added": "2026-05-23",
@@ -915,16 +891,10 @@
     "reason": "node:stream: read() with no arg should return the entire buffered chunk. Flips to PASS when #1532 lands."
   },
   "node-suite/stream/web/from-iterable": {
-    "issue": "1545",
+    "issue": "1645",
     "added": "2026-05-23",
     "category": "bug-open",
-    "reason": "node:stream/web: ReadableStream.from(iterable) (Node 20+) not implemented. Flips to PASS when #1545 lands."
-  },
-  "node-suite/stream/web/readable-stream-tee": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: ReadableStream.tee() not implemented. Flips to PASS when #1545 lands."
+    "reason": "node:stream/web: ReadableStream.from(iterable) not implemented. Flips to PASS when #1645 lands."
   },
   "node-suite/stream/events/get-max-listeners": {
     "issue": "1531",
@@ -975,16 +945,16 @@
     "reason": "node:stream: class extends Writable + _write doesn't deliver finish. Flips to PASS when #1532 lands."
   },
   "node-suite/stream/web/readable-stream-async-iterator": {
-    "issue": "1545",
+    "issue": "1646",
     "added": "2026-05-23",
     "category": "bug-open",
-    "reason": "node:stream/web: Web ReadableStream for-await iteration not supported. Flips to PASS when #1545 lands."
+    "reason": "node:stream/web: Web ReadableStream for-await iteration not supported. Flips to PASS when #1646 lands."
   },
   "node-suite/stream/web/readable-stream-no-args": {
-    "issue": "1545",
+    "issue": "1642",
     "added": "2026-05-23",
     "category": "bug-open",
-    "reason": "node:stream/web: new ReadableStream() no-args doesn't produce a usable instance. Flips to PASS when #1545 lands."
+    "reason": "node:stream/web: `typeof rs.getReader` is wrong (HIR lowers stream-method value-read as a 0-arg call). Flips to PASS when #1642 lands."
   },
   "node-suite/stream/ee/new-listener-event": {
     "issue": "1532",
@@ -993,10 +963,10 @@
     "reason": "node:stream: newListener/removeListener inherited EE events don't fire on streams. Flips to PASS when #1532 lands."
   },
   "node-suite/stream/web/writer-release-lock": {
-    "issue": "1545",
+    "issue": "1642",
     "added": "2026-05-23",
     "category": "bug-open",
-    "reason": "node:stream/web: writer.releaseLock() + ws.locked transitions not tracked. Flips to PASS when #1545 lands."
+    "reason": "node:stream/web: `typeof w2.write` after releaseLock is wrong (stream-method value-read lowered as a call). Flips to PASS when #1642 lands."
   },
   "node-suite/stream/ee/listener-count-no-arg": {
     "issue": "1531",
@@ -1015,12 +985,6 @@
     "added": "2026-05-23",
     "category": "bug-open",
     "reason": "node:stream: drain event after backpressure-overflow doesn't fire. Flips to PASS when #1532 lands."
-  },
-  "node-suite/stream/web/transform-stream-no-args": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: new TransformStream() no-args doesn't produce { readable, writable } pair. Flips to PASS when #1545 lands."
   },
   "node-suite/stream/pipe/multiple-data-listeners": {
     "issue": "1532",
@@ -1051,18 +1015,6 @@
     "added": "2026-05-23",
     "category": "bug-open",
     "reason": "node:stream: setEncoding(latin1) + data delivery doesn't fire. Flips to PASS when #1532 lands."
-  },
-  "node-suite/stream/web/writable-stream-full-hooks": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: WritableStream start/write/close/abort lifecycle hooks not firing. Flips to PASS when #1545 lands."
-  },
-  "node-suite/stream/web/writer-closed-promise": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: writer.closed Promise doesn't resolve on close. Flips to PASS when #1545 lands."
   },
   "node-suite/stream/readable/unshift-after-read": {
     "issue": "1532",
@@ -1124,23 +1076,11 @@
     "category": "bug-open",
     "reason": "node:stream: new Writable({signal}) constructor option not honored. Flips to PASS when #1531 lands."
   },
-  "node-suite/stream/web/transform-stream-with-flush": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: TransformStream flush() callback not invoked. Flips to PASS when #1545 lands."
-  },
-  "node-suite/stream/web/writer-ready-promise": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: writer.ready Promise not implemented. Flips to PASS when #1545 lands."
-  },
   "node-suite/stream/web/byob-reader": {
-    "issue": "1545",
+    "issue": "1643",
     "added": "2026-05-23",
     "category": "bug-open",
-    "reason": "node:stream/web: getReader({mode:byob}) BYOB reader not implemented. Flips to PASS when #1545 lands."
+    "reason": "node:stream/web: BYOB readers (getReader({mode:'byob'})) not implemented. Flips to PASS when #1643 lands."
   },
   "node-suite/stream/async-iter/two-iterators-error": {
     "issue": "1532",
@@ -1202,12 +1142,6 @@
     "category": "bug-open",
     "reason": "node:stream: read() on a destroyed Readable should return null. Flips to PASS when #1532 lands."
   },
-  "node-suite/stream/web/transform-stream-pipethrough": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: pipeThrough() returns wrong type. Flips to PASS when #1545 lands."
-  },
   "node-suite/stream/writable/end-idempotent": {
     "issue": "1532",
     "added": "2026-05-23",
@@ -1249,18 +1183,6 @@
     "added": "2026-05-23",
     "category": "bug-open",
     "reason": "node:stream: read(0) special case not handled. Flips to PASS when #1531 lands."
-  },
-  "node-suite/stream/web/transform-stream-with-hwm": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: TransformStream with custom queuing strategies not implemented. Flips to PASS when #1545 lands."
-  },
-  "node-suite/stream/web/writer-write-returns-promise": {
-    "issue": "1545",
-    "added": "2026-05-23",
-    "category": "bug-open",
-    "reason": "node:stream/web: writer.write does not return a Promise. Flips to PASS when #1545 lands."
   },
   "node-suite/stream/writable/uncork-chainable": {
     "issue": "1531",
@@ -1323,10 +1245,10 @@
     "reason": "node:stream: Readable.from(Map) doesn't iterate entries via async iteration. Flips to PASS when #1532 lands."
   },
   "node-suite/stream/web/controller-terminate": {
-    "issue": "1545",
+    "issue": "1644",
     "added": "2026-05-23",
     "category": "bug-open",
-    "reason": "node:stream/web: TransformStreamDefaultController.terminate not implemented. Flips to PASS when #1545 lands."
+    "reason": "node:stream/web: TransformStreamDefaultController.terminate() not implemented. Flips to PASS when #1644 lands."
   },
   "node-suite/stream/compose/single-transform": {
     "issue": "1532",
