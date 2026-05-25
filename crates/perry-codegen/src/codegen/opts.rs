@@ -33,6 +33,47 @@ impl Default for AppMetadata {
     }
 }
 
+/// Controls LLVM floating-point contraction independently from broad
+/// fast-math reassociation. LLVM IR has a single `contract` FMF bit, so
+/// `On` and `Fast` currently emit the same per-instruction flag while
+/// remaining distinct user-facing/cache-key modes.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpContractMode {
+    Off,
+    On,
+    Fast,
+}
+
+impl FpContractMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::On => "on",
+            Self::Fast => "fast",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "on" => Some(Self::On),
+            "fast" => Some(Self::Fast),
+            _ => None,
+        }
+    }
+
+    pub fn permits_contract(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
+impl Default for FpContractMode {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
 /// Options controlling code generation for a single module.
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
@@ -133,6 +174,14 @@ pub struct CompileOptions {
     /// as bytes instead of invoking `clang -c` to produce an object file.
     /// Used by the bitcode-link path (`PERRY_LLVM_BITCODE_LINK=1`).
     pub emit_ir_only: bool,
+    /// Run the native-representation verifier after lowering. This is
+    /// intentionally explicit because it checks compiler invariants and must
+    /// force real lowering rather than accepting cached object bytes.
+    pub verify_native_regions: bool,
+    /// Disable native Buffer/Uint8Array direct-load/store lowering. This is a
+    /// benchmarking/debug switch; callers fall back to the generic buffer
+    /// helpers because buffer access lowering returns `None`.
+    pub disable_buffer_fast_path: bool,
 
     // ── Cross-module import plumbing ──
     /// Locals that are namespace imports (`import * as X from "./mod"`).
@@ -241,18 +290,21 @@ pub struct CompileOptions {
     /// downstream destructure at `compile_module` line 597.
     pub i18n_table: Option<std::sync::Arc<(Vec<String>, usize, usize, Vec<String>, usize)>>,
 
-    /// When true, emit LLVM `reassoc contract` per-instruction fast-math
-    /// flags on every f64 op. Off by default — Perry produces bit-exact
-    /// output with Node's f64 arithmetic. On (via `--fast-math`,
+    /// When true, emit LLVM `reassoc` per-instruction fast-math flags on
+    /// every f64 op. Off by default — Perry produces bit-exact output
+    /// with Node's f64 arithmetic. On (via `--fast-math`,
     /// `PERRY_FAST_MATH=1`, or `perry.fastMath: true` in package.json),
-    /// the optimizer is permitted to reassociate FP chains and fuse
-    /// multiply-adds, producing observable 1-ULP differences from Node
-    /// in ~30% of randomly-generated FP programs in exchange for a ~7x
-    /// speedup on tight `sum += constant` loops (and ~0% on most other
-    /// FP-heavy code, per benchmarks). See `docs/src/cli/fast-math.md`.
-    /// Drives `crate::block::FAST_MATH`; included in the object cache
-    /// key so toggling it invalidates cached `.o` bytes.
+    /// the optimizer is permitted to reassociate FP chains, producing
+    /// observable 1-ULP differences from Node in exchange for better
+    /// vectorization of tight reductions. See `fp_contract_mode` for the
+    /// independent FMA contraction knob. Included in the object cache key.
     pub fast_math: bool,
+    /// Explicit floating-point contraction mode from `--fp-contract`.
+    /// Off preserves independent multiply/add rounding. On/Fast permit
+    /// LLVM `contract` on f64 instructions so FMA-shaped code may lower
+    /// to fused multiply-add instructions without also enabling
+    /// reassociation. Included in the object cache key.
+    pub fp_contract_mode: FpContractMode,
     /// App metadata backing `perry/system` compile-time introspection APIs.
     pub app_metadata: AppMetadata,
 
@@ -551,6 +603,11 @@ pub(crate) struct CrossModuleCtx {
     pub clamp_u8_functions: std::collections::HashSet<u32>,
     /// Functions that always return integer (all returns end with `| 0` etc).
     pub returns_int_functions: std::collections::HashSet<u32>,
+    /// Single-argument integer helpers that return the argument coerced to i32.
+    pub i32_identity_functions: std::collections::HashSet<u32>,
+    /// Debug/benchmark switch that forces Buffer/Uint8Array accesses through
+    /// the generic helper path.
+    pub disable_buffer_fast_path: bool,
     /// (Issue #50) Module-level `const` 2D int arrays folded into flat
     /// `[N x i32]` LLVM constants. Maps local_id → info. Populated by
     /// scanning `hir.init`; threaded through every FnCtx so the IndexGet

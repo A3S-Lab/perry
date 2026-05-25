@@ -9,7 +9,7 @@
 //! one-line explanation instead of a silent broken binary.
 
 use anyhow::{anyhow, bail, Result};
-use perry_hir::{BinaryOp, CompareOp, Expr, UnaryOp, UpdateOp};
+use perry_hir::{BinaryOp, Expr, UnaryOp};
 use perry_types::Type as HirType;
 
 use crate::block::LlBlock;
@@ -22,6 +22,11 @@ use crate::lower_string_method::{
     lower_string_concat_chain, lower_string_self_append,
 };
 use crate::nanbox::{double_literal, POINTER_MASK_I64};
+use crate::native_value::{
+    AliasState, BoundedBufferIndex, BoundsProof, BoundsState, BufferAccessMode, BufferElem,
+    BufferViewRep, BufferViewSlot, ExpectedNativeRep, LengthSource, LoweredValue,
+    MaterializationReason, NativeRep, NativeRepRecord, SemanticKind,
+};
 use crate::strings::StringPool;
 use crate::type_analysis::{
     compute_auto_captures, is_array_expr, is_bigint_expr, is_bool_expr, is_map_expr,
@@ -35,18 +40,25 @@ use crate::types::{DOUBLE, I1, I32, I64, I8, PTR};
 // remain here. `pub(crate) use` keeps the public surface stable so
 // existing `crate::expr::X` paths resolve unchanged.
 mod array_literal;
+mod buffer_access;
 mod channel;
 mod helpers;
 mod i32_fast_path;
 mod index;
 mod nanbox_inline;
 mod object_literal;
+mod range_facts;
 mod strings;
 mod url_helpers;
 mod v8_interop;
 mod write_barrier;
 
+pub(crate) use crate::native_value::materialize_js_value;
 pub(crate) use array_literal::lower_array_literal;
+pub(crate) use buffer_access::{
+    emit_buffer_access_pointer, lower_buffer_access_proof, lower_buffer_load, lower_buffer_store,
+    BufferAccessEmission, BufferAccessSpec, StoreResult,
+};
 #[allow(unused_imports)] // ChannelReduction kept reachable for surface stability
 pub(crate) use channel::{
     extract_array_of_object_shape, lower_channel_reduction, try_match_channel_reduction,
@@ -60,8 +72,8 @@ pub(crate) use helpers::{
     type_has_numeric_pointer_free_array_layout, unbox_str_handle, unbox_to_i64,
 };
 pub(crate) use i32_fast_path::{
-    can_lower_expr_as_i32, is_known_finite, lower_expr_as_i32, try_flat_const_2d_int,
-    try_lower_flat_const_index_get,
+    can_lower_expr_as_i32, is_known_finite, lower_expr_as_i32, lower_expr_native,
+    try_flat_const_2d_int, try_lower_flat_const_index_get,
 };
 pub(crate) use index::lower_index_set_fast;
 pub(crate) use nanbox_inline::{
@@ -69,6 +81,11 @@ pub(crate) use nanbox_inline::{
     nanbox_string_inline,
 };
 pub(crate) use object_literal::lower_object_literal;
+pub(crate) use range_facts::{
+    bounds_for_buffer_access, effective_alias_state_for_access, int_range_expr,
+    invalidate_local_write_facts, record_int_facts_for_let, record_int_facts_for_local_set,
+    record_int_facts_for_update, while_condition_range_fact, IntRange, IntRangeFact,
+};
 pub(crate) use strings::emit_string_literal_global;
 pub(crate) use url_helpers::lower_url_string_getter;
 pub(crate) use v8_interop::{
@@ -83,6 +100,14 @@ pub(crate) use write_barrier::{
 pub(crate) struct FnCtx<'a> {
     /// Function being built (blocks, params, registers).
     pub func: &'a mut LlFunction,
+    /// Stable slug for native-region ids derived from this module.
+    pub module_slug: String,
+    /// Source-level function name for native-representation records. Top-level
+    /// module code uses `module_init`.
+    pub source_function: String,
+    pub source_function_slug: String,
+    /// Stable id for the labeled loop currently being lowered.
+    pub active_region_id: Option<String>,
     /// Map from HIR LocalId → LLVM alloca pointer (e.g. `%r3`).
     pub locals: std::collections::HashMap<u32, String>,
     /// Map from HIR LocalId → static HIR Type. Used by `is_string_expr` and
@@ -93,6 +118,9 @@ pub(crate) struct FnCtx<'a> {
     /// Index into `func.blocks()` pointing at the block currently receiving
     /// instructions. Lowering fns update this when control flow splits.
     pub current_block: usize,
+    /// True while lowering an expression statement whose resulting JS value
+    /// will be discarded.
+    pub discard_expr_value: bool,
     /// HIR FuncId → LLVM function name. Resolved at the top of
     /// `compile_module` so `FuncRef(id)` calls know what to emit.
     pub func_names: &'a std::collections::HashMap<u32, String>,
@@ -398,6 +426,13 @@ pub(crate) struct FnCtx<'a> {
     /// LLVM's SCEV hoists the conversions. Turned factorial
     /// (`sum += i % 1000` in a 100M loop) from 1550ms → ~150ms on ARM.
     pub integer_locals: &'a std::collections::HashSet<u32>,
+
+    /// LocalIds whose writes are all explicit `>>> 0` u32 casts. These locals
+    /// can use the same i32 bit-pattern slot as signed integer locals for
+    /// bitwise consumers, but ordinary JS reads must convert with `uitofp` so
+    /// values above INT32_MAX remain observable as unsigned numbers.
+    pub unsigned_i32_locals: &'a std::collections::HashSet<u32>,
+
     /// Gen-GC Phase A sub-phase 3a: pointer-typed local → shadow-
     /// frame slot index. Empty when `PERRY_SHADOW_STACK` is off.
     /// Sub-phase 3b uses this map at `Stmt::Let` / `LocalSet`
@@ -460,7 +495,7 @@ pub(crate) struct FnCtx<'a> {
     /// check, and `stmt_preserves_array_length` already proved the
     /// body can't change `arr.length` or reassign `i`, so the
     /// IndexSet site can rely on `i < arr.length` without rechecking.
-    pub bounded_index_pairs: Vec<(u32, u32)>,
+    pub bounded_index_pairs: Vec<BoundedIndexPair>,
 
     /// Parallel i32 counter slots for integer loop counters that are
     /// used as bounded array indices. When a for-loop counter is in
@@ -642,6 +677,8 @@ pub(crate) struct FnCtx<'a> {
     /// Clamp-pattern function IDs. Call sites emit smin/smax inline.
     pub clamp3_functions: &'a std::collections::HashSet<u32>,
     pub clamp_u8_functions: &'a std::collections::HashSet<u32>,
+    pub integer_returning_functions: &'a std::collections::HashSet<u32>,
+    pub i32_identity_functions: &'a std::collections::HashSet<u32>,
 
     /// True if `perry_transform::unroll_static_loops` expanded any
     /// static-trip-count for-loop in the function this FnCtx is lowering
@@ -682,9 +719,9 @@ pub(crate) struct FnCtx<'a> {
     pub array_row_aliases: std::collections::HashMap<u32, (u32, Box<perry_hir::Expr>)>,
 
     /// Pre-computed `ptr`-typed data-base-pointer slots for Buffer/Uint8Array
-    /// locals. When a `Stmt::Let` initializes a non-mutable local from
-    /// `Expr::BufferAlloc`, the lowering computes the data pointer
-    /// (handle + 8, past the BufferHeader) once and stores it in a
+    /// locals. When HIR facts prove a non-mutable local owns a fresh u8 buffer,
+    /// the lowering computes the data pointer (handle + 8, past the
+    /// BufferHeader) once and stores it in a
     /// `ptr`-typed alloca. `Uint8ArrayGet/Set` then emits
     /// `getelementptr inbounds i8, ptr %base, i32 %idx` instead of the
     /// `inttoptr(handle + offset)` chain — giving LLVM proper pointer
@@ -696,6 +733,42 @@ pub(crate) struct FnCtx<'a> {
     /// different buffers don't alias (fixes the vectorizer's "unsafe
     /// dependent memory operations" remark).
     pub buffer_data_slots: std::collections::HashMap<u32, (String, u32)>,
+    /// Codegen-level native buffer views keyed by LocalId. This is the
+    /// representation model behind `buffer_data_slots`: raw pointer access can
+    /// exist with `AliasState::Unknown`, while noalias metadata requires a
+    /// proven/guarded alias state at the consumer.
+    pub buffer_view_slots: std::collections::HashMap<u32, BufferViewSlot>,
+    /// Benchmark/debug switch that forces tracked buffers through the existing
+    /// helper fallback instead of native GEP/load/store lowering.
+    pub disable_buffer_fast_path: bool,
+    /// LocalId facts of the form `n = min(src.length, dst.length)`.
+    pub min_length_bounds: std::collections::HashMap<u32, Vec<u32>>,
+    /// Loop-local facts proving a buffer index is bounded inside the current
+    /// loop body.
+    pub bounded_buffer_index_pairs: Vec<BoundedBufferIndex>,
+    pub buffer_hazard_reasons: std::collections::HashMap<u32, MaterializationReason>,
+    /// Local aliases that preserve an i32 index, e.g. `const j = i | 0`.
+    pub native_i32_aliases: std::collections::HashMap<u32, u32>,
+    /// Immutable numeric aliases used by the range-based buffer proof. These
+    /// remain HIR expressions so loop-local range facts can be applied at the
+    /// eventual access site.
+    pub int_range_aliases: std::collections::HashMap<u32, perry_hir::Expr>,
+    /// Scoped local integer ranges derived from loop/while guards.
+    pub int_range_facts: Vec<IntRangeFact>,
+    /// Monotonic source for loop-local proof scopes. Loop exit removes only
+    /// facts created with its exact scope id, so invalidation of older facts
+    /// cannot make newer inner-loop facts survive via shifted vector indices.
+    pub next_loop_proof_scope_id: u32,
+    /// Mutable locals known to be non-negative at the current point. While
+    /// guards provide the upper bound; this set supplies the lower bound.
+    pub nonnegative_integer_locals: std::collections::HashSet<u32>,
+    /// Native representation records drained into `LlModule` after this
+    /// function/method/closure/module-init body has been lowered.
+    pub native_rep_records: Vec<NativeRepRecord>,
+    /// Immutable locals whose initializer creates a fresh u8 buffer backing
+    /// store. Collected once as a HIR fact and consumed by Let lowering to seed
+    /// direct data-pointer slots plus noalias metadata.
+    pub known_noalias_buffer_locals: &'a std::collections::HashSet<u32>,
     /// Starting alias-scope id for buffers registered in this function.
     /// Seeded from `LlModule::buffer_alias_counter` at FnCtx creation so
     /// scope ids don't collide across functions in the same LLVM module.
@@ -708,18 +781,23 @@ pub(crate) struct FnCtx<'a> {
 pub(crate) fn expr_is_known_non_pointer_shadow_value(ctx: &FnCtx<'_>, expr: &Expr) -> bool {
     match expr {
         Expr::Undefined | Expr::Null | Expr::Bool(_) | Expr::Number(_) | Expr::Integer(_) => true,
-        Expr::LocalGet(id) => matches!(
-            ctx.local_types.get(id),
-            Some(
-                HirType::Number
-                    | HirType::Int32
-                    | HirType::Boolean
-                    | HirType::Null
-                    | HirType::Void
-                    | HirType::Never
-                    | HirType::Symbol
-            )
-        ),
+        Expr::LocalGet(id) => {
+            // A reserved shadow slot means the local is pointer-possible even
+            // if its initializer refined `local_types` to a scalar.
+            !ctx.shadow_slot_map.contains_key(id)
+                && matches!(
+                    ctx.local_types.get(id),
+                    Some(
+                        HirType::Number
+                            | HirType::Int32
+                            | HirType::Boolean
+                            | HirType::Null
+                            | HirType::Void
+                            | HirType::Never
+                            | HirType::Symbol
+                    )
+                )
+        }
         Expr::Compare { .. } | Expr::Void(_) => true,
         Expr::Unary { .. } => true,
         Expr::Binary { op, .. } => !matches!(op, BinaryOp::Add),
@@ -800,7 +878,23 @@ pub struct I18nLowerCtx {
     pub default_locale_idx: usize,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct BoundedIndexPair {
+    pub index_local_id: u32,
+    pub array_local_id: u32,
+    pub scope_id: u32,
+}
+
 impl<'a> FnCtx<'a> {
+    pub fn next_loop_proof_scope_id(&mut self) -> u32 {
+        let id = self.next_loop_proof_scope_id;
+        self.next_loop_proof_scope_id = self
+            .next_loop_proof_scope_id
+            .checked_add(1)
+            .expect("loop proof scope id overflow");
+        id
+    }
+
     pub fn block(&mut self) -> &mut LlBlock {
         self.func
             .block_mut(self.current_block)
@@ -823,6 +917,224 @@ impl<'a> FnCtx<'a> {
             .map(|b| b.label.clone())
             .expect("valid block index")
     }
+
+    pub fn current_block_label(&self) -> String {
+        self.block_label(self.current_block)
+    }
+
+    pub fn region_id_for_label(&self, label: &str) -> String {
+        format!(
+            "{}.{}.{}",
+            self.module_slug,
+            self.source_function_slug,
+            native_region_slug(label)
+        )
+    }
+
+    pub fn record_lowered_value(
+        &mut self,
+        expr_kind: impl Into<String>,
+        local_id: Option<u32>,
+        consumer: impl Into<String>,
+        lowered: &LoweredValue,
+        bounds_state: Option<BoundsState>,
+        alias_state: Option<AliasState>,
+        materialization_reason: Option<MaterializationReason>,
+        emitted_inbounds: bool,
+        emitted_noalias: bool,
+        notes: Vec<String>,
+    ) {
+        self.record_lowered_value_with_access_mode(
+            expr_kind,
+            local_id,
+            consumer,
+            lowered,
+            bounds_state,
+            alias_state,
+            None,
+            materialization_reason,
+            emitted_inbounds,
+            emitted_noalias,
+            notes,
+        );
+    }
+
+    pub fn record_lowered_value_with_access_mode(
+        &mut self,
+        expr_kind: impl Into<String>,
+        local_id: Option<u32>,
+        consumer: impl Into<String>,
+        lowered: &LoweredValue,
+        bounds_state: Option<BoundsState>,
+        alias_state: Option<AliasState>,
+        access_mode: Option<BufferAccessMode>,
+        materialization_reason: Option<MaterializationReason>,
+        emitted_inbounds: bool,
+        emitted_noalias: bool,
+        notes: Vec<String>,
+    ) {
+        let block_label = self.current_block_label();
+        self.native_rep_records.push(NativeRepRecord {
+            function: self.func.name.clone(),
+            block_label: block_label.clone(),
+            region_id: self.active_region_id.clone(),
+            source_function: self.source_function.clone(),
+            lowering_block: block_label,
+            local_id,
+            expr_kind: expr_kind.into(),
+            source_key: None,
+            semantic: lowered.semantic.clone(),
+            native_rep: lowered.rep.clone(),
+            native_rep_name: lowered.rep.name().to_string(),
+            llvm_ty: lowered.llvm_ty,
+            llvm_value: lowered.value.clone(),
+            consumer: consumer.into(),
+            bounds_state,
+            alias_state,
+            access_mode,
+            materialization_reason,
+            emitted_inbounds,
+            emitted_noalias,
+            notes,
+        });
+    }
+}
+
+pub(crate) fn native_region_slug(raw: &str) -> String {
+    let mut out = String::new();
+    let mut pending_sep = false;
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() {
+            if pending_sep && !out.is_empty() {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+            pending_sep = false;
+        } else {
+            pending_sep = true;
+        }
+    }
+    if out.is_empty() {
+        "unknown".to_string()
+    } else {
+        out
+    }
+}
+
+pub(crate) fn buffer_view_lowered_value(
+    data_ptr: &str,
+    length: &str,
+    bounds: BoundsState,
+    alias: AliasState,
+) -> LoweredValue {
+    LoweredValue {
+        semantic: SemanticKind::BufferObject,
+        rep: NativeRep::BufferView(BufferViewRep {
+            data_ptr: data_ptr.to_string(),
+            length: length.to_string(),
+            elem: BufferElem::U8,
+            bounds,
+            alias,
+        }),
+        llvm_ty: PTR,
+        value: data_ptr.to_string(),
+    }
+}
+
+pub(crate) fn downgrade_buffer_alias(ctx: &mut FnCtx<'_>, id: u32, reason: MaterializationReason) {
+    if let Some(view) = ctx.buffer_view_slots.get_mut(&id) {
+        view.alias = AliasState::MayAlias;
+        view.scope_idx = None;
+    }
+    ctx.buffer_hazard_reasons.insert(id, reason);
+}
+
+pub(crate) fn alias_buffer_view_slot(
+    ctx: &mut FnCtx<'_>,
+    alias_id: u32,
+    source_id: u32,
+    reason: MaterializationReason,
+) {
+    let Some(mut view) = ctx.buffer_view_slots.get(&source_id).cloned() else {
+        return;
+    };
+    downgrade_buffer_alias(ctx, source_id, reason.clone());
+    view.alias = AliasState::MayAlias;
+    view.scope_idx = None;
+    ctx.buffer_view_slots.insert(alias_id, view);
+    ctx.buffer_hazard_reasons.insert(alias_id, reason);
+}
+
+pub(crate) fn update_buffer_view_for_assignment(
+    ctx: &mut FnCtx<'_>,
+    id: u32,
+    value: &Expr,
+    lowered_value: &str,
+) {
+    if matches!(
+        value,
+        Expr::BufferAlloc { .. } | Expr::BufferAllocUnsafe(_) | Expr::Uint8ArrayNew(_)
+    ) {
+        let blk = ctx.block();
+        let handle = unbox_to_i64(blk, lowered_value);
+        let handle_ptr = blk.inttoptr(I64, &handle);
+        let data_ptr = blk.gep(I8, &handle_ptr, &[(I32, "8")]);
+        let data_slot = ctx
+            .buffer_view_slots
+            .get(&id)
+            .map(|view| view.data_slot.clone())
+            .unwrap_or_else(|| ctx.func.alloca_entry(PTR));
+        ctx.block().store(PTR, &data_ptr, &data_slot);
+        ctx.buffer_view_slots.insert(
+            id,
+            BufferViewSlot {
+                data_slot,
+                scope_idx: None,
+                elem: BufferElem::U8,
+                alias: AliasState::MayAlias,
+                length_source: Some(LengthSource::Unknown),
+            },
+        );
+    } else {
+        ctx.buffer_view_slots.remove(&id);
+    }
+    ctx.buffer_hazard_reasons
+        .insert(id, MaterializationReason::Reassignment);
+}
+
+pub(crate) fn downgrade_buffer_aliases_in_expr(
+    ctx: &mut FnCtx<'_>,
+    expr: &Expr,
+    reason: MaterializationReason,
+) {
+    match expr {
+        Expr::LocalGet(id) => downgrade_buffer_alias(ctx, *id, reason),
+        Expr::Binary { left, right, .. } => {
+            downgrade_buffer_aliases_in_expr(ctx, left, reason.clone());
+            downgrade_buffer_aliases_in_expr(ctx, right, reason);
+        }
+        Expr::PropertyGet { object, .. } => downgrade_buffer_aliases_in_expr(ctx, object, reason),
+        Expr::IndexGet { object, index } => {
+            downgrade_buffer_aliases_in_expr(ctx, object, reason.clone());
+            downgrade_buffer_aliases_in_expr(ctx, index, reason);
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn buffer_access_materialization_reason(
+    ctx: &FnCtx<'_>,
+    expr: &Expr,
+) -> MaterializationReason {
+    if let Expr::LocalGet(id) = expr {
+        if let Some(reason) = ctx.buffer_hazard_reasons.get(id) {
+            return reason.clone();
+        }
+        if ctx.closure_captures.contains_key(id) {
+            return MaterializationReason::ClosureCapture;
+        }
+    }
+    MaterializationReason::UnknownBounds
 }
 
 // Issue #1098 phase 2: lower_expr arm-bodies extracted into
@@ -1028,6 +1340,8 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         | Expr::Uint8ArrayLength(..)
         | Expr::Uint8ArrayGet { .. }
         | Expr::Uint8ArraySet { .. }
+        | Expr::BufferIndexGet { .. }
+        | Expr::BufferIndexSet { .. }
         | Expr::TypedArrayNew { .. }
         | Expr::ArrayUnshift { .. }
         | Expr::ArrayEntries(..)

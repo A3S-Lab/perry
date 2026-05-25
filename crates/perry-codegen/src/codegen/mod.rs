@@ -51,7 +51,9 @@ mod string_pool;
 pub use helpers::resolve_target_triple;
 pub(crate) use helpers::{default_target_triple, write_barriers_enabled};
 pub(crate) use opts::CrossModuleCtx;
-pub use opts::{AppMetadata, CompileOptions, ImportedClass, NamespaceEntry, NamespaceEntryKind};
+pub use opts::{
+    AppMetadata, CompileOptions, FpContractMode, ImportedClass, NamespaceEntry, NamespaceEntryKind,
+};
 
 use artifacts::{emit_module_artifacts, ModuleArtifactsCtx};
 use function::compile_function;
@@ -74,16 +76,10 @@ use crate::collectors::{collect_closures_in_stmts, collect_let_ids, collect_ref_
 /// guarantee — do not change to `&mut` without also moving the cache
 /// hash to AFTER codegen.
 pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> {
-    // Set the per-instruction FMF emission mode for this build before
-    // any LlBlock methods run. All modules in a single program build
-    // share the same `fast_math` setting, so writing the AtomicBool
-    // here (potentially redundantly when rayon parallelizes module
-    // compiles) is safe — every store writes the same value.
-    crate::block::FAST_MATH.store(opts.fast_math, std::sync::atomic::Ordering::Relaxed);
-
     let triple = opts.target.clone().unwrap_or_else(default_target_triple);
+    let fp_flags = crate::block::FpFlags::new(opts.fast_math, opts.fp_contract_mode);
 
-    let mut llmod = LlModule::new(&triple);
+    let mut llmod = LlModule::new_with_fp_flags(&triple, fp_flags);
     // Null guard global: a zeroed i32 used as a safe dereference target
     // when a NaN-unboxed pointer is null/invalid. Prevents segfaults from
     // uninitialized locals or unhandled expressions producing 0.0/TAG_UNDEFINED.
@@ -788,6 +784,11 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     }
 
     // Build the cross-module context bundle from CompileOptions.
+    let disable_buffer_fast_path = opts.disable_buffer_fast_path
+        || std::env::var("PERRY_DISABLE_BUFFER_FAST_PATH")
+            .ok()
+            .as_deref()
+            == Some("1");
     let cross_module = CrossModuleCtx {
         namespace_imports: opts.namespace_imports.iter().cloned().collect(),
         namespace_reexport_named_imports: opts.namespace_reexport_named_imports.clone(),
@@ -862,6 +863,13 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
             .filter(|f| crate::collectors::returns_integer(f))
             .map(|f| f.id)
             .collect(),
+        i32_identity_functions: hir
+            .functions
+            .iter()
+            .filter(|f| crate::collectors::returns_i32_identity_arg(f))
+            .map(|f| f.id)
+            .collect(),
+        disable_buffer_fast_path,
         flat_const_arrays: {
             // Issue #50: fold module-level `const X: number[][] = [[int, ...], ...]`
             // into a flat `[N x i32]` LLVM constant so `X[i][j]` / `krow[j]` can
@@ -1939,6 +1947,12 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
     let total_buffer_scopes = llmod.buffer_alias_counter;
     emit_buffer_alias_metadata(&mut llmod, total_buffer_scopes);
 
+    let verify_native_regions = opts.verify_native_regions
+        || std::env::var("PERRY_VERIFY_NATIVE_REGIONS").ok().as_deref() == Some("1");
+    if verify_native_regions {
+        crate::native_value::verify_native_rep_records(&llmod.native_rep_records)?;
+    }
+
     let ll_text = llmod.to_ir();
     log::debug!(
         "perry-codegen: emitted {} bytes of LLVM IR for '{}' ({} interned strings)",
@@ -1951,6 +1965,10 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         let filename = format!("{}/{}.ll", save_dir, module_prefix);
         let _ = std::fs::write(&filename, &ll_text);
     }
+    crate::native_value::write_native_rep_artifact_if_enabled(
+        &hir.name,
+        &llmod.native_rep_records,
+    )?;
     if opts.emit_ir_only {
         Ok(ll_text.into_bytes())
     } else {

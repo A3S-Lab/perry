@@ -359,7 +359,12 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 // it when the i32 path covers every read.
                 if let Some(i32_slot) = ctx.i32_counter_slots.get(id).cloned() {
                     let i = ctx.block().load(I32, &i32_slot);
-                    return Ok(ctx.block().sitofp(I32, &i, DOUBLE));
+                    let v = if ctx.unsigned_i32_locals.contains(id) {
+                        ctx.block().uitofp(I32, &i, DOUBLE)
+                    } else {
+                        ctx.block().sitofp(I32, &i, DOUBLE)
+                    };
+                    return Ok(v);
                 }
                 Ok(ctx.block().load(DOUBLE, &slot))
             } else if let Some(global_name) = ctx.module_globals.get(id).cloned() {
@@ -389,6 +394,7 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // work into O(n) and is the difference between 700 ms and 200 ms
         // on bench_string_ops.
         Expr::LocalSet(id, value) => {
+            super::invalidate_local_write_facts(ctx, *id);
             // Detect the `x = x + y` self-append pattern.
             // The fast path requires a plain alloca slot in `ctx.locals` —
             // module globals (use `@global` loads), closure captures (use
@@ -441,12 +447,19 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         ctx.integer_locals,
                         ctx.clamp3_functions,
                         ctx.clamp_u8_functions,
+                        ctx.integer_returning_functions,
+                        ctx.i32_identity_functions,
                     )
                 {
                     let v_i32 = lower_expr_as_i32(ctx, value)?;
+                    let unsigned_i32 = ctx.unsigned_i32_locals.contains(id);
                     let blk = ctx.block();
                     blk.store(I32, &v_i32, &i32_slot);
-                    let v_dbl = blk.sitofp(I32, &v_i32, DOUBLE);
+                    let v_dbl = if unsigned_i32 {
+                        blk.uitofp(I32, &v_i32, DOUBLE)
+                    } else {
+                        blk.sitofp(I32, &v_i32, DOUBLE)
+                    };
                     if let Some(slot) = ctx.locals.get(id).cloned() {
                         ctx.block().store(DOUBLE, &v_dbl, &slot);
                     } else if let Some(global_name) = ctx.module_globals.get(id).cloned() {
@@ -457,6 +470,7 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                     if let Some(slot_idx) = ctx.shadow_slot_map.get(id).copied() {
                         emit_shadow_slot_clear(ctx, slot_idx);
                     }
+                    super::record_int_facts_for_local_set(ctx, *id, value);
                     return Ok(v_dbl);
                 }
             }
@@ -529,6 +543,15 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 // GC_STORE_AUDIT(ROOT): module global slot is registered as a mutable GC root.
                 ctx.block().store(DOUBLE, &v, &g_ref);
             }
+            if ctx.buffer_view_slots.contains_key(id)
+                || matches!(
+                    value.as_ref(),
+                    Expr::BufferAlloc { .. } | Expr::BufferAllocUnsafe(_) | Expr::Uint8ArrayNew(_)
+                )
+            {
+                super::update_buffer_view_for_assignment(ctx, *id, value, &v);
+            }
+            super::record_int_facts_for_local_set(ctx, *id, value);
             // Soft fallback: drop the store on the floor for missing
             // locals. See LocalGet for the rationale.
             Ok(v)
@@ -538,6 +561,7 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
         // prefix returns the NEW value. Closure captures, locals, then
         // module globals.
         Expr::Update { id, op, prefix } => {
+            super::invalidate_local_write_facts(ctx, *id);
             // Closure capture path: runtime get + add/sub + runtime set.
             if let Some(&capture_idx) = ctx.closure_captures.get(id) {
                 let closure_ptr = ctx
@@ -624,6 +648,7 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                 let new_i32 = blk.add(I32, &old_i32, delta);
                 blk.store(I32, &new_i32, &i32_slot);
             }
+            super::record_int_facts_for_update(ctx, *id, *op);
             Ok(if *prefix { new } else { old })
         }
 

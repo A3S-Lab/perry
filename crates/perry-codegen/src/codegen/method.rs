@@ -1,7 +1,7 @@
 //! Class-method and static-method compilation. Split out of
 //! `codegen.rs` (now `codegen/mod.rs`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Context, Result};
 use perry_hir::Function;
@@ -94,18 +94,10 @@ pub(super) fn compile_method(
         .chain(cross_module.returns_int_functions.iter())
         .copied()
         .collect();
-    let integer_locals = crate::collectors::collect_integer_locals(
-        &method.body,
-        &cross_module.flat_const_arrays.keys().copied().collect(),
-        &clamp_fn_ids,
-    );
-    let index_used_locals = crate::collectors::collect_index_used_locals(&method.body);
-    let strictly_i32_bounded_locals = crate::collectors::collect_strictly_i32_bounded_locals(
-        &method.body,
-        &integer_locals,
-        &cross_module.flat_const_arrays.keys().copied().collect(),
-        &clamp_fn_ids,
-    );
+    let flat_const_ids: std::collections::HashSet<u32> =
+        cross_module.flat_const_arrays.keys().copied().collect();
+    let hir_facts =
+        crate::collectors::collect_hir_facts(&method.body, &flat_const_ids, &clamp_fn_ids);
 
     let non_escaping_news = crate::collectors::collect_non_escaping_news(
         &method.body,
@@ -128,9 +120,17 @@ pub(super) fn compile_method(
 
     let mut ctx = FnCtx {
         func: lf,
+        module_slug: crate::expr::native_region_slug(strings.module_prefix()),
+        source_function: format!("{}.{}", class.name, method.name),
+        source_function_slug: crate::expr::native_region_slug(&format!(
+            "{}.{}",
+            class.name, method.name
+        )),
+        active_region_id: None,
         locals,
         local_types,
         current_block: 0,
+        discard_expr_value: false,
         func_names,
         strings,
         loop_targets: Vec::new(),
@@ -179,7 +179,8 @@ pub(super) fn compile_method(
         interfaces: &cross_module.interfaces,
         try_depth: 0,
         pending_declares: Vec::new(),
-        integer_locals: &integer_locals,
+        integer_locals: &hir_facts.integer_locals,
+        unsigned_i32_locals: &hir_facts.unsigned_i32_locals,
         shadow_slot_map: std::collections::HashMap::new(),
         shadow_slot_clears_after_stmt: std::collections::HashMap::new(),
         arena_state_slot: None,
@@ -187,8 +188,8 @@ pub(super) fn compile_method(
         cached_lengths: HashMap::new(),
         bounded_index_pairs: Vec::new(),
         i32_counter_slots: HashMap::new(),
-        index_used_locals: &index_used_locals,
-        strictly_i32_bounded_locals: &strictly_i32_bounded_locals,
+        index_used_locals: &hir_facts.index_used_locals,
+        strictly_i32_bounded_locals: &hir_facts.strictly_i32_bounded_locals,
         i18n: &cross_module.i18n,
         dynamic_import_path_to_prefix: &cross_module.dynamic_import_path_to_prefix,
         local_class_aliases: HashMap::new(),
@@ -208,12 +209,26 @@ pub(super) fn compile_method(
         array_row_aliases: HashMap::new(),
         clamp3_functions: &cross_module.clamp3_functions,
         clamp_u8_functions: &cross_module.clamp_u8_functions,
+        integer_returning_functions: &cross_module.returns_int_functions,
+        i32_identity_functions: &cross_module.i32_identity_functions,
         was_unrolled: method.was_unrolled,
         ic_site_counter: ic_base,
         ic_globals: Vec::new(),
         typed_parse_rodata: Vec::new(),
         typed_parse_counter: 0,
         buffer_data_slots: HashMap::new(),
+        buffer_view_slots: HashMap::new(),
+        disable_buffer_fast_path: cross_module.disable_buffer_fast_path,
+        min_length_bounds: HashMap::new(),
+        bounded_buffer_index_pairs: Vec::new(),
+        buffer_hazard_reasons: HashMap::new(),
+        native_i32_aliases: HashMap::new(),
+        int_range_aliases: HashMap::new(),
+        int_range_facts: Vec::new(),
+        next_loop_proof_scope_id: 0,
+        nonnegative_integer_locals: HashSet::new(),
+        native_rep_records: Vec::new(),
+        known_noalias_buffer_locals: &hir_facts.known_noalias_buffer_locals,
         buffer_alias_base,
     };
 
@@ -384,9 +399,11 @@ pub(super) fn compile_method(
     let ic_end = ctx.ic_site_counter;
     let pending = std::mem::take(&mut ctx.pending_declares);
     let buffer_alias_used = ctx.buffer_data_slots.len() as u32;
+    let native_rep_records = std::mem::take(&mut ctx.native_rep_records);
     drop(ctx);
     llmod.ic_counter = ic_end;
     llmod.buffer_alias_counter += buffer_alias_used;
+    llmod.native_rep_records.extend(native_rep_records);
     for (name, ret, params) in pending {
         llmod.declare_function(&name, ret, &params);
     }
@@ -465,18 +482,9 @@ pub(super) fn compile_static_method(
         .chain(cross_module.returns_int_functions.iter())
         .copied()
         .collect();
-    let integer_locals = crate::collectors::collect_integer_locals(
-        &f.body,
-        &cross_module.flat_const_arrays.keys().copied().collect(),
-        &clamp_fn_ids,
-    );
-    let index_used_locals = crate::collectors::collect_index_used_locals(&f.body);
-    let strictly_i32_bounded_locals = crate::collectors::collect_strictly_i32_bounded_locals(
-        &f.body,
-        &integer_locals,
-        &cross_module.flat_const_arrays.keys().copied().collect(),
-        &clamp_fn_ids,
-    );
+    let flat_const_ids: std::collections::HashSet<u32> =
+        cross_module.flat_const_arrays.keys().copied().collect();
+    let hir_facts = crate::collectors::collect_hir_facts(&f.body, &flat_const_ids, &clamp_fn_ids);
 
     let static_boxed_vars = module_boxed_vars.clone();
     let non_escaping_news = crate::collectors::collect_non_escaping_news(
@@ -497,9 +505,17 @@ pub(super) fn compile_static_method(
 
     let mut ctx = FnCtx {
         func: lf,
+        module_slug: crate::expr::native_region_slug(strings.module_prefix()),
+        source_function: format!("{}.{}", class_name, f.name),
+        source_function_slug: crate::expr::native_region_slug(&format!(
+            "{}.{}",
+            class_name, f.name
+        )),
+        active_region_id: None,
         locals,
         local_types,
         current_block: 0,
+        discard_expr_value: false,
         func_names,
         strings,
         loop_targets: Vec::new(),
@@ -552,7 +568,8 @@ pub(super) fn compile_static_method(
         interfaces: &cross_module.interfaces,
         try_depth: 0,
         pending_declares: Vec::new(),
-        integer_locals: &integer_locals,
+        integer_locals: &hir_facts.integer_locals,
+        unsigned_i32_locals: &hir_facts.unsigned_i32_locals,
         shadow_slot_map: std::collections::HashMap::new(),
         shadow_slot_clears_after_stmt: std::collections::HashMap::new(),
         arena_state_slot: None,
@@ -560,8 +577,8 @@ pub(super) fn compile_static_method(
         cached_lengths: HashMap::new(),
         bounded_index_pairs: Vec::new(),
         i32_counter_slots: HashMap::new(),
-        index_used_locals: &index_used_locals,
-        strictly_i32_bounded_locals: &strictly_i32_bounded_locals,
+        index_used_locals: &hir_facts.index_used_locals,
+        strictly_i32_bounded_locals: &hir_facts.strictly_i32_bounded_locals,
         i18n: &cross_module.i18n,
         dynamic_import_path_to_prefix: &cross_module.dynamic_import_path_to_prefix,
         local_class_aliases: HashMap::new(),
@@ -581,12 +598,26 @@ pub(super) fn compile_static_method(
         array_row_aliases: HashMap::new(),
         clamp3_functions: &cross_module.clamp3_functions,
         clamp_u8_functions: &cross_module.clamp_u8_functions,
+        integer_returning_functions: &cross_module.returns_int_functions,
+        i32_identity_functions: &cross_module.i32_identity_functions,
         was_unrolled: f.was_unrolled,
         ic_site_counter: ic_base,
         ic_globals: Vec::new(),
         typed_parse_rodata: Vec::new(),
         typed_parse_counter: 0,
         buffer_data_slots: HashMap::new(),
+        buffer_view_slots: HashMap::new(),
+        disable_buffer_fast_path: cross_module.disable_buffer_fast_path,
+        min_length_bounds: HashMap::new(),
+        bounded_buffer_index_pairs: Vec::new(),
+        buffer_hazard_reasons: HashMap::new(),
+        native_i32_aliases: HashMap::new(),
+        int_range_aliases: HashMap::new(),
+        int_range_facts: Vec::new(),
+        next_loop_proof_scope_id: 0,
+        nonnegative_integer_locals: HashSet::new(),
+        native_rep_records: Vec::new(),
+        known_noalias_buffer_locals: &hir_facts.known_noalias_buffer_locals,
         buffer_alias_base,
     };
     stmt::lower_stmts(&mut ctx, &f.body)
@@ -609,9 +640,11 @@ pub(super) fn compile_static_method(
     let ic_end = ctx.ic_site_counter;
     let pending = std::mem::take(&mut ctx.pending_declares);
     let buffer_alias_used = ctx.buffer_data_slots.len() as u32;
+    let native_rep_records = std::mem::take(&mut ctx.native_rep_records);
     drop(ctx);
     llmod.ic_counter = ic_end;
     llmod.buffer_alias_counter += buffer_alias_used;
+    llmod.native_rep_records.extend(native_rep_records);
     for (name, ret, params) in pending {
         llmod.declare_function(&name, ret, &params);
     }

@@ -11,34 +11,46 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::codegen::FpContractMode;
 use crate::types::LlvmType;
 
-/// Global toggle for emitting LLVM `reassoc contract` per-instruction
-/// fast-math flags on f64 ops. Set by `compile_module` from
-/// `CompileOptions::fast_math` before any IR is emitted; read by
-/// `fmf_prefix()` on every fadd/fsub/fmul/fdiv/frem/fneg.
+/// Per-build floating-point flags captured by each function/block builder.
 ///
-/// Default OFF. Bit-exact f64 semantics with Node by default. `--fast-math`
-/// (or `PERRY_FAST_MATH=1`, or `perry.fastMath: true` in package.json)
-/// flips it ON for the build, allowing the optimizer to vectorize tight
-/// reductions and fuse FMA at the cost of ~30% bit-divergence from Node.
-///
-/// All modules in a single program build share the same setting; rayon
-/// parallel module codegen is safe because the value is set once before
-/// any LlBlock methods run and stays constant for the duration of the
-/// build.
-pub static FAST_MATH: AtomicBool = AtomicBool::new(false);
+/// These are intentionally explicit instance state. Older code used process-
+/// global atomics set at `compile_module` entry, which was only sound while
+/// every parallel module in a build shared identical FP options. Tests and
+/// embedding callers can compile modules with different options concurrently,
+/// so f64 emitters must derive their FMF prefix from the owning block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FpFlags {
+    fast_math: bool,
+    fp_contract_mode: FpContractMode,
+}
 
-/// Returns `"reassoc contract "` when `FAST_MATH` is on, `""` otherwise.
-/// Inserted between the opcode and the type in fp instructions:
-/// `fadd reassoc contract double …` vs `fadd double …`.
-fn fmf_prefix() -> &'static str {
-    if FAST_MATH.load(Ordering::Relaxed) {
-        "reassoc contract "
-    } else {
-        ""
+impl FpFlags {
+    pub fn new(fast_math: bool, fp_contract_mode: FpContractMode) -> Self {
+        Self {
+            fast_math,
+            fp_contract_mode,
+        }
+    }
+
+    /// Inserted between the opcode and type in fp instructions:
+    /// `fadd reassoc contract double …` vs `fadd double …`.
+    fn fmf_prefix(self) -> &'static str {
+        match (self.fast_math, self.fp_contract_mode.permits_contract()) {
+            (false, false) => "",
+            (false, true) => "contract ",
+            (true, false) => "reassoc ",
+            (true, true) => "reassoc contract ",
+        }
+    }
+}
+
+impl Default for FpFlags {
+    fn default() -> Self {
+        Self::new(false, FpContractMode::Off)
     }
 }
 
@@ -70,15 +82,25 @@ pub struct LlBlock {
     instructions: Vec<String>,
     terminated: bool,
     counter: Rc<RegCounter>,
+    fp_flags: FpFlags,
 }
 
 impl LlBlock {
     pub fn new(label: impl Into<String>, counter: Rc<RegCounter>) -> Self {
+        Self::new_with_fp_flags(label, counter, FpFlags::default())
+    }
+
+    pub fn new_with_fp_flags(
+        label: impl Into<String>,
+        counter: Rc<RegCounter>,
+        fp_flags: FpFlags,
+    ) -> Self {
         Self {
             label: label.into(),
             instructions: Vec::new(),
             terminated: false,
             counter,
+            fp_flags,
         }
     }
 
@@ -141,11 +163,12 @@ impl LlBlock {
     // -------- Arithmetic (double) --------
     //
     // FP ops are emitted with no LLVM fast-math flags by default. Setting
-    // `FAST_MATH = true` (driven by the `--fast-math` CLI flag,
+    // `FpFlags::fast_math = true` (driven by the `--fast-math` CLI flag,
     // `PERRY_FAST_MATH=1` env var, or `perry.fastMath` in package.json)
-    // adds `reassoc contract` to every fadd/fsub/fmul/fdiv/frem/fneg.
+    // adds `reassoc`; setting `fp_contract_mode` to `on` or `fast`
+    // adds `contract` to every fadd/fsub/fmul/fdiv/frem/fneg.
     //
-    // What the two flags actually buy:
+    // What the two independent flags actually buy:
     //   - `reassoc`: lets LLVM reorder `(a + b) + c → a + (b + c)`, which
     //     is what the loop-vectorizer needs to break a serial accumulator
     //     chain into 4 parallel accumulators. The win is real (and large)
@@ -160,7 +183,7 @@ impl LlBlock {
     //     fmul+fadd here; Node also emits FMA where it can).
     //
     // What the two flags break: ECMAScript bit-exact f64 semantics. With
-    // them on, ~30% of randomly-generated FP programs diverge from Node
+    // both on, ~30% of randomly-generated FP programs diverge from Node
     // by 1 ULP. Examples: `(a/b) * b` gets rewritten to `(a*b) / b`, and
     // `a*b + c` becomes a fused FMA. Without them, ~6% still diverge
     // (residual from the LLVM SLP vectorizer at -O3, not gated by these
@@ -178,41 +201,76 @@ impl LlBlock {
     // `-ffast-math`) made LLVM replace TAG_NULL / TAG_UNDEFINED
     // constants with 0.0 at codegen time. The clang step passes
     // `-fno-math-errno` only — every fast-math effect in Perry comes
-    // from the per-instruction FMFs emitted here when FAST_MATH is on.
+    // from the per-instruction FMFs emitted here.
 
     pub fn fadd(&mut self, a: &str, b: &str) -> String {
         let r = self.reg();
-        self.emit(format!("{} = fadd {}double {}, {}", r, fmf_prefix(), a, b));
+        self.emit(format!(
+            "{} = fadd {}double {}, {}",
+            r,
+            self.fp_flags.fmf_prefix(),
+            a,
+            b
+        ));
         r
     }
 
     pub fn fsub(&mut self, a: &str, b: &str) -> String {
         let r = self.reg();
-        self.emit(format!("{} = fsub {}double {}, {}", r, fmf_prefix(), a, b));
+        self.emit(format!(
+            "{} = fsub {}double {}, {}",
+            r,
+            self.fp_flags.fmf_prefix(),
+            a,
+            b
+        ));
         r
     }
 
     pub fn fmul(&mut self, a: &str, b: &str) -> String {
         let r = self.reg();
-        self.emit(format!("{} = fmul {}double {}, {}", r, fmf_prefix(), a, b));
+        self.emit(format!(
+            "{} = fmul {}double {}, {}",
+            r,
+            self.fp_flags.fmf_prefix(),
+            a,
+            b
+        ));
         r
     }
 
     pub fn fdiv(&mut self, a: &str, b: &str) -> String {
         let r = self.reg();
-        self.emit(format!("{} = fdiv {}double {}, {}", r, fmf_prefix(), a, b));
+        self.emit(format!(
+            "{} = fdiv {}double {}, {}",
+            r,
+            self.fp_flags.fmf_prefix(),
+            a,
+            b
+        ));
         r
     }
 
     pub fn frem(&mut self, a: &str, b: &str) -> String {
         let r = self.reg();
-        self.emit(format!("{} = frem {}double {}, {}", r, fmf_prefix(), a, b));
+        self.emit(format!(
+            "{} = frem {}double {}, {}",
+            r,
+            self.fp_flags.fmf_prefix(),
+            a,
+            b
+        ));
         r
     }
 
     pub fn fneg(&mut self, a: &str) -> String {
         let r = self.reg();
-        self.emit(format!("{} = fneg {}double {}", r, fmf_prefix(), a));
+        self.emit(format!(
+            "{} = fneg {}double {}",
+            r,
+            self.fp_flags.fmf_prefix(),
+            a
+        ));
         r
     }
 
@@ -493,9 +551,8 @@ impl LlBlock {
         r
     }
 
-    /// Signed integer division.  Emitted by the `(int / int) | 0` fast
-    /// path — avoids `scvtf → fdiv → fcvtzs` and lets LLVM replace
-    /// constant divisors with `smulh + asr`.
+    /// Signed integer division. Reserved for future proof-guarded integer
+    /// division paths; JS `/` currently lowers through double division.
     pub fn sdiv(&mut self, ty: LlvmType, a: &str, b: &str) -> String {
         let r = self.reg();
         self.emit(format!("{} = sdiv {} {}, {}", r, ty, a, b));
@@ -714,22 +771,77 @@ fn format_args(args: &[(LlvmType, &str)]) -> String {
 mod tests {
     use super::*;
     use crate::types::{DOUBLE, I64};
+    use std::thread;
 
     fn fresh() -> LlBlock {
         LlBlock::new("entry.0", Rc::new(RegCounter::new()))
     }
 
+    fn fresh_with(fast_math: bool, fp_contract_mode: FpContractMode) -> LlBlock {
+        LlBlock::new_with_fp_flags(
+            "entry.0",
+            Rc::new(RegCounter::new()),
+            FpFlags::new(fast_math, fp_contract_mode),
+        )
+    }
+
     #[test]
     fn fadd_emits_expected_ir_default() {
         // Default mode: no fast-math FMF flags emitted, bit-exact with
-        // Node. The fast-math (--fast-math) path is tested end-to-end by
-        // scripts/fp_fuzz.mjs rather than here, since the FAST_MATH
-        // global would race with parallel test runs if toggled.
-        FAST_MATH.store(false, Ordering::Relaxed);
+        // Node.
         let mut b = fresh();
         let r = b.fadd("1.0", "2.0");
         assert_eq!(r, "%r1");
         assert_eq!(b.to_ir(), "entry.0:\n  %r1 = fadd double 1.0, 2.0");
+    }
+
+    #[test]
+    fn fadd_emits_contract_when_fp_contract_on() {
+        let mut b = fresh_with(false, FpContractMode::On);
+        let r = b.fadd("1.0", "2.0");
+        assert_eq!(r, "%r1");
+        assert_eq!(b.to_ir(), "entry.0:\n  %r1 = fadd contract double 1.0, 2.0");
+    }
+
+    #[test]
+    fn fadd_emits_reassoc_when_fast_math_without_contract() {
+        let mut b = fresh_with(true, FpContractMode::Off);
+        let r = b.fadd("1.0", "2.0");
+        assert_eq!(r, "%r1");
+        assert_eq!(b.to_ir(), "entry.0:\n  %r1 = fadd reassoc double 1.0, 2.0");
+    }
+
+    #[test]
+    fn fadd_emits_reassoc_and_contract_when_both_enabled() {
+        let mut b = fresh_with(true, FpContractMode::Fast);
+        let r = b.fadd("1.0", "2.0");
+        assert_eq!(r, "%r1");
+        assert_eq!(
+            b.to_ir(),
+            "entry.0:\n  %r1 = fadd reassoc contract double 1.0, 2.0"
+        );
+    }
+
+    #[test]
+    fn fp_flags_do_not_bleed_between_parallel_blocks() {
+        let strict = thread::spawn(|| {
+            let mut b = fresh_with(false, FpContractMode::Off);
+            b.fmul("1.0", "2.0");
+            b.to_ir()
+        });
+        let relaxed = thread::spawn(|| {
+            let mut b = fresh_with(true, FpContractMode::On);
+            b.fmul("1.0", "2.0");
+            b.to_ir()
+        });
+        assert_eq!(
+            strict.join().unwrap(),
+            "entry.0:\n  %r1 = fmul double 1.0, 2.0"
+        );
+        assert_eq!(
+            relaxed.join().unwrap(),
+            "entry.0:\n  %r1 = fmul reassoc contract double 1.0, 2.0"
+        );
     }
 
     #[test]

@@ -12,7 +12,9 @@
 
 use std::collections::HashSet;
 
+use crate::block::FpFlags;
 use crate::function::LlFunction;
+use crate::native_value::NativeRepRecord;
 use crate::types::LlvmType;
 
 pub struct LlModule {
@@ -39,10 +41,16 @@ pub struct LlModule {
     /// emitted on loads/stores match the metadata nodes emitted once
     /// at the end of `compile_module` (closes #71).
     pub buffer_alias_counter: u32,
+    pub(crate) native_rep_records: Vec<NativeRepRecord>,
+    fp_flags: FpFlags,
 }
 
 impl LlModule {
     pub fn new(target_triple: impl Into<String>) -> Self {
+        Self::new_with_fp_flags(target_triple, FpFlags::default())
+    }
+
+    pub fn new_with_fp_flags(target_triple: impl Into<String>, fp_flags: FpFlags) -> Self {
         Self {
             target_triple: target_triple.into(),
             declarations: Vec::new(),
@@ -54,6 +62,8 @@ impl LlModule {
             metadata_lines: Vec::new(),
             ic_counter: 0,
             buffer_alias_counter: 0,
+            native_rep_records: Vec::new(),
+            fp_flags,
         }
     }
 
@@ -106,7 +116,7 @@ impl LlModule {
         return_type: LlvmType,
         params: Vec<(LlvmType, String)>,
     ) -> &mut LlFunction {
-        let func = LlFunction::new(name, return_type, params);
+        let func = LlFunction::new_with_fp_flags(name, return_type, params, self.fp_flags);
         self.functions.push(func);
         self.functions.last_mut().unwrap()
     }

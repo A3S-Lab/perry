@@ -3,6 +3,9 @@
 use super::*;
 
 use crate::expr::lower_expr_with_expected_type;
+use crate::native_value::{
+    AliasState, BufferElem, BufferViewSlot, LengthSource, MaterializationReason,
+};
 use crate::types::{I32, I64, I8, PTR};
 
 pub(crate) fn lower_let(
@@ -25,6 +28,15 @@ pub(crate) fn lower_let(
     // class-alias chain resolution below (and any other site
     // that needs id → name) can use it.
     ctx.local_id_to_name.insert(id, name.to_string());
+    if let Some(init_expr) = init {
+        if let Some(source_id) = native_i32_alias_source(init_expr) {
+            ctx.native_i32_aliases.insert(id, source_id);
+        }
+        if let Some(buffer_ids) = math_min_length_buffer_ids(init_expr) {
+            ctx.min_length_bounds.insert(id, buffer_ids);
+        }
+    }
+    crate::expr::record_int_facts_for_let(ctx, id, init, mutable);
     // Class alias detection. Two shapes:
     //
     //   (a) `let C = SomeClass` — init is `Expr::ClassRef("SomeClass")`
@@ -466,13 +478,12 @@ pub(crate) fn lower_let(
             let g_ref = format!("@{}", global_name);
             ctx.block().store(DOUBLE, &v, &g_ref);
 
-            // Buffer data-pointer slot: when init is BufferAlloc on an
-            // immutable module global, pre-compute the data base pointer
-            // (handle + 8, past BufferHeader) and store it in a ptr
-            // alloca. Uint8ArrayGet/Set then uses `getelementptr inbounds`
-            // from this pointer instead of the inttoptr chain — giving
-            // LLVM proper pointer provenance for auto-vectorization.
-            if !mutable && matches!(init_expr, perry_hir::Expr::BufferAlloc { .. }) {
+            // Buffer data-pointer slot: when the HIR facts identify a fresh
+            // immutable u8 buffer, pre-compute the data base pointer (handle +
+            // 8, past BufferHeader) and store it in a ptr alloca.
+            // Uint8ArrayGet/Set then uses `getelementptr inbounds` from this
+            // pointer instead of the inttoptr chain.
+            if ctx.known_noalias_buffer_locals.contains(&id) {
                 let blk = ctx.block();
                 let handle = crate::expr::unbox_to_i64(blk, &v);
                 let handle_ptr = blk.inttoptr(I64, &handle);
@@ -480,7 +491,25 @@ pub(crate) fn lower_let(
                 let slot = ctx.func.alloca_entry(PTR);
                 ctx.block().store(PTR, &data_ptr, &slot);
                 let scope_idx = ctx.buffer_alias_base + ctx.buffer_data_slots.len() as u32;
-                ctx.buffer_data_slots.insert(id, (slot, scope_idx));
+                ctx.buffer_data_slots.insert(id, (slot.clone(), scope_idx));
+                ctx.buffer_view_slots.insert(
+                    id,
+                    BufferViewSlot {
+                        data_slot: slot,
+                        scope_idx: Some(scope_idx),
+                        elem: BufferElem::U8,
+                        alias: AliasState::NoAliasProven,
+                        length_source: Some(buffer_alloc_length_source(init_expr)),
+                    },
+                );
+            }
+            if let Some(source_id) = buffer_local_alias_source(init_expr) {
+                crate::expr::alias_buffer_view_slot(
+                    ctx,
+                    id,
+                    source_id,
+                    MaterializationReason::UnknownAlias,
+                );
             }
         }
         return Ok(());
@@ -530,6 +559,7 @@ pub(crate) fn lower_let(
         // Step 2: register BEFORE lowering init.
         ctx.locals.insert(id, slot);
         ctx.local_types.insert(id, refined_ty.clone());
+        crate::expr::emit_shadow_slot_bind_for_local(ctx, id);
         // Step 3: lower init and store into the box.
         if let Some(init_expr) = init {
             let init_val = lower_expr_with_expected_type(ctx, init_expr, Some(&refined_ty))?;
@@ -608,18 +638,21 @@ pub(crate) fn lower_let(
     // saturation concern in the original v0.5.164 comment was
     // about `const SEED = 0x9E3779B9 >>> 0` whose value
     // exceeds INT32_MAX — but that's a u32 (`>>> 0`), and
-    // `>>> 0` is intentionally not seeded into integer_locals
-    // (see collect_integer_let_ids), so SEED never ends up
-    // in this code path.
+    // `>>> 0` is intentionally not seeded into signed integer_locals
+    // (see collect_integer_let_ids). Mutable u32 recurrences are handled
+    // separately through unsigned_i32_locals so ordinary JS reads use
+    // `uitofp` instead of signed `sitofp`.
     // (Issue #436) Allow the i32 fast path when the local is
     // either index-used (existing #435 path) OR
     // strictly-i32-bounded by every write (new path that
     // recovers the FNV-1a `h` accumulator and similar
     // explicit-i32-coerce shapes without reintroducing #435's
     // accumulator overflow).
-    let i32_safe_local =
-        ctx.index_used_locals.contains(&id) || ctx.strictly_i32_bounded_locals.contains(&id);
-    let needs_i32_slot = ctx.integer_locals.contains(&id)
+    let is_unsigned_i32_local = ctx.unsigned_i32_locals.contains(&id);
+    let i32_safe_local = ctx.index_used_locals.contains(&id)
+        || ctx.strictly_i32_bounded_locals.contains(&id)
+        || is_unsigned_i32_local;
+    let needs_i32_slot = (ctx.integer_locals.contains(&id) || is_unsigned_i32_local)
         && i32_safe_local
         && init_in_i32_range
         && !ctx.boxed_vars.contains(&id)
@@ -669,11 +702,18 @@ pub(crate) fn lower_let(
                 &int_locals,
                 ctx.clamp3_functions,
                 ctx.clamp_u8_functions,
+                ctx.integer_returning_functions,
+                ctx.i32_identity_functions,
             ) {
                 let i32_v = crate::expr::lower_expr_as_i32(ctx, init_expr)?;
+                let unsigned_i32 = ctx.unsigned_i32_locals.contains(&id);
                 let blk = ctx.block();
                 blk.store(I32, &i32_v, &i32_slot);
-                let v = blk.sitofp(I32, &i32_v, DOUBLE);
+                let v = if unsigned_i32 {
+                    blk.uitofp(I32, &i32_v, DOUBLE)
+                } else {
+                    blk.sitofp(I32, &i32_v, DOUBLE)
+                };
                 blk.store(DOUBLE, &v, &slot);
                 true
             } else {
@@ -742,17 +782,15 @@ pub(crate) fn lower_let(
                 ctx.block().store(I32, &v_i32, &i32_slot);
             }
         }
-        // Buffer data-pointer slot for local (non-global) const buffers.
-        // `const src = Buffer.alloc(N)` at module-level lives here when
-        // `src` doesn't escape to functions — same pattern as the
-        // image_conv blur kernel. The pre-computed ptr slot lets
-        // Uint8ArrayGet/Set emit `getelementptr inbounds` from a
-        // proper `ptr` base instead of an `inttoptr` chain.
+        // Buffer data-pointer slot for local (non-global) const buffers. The
+        // HIR fact layer owns the source-shape decision; lowering only consumes
+        // the stable local-id fact and emits the ptr slot used by
+        // Uint8ArrayGet/Set.
         //
         // Only relevant on the f64-init path (BufferAlloc isn't
         // i32-able, so used_i32_init is always false here, but
         // gate explicitly to keep the invariant readable).
-        if !used_i32_init && !mutable && matches!(init_expr, perry_hir::Expr::BufferAlloc { .. }) {
+        if !used_i32_init && ctx.known_noalias_buffer_locals.contains(&id) {
             let blk = ctx.block();
             let handle = crate::expr::unbox_to_i64(blk, &v);
             let handle_ptr = blk.inttoptr(I64, &handle);
@@ -760,7 +798,26 @@ pub(crate) fn lower_let(
             let buf_slot = ctx.func.alloca_entry(PTR);
             ctx.block().store(PTR, &data_ptr, &buf_slot);
             let scope_idx = ctx.buffer_alias_base + ctx.buffer_data_slots.len() as u32;
-            ctx.buffer_data_slots.insert(id, (buf_slot, scope_idx));
+            ctx.buffer_data_slots
+                .insert(id, (buf_slot.clone(), scope_idx));
+            ctx.buffer_view_slots.insert(
+                id,
+                BufferViewSlot {
+                    data_slot: buf_slot,
+                    scope_idx: Some(scope_idx),
+                    elem: BufferElem::U8,
+                    alias: AliasState::NoAliasProven,
+                    length_source: Some(buffer_alloc_length_source(init_expr)),
+                },
+            );
+        }
+        if let Some(source_id) = buffer_local_alias_source(init_expr) {
+            crate::expr::alias_buffer_view_slot(
+                ctx,
+                id,
+                source_id,
+                MaterializationReason::UnknownAlias,
+            );
         }
     } else if let Some(cv) = ctx.compile_time_constants.get(&id) {
         // Compile-time constants (e.g. `declare const __platform__: number`)
@@ -771,6 +828,99 @@ pub(crate) fn lower_let(
         ctx.block().store(DOUBLE, &lit, &slot);
     }
     Ok(())
+}
+
+fn native_i32_alias_source(expr: &perry_hir::Expr) -> Option<u32> {
+    match expr {
+        perry_hir::Expr::Binary {
+            op: perry_hir::BinaryOp::BitOr,
+            left,
+            right,
+        } if matches!(right.as_ref(), perry_hir::Expr::Integer(0)) => match left.as_ref() {
+            perry_hir::Expr::LocalGet(id) => Some(*id),
+            _ => native_i32_alias_source(left),
+        },
+        perry_hir::Expr::LocalGet(id) => Some(*id),
+        _ => None,
+    }
+}
+
+fn buffer_local_alias_source(expr: &perry_hir::Expr) -> Option<u32> {
+    match expr {
+        perry_hir::Expr::LocalGet(id) => Some(*id),
+        _ => None,
+    }
+}
+
+fn math_min_length_buffer_ids(expr: &perry_hir::Expr) -> Option<Vec<u32>> {
+    let perry_hir::Expr::MathMin(args) = expr else {
+        return None;
+    };
+    if args.len() < 2 {
+        return None;
+    }
+    let mut out = Vec::new();
+    for arg in args {
+        if let Some(id) = length_of_local_buffer_id(arg) {
+            out.push(id);
+        } else {
+            return None;
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    (!out.is_empty()).then_some(out)
+}
+
+fn length_of_local_buffer_id(expr: &perry_hir::Expr) -> Option<u32> {
+    match expr {
+        perry_hir::Expr::Uint8ArrayLength(inner) | perry_hir::Expr::BufferLength(inner) => {
+            match inner.as_ref() {
+                perry_hir::Expr::LocalGet(id) => Some(*id),
+                _ => None,
+            }
+        }
+        perry_hir::Expr::PropertyGet { object, property } if property == "length" => {
+            match object.as_ref() {
+                perry_hir::Expr::LocalGet(id) => Some(*id),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn buffer_alloc_length_source(expr: &perry_hir::Expr) -> LengthSource {
+    let len = match expr {
+        perry_hir::Expr::BufferAlloc { size, .. } => Some(size.as_ref()),
+        perry_hir::Expr::BufferAllocUnsafe(size) => Some(size.as_ref()),
+        perry_hir::Expr::Uint8ArrayNew(Some(size)) => Some(size.as_ref()),
+        _ => None,
+    };
+    len.and_then(length_source_from_expr)
+        .unwrap_or(LengthSource::Unknown)
+}
+
+fn length_source_from_expr(expr: &perry_hir::Expr) -> Option<LengthSource> {
+    match expr {
+        perry_hir::Expr::Integer(n) => Some(LengthSource::Constant(*n)),
+        perry_hir::Expr::LocalGet(id) => Some(LengthSource::Local { id: *id, addend: 0 }),
+        perry_hir::Expr::Binary {
+            op: perry_hir::BinaryOp::Add,
+            left,
+            right,
+        } => match (left.as_ref(), right.as_ref()) {
+            (perry_hir::Expr::LocalGet(id), perry_hir::Expr::Integer(addend))
+            | (perry_hir::Expr::Integer(addend), perry_hir::Expr::LocalGet(id)) => {
+                Some(LengthSource::Local {
+                    id: *id,
+                    addend: *addend,
+                })
+            }
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Extract all field names (parent chain + own) and the constructor for

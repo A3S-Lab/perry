@@ -169,19 +169,38 @@ pub struct CompileArgs {
     #[arg(long)]
     pub no_cache: bool,
 
-    /// Enable LLVM `reassoc + contract` per-instruction fast-math flags
-    /// on every f64 op. Off by default — Perry produces bit-exact f64
-    /// output with Node. With this flag, the optimizer is permitted to
-    /// reassociate FP chains (e.g. `(a + b) + c → a + (b + c)`) and to
-    /// fuse multiply-adds into FMA instructions. Wins ~7x on tight
-    /// `sum += constant` loops on M-series ARM64; ~0% on most realistic
-    /// FP-heavy code (per benchmarks). Costs ~30% bit-divergence from
-    /// Node on randomly-generated FP programs vs. ~6% without.
+    /// Enable LLVM `reassoc` per-instruction fast-math flags on every
+    /// f64 op. Off by default — Perry produces bit-exact f64 output with
+    /// Node. With this flag, the optimizer is permitted to reassociate FP
+    /// chains (e.g. `(a + b) + c → a + (b + c)`). It also implies
+    /// `--fp-contract=fast` unless contraction is explicitly configured.
     /// Also settable via `PERRY_FAST_MATH=1` env var or
     /// `"perry": { "fastMath": true }` in package.json (CLI flag wins).
     /// See `docs/src/cli/fast-math.md` for the full behavior contract.
     #[arg(long)]
     pub fast_math: bool,
+
+    /// Control floating-point contraction separately from broad fast-math.
+    /// `off` preserves independent multiply/add rounding. `on` and `fast`
+    /// emit LLVM `contract` on f64 ops so FMA-shaped code may fuse without
+    /// also enabling reassociation. When omitted, `--fast-math` keeps its
+    /// historical behavior by implying `fast`; otherwise the default is
+    /// `off`.
+    #[arg(long, value_parser = ["off", "on", "fast"])]
+    pub fp_contract: Option<String>,
+
+    /// Verify native-representation lowering records after codegen. Also
+    /// settable via `PERRY_VERIFY_NATIVE_REGIONS=1`. Enables compiler
+    /// invariant checks and disables the per-module object cache for this
+    /// build so lowering always runs.
+    #[arg(long)]
+    pub verify_native_regions: bool,
+
+    /// Disable native Buffer/Uint8Array direct-load/store lowering. Also
+    /// settable via `PERRY_DISABLE_BUFFER_FAST_PATH=1`; useful for A/B
+    /// benchmarking the helper fallback against the native fast path.
+    #[arg(long)]
+    pub disable_buffer_fast_path: bool,
 
     /// #504 — emit `<binary>.attest.json` next to the compiled
     /// executable. The sidecar carries SHA-256 of the binary +
@@ -332,10 +351,15 @@ pub struct CompilationContext {
     /// Resolved `--fast-math` setting for this build. Default false.
     /// Sources, last wins: `perry.fastMath` in package.json → env var
     /// `PERRY_FAST_MATH=1` → CLI `--fast-math`. Drives the per-instruction
-    /// LLVM `reassoc + contract` FMF emission in `perry-codegen` and is
-    /// hashed into the per-module object cache key so toggling it
-    /// invalidates cached `.o` bytes.
+    /// LLVM `reassoc` FMF emission in `perry-codegen` and is hashed into
+    /// the per-module object cache key so toggling it invalidates cached
+    /// `.o` bytes.
     pub fast_math: bool,
+    /// Resolved `--fp-contract=off|on|fast` setting for this build.
+    /// Package/env/CLI explicit values win over the `--fast-math` implied
+    /// default, allowing `--fast-math --fp-contract=off` to keep
+    /// reassociation while disabling FMA contraction.
+    pub fp_contract_mode: perry_codegen::FpContractMode,
     /// App metadata backing `perry/system` compile-time introspection APIs
     /// (`getAppVersion`/`getAppBuildNumber`/`getBundleId`). Resolved once
     /// from `perry.toml` + CLI overrides and reused by every codegen
@@ -534,6 +558,7 @@ impl CompilationContext {
             package_aliases: HashMap::new(),
             compile_packages: HashSet::new(),
             fast_math: false,
+            fp_contract_mode: perry_codegen::FpContractMode::Off,
             app_metadata: perry_codegen::AppMetadata::default(),
             compile_package_dirs: HashMap::new(),
             type_checker: None,

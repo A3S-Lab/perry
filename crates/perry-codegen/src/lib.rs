@@ -19,6 +19,7 @@ pub(crate) mod lower_conditional;
 pub(crate) mod lower_string_method;
 pub mod module;
 pub mod nanbox;
+pub(crate) mod native_value;
 pub mod runtime_decls;
 pub(crate) mod stmt;
 pub mod strings;
@@ -28,8 +29,8 @@ pub(crate) mod typed_shape;
 pub mod types;
 
 pub use codegen::{
-    compile_module, resolve_target_triple, AppMetadata, CompileOptions, ImportedClass,
-    NamespaceEntry, NamespaceEntryKind,
+    compile_module, resolve_target_triple, AppMetadata, CompileOptions, FpContractMode,
+    ImportedClass, NamespaceEntry, NamespaceEntryKind,
 };
 
 /// One row of the native-module dispatch table, projected to just

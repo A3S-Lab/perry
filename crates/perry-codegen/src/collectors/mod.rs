@@ -12,6 +12,7 @@ mod escape_arrays;
 mod escape_check;
 mod escape_news;
 mod escape_objects;
+mod hir_facts;
 mod i32_locals;
 mod i64_emit;
 mod index_uses;
@@ -24,7 +25,10 @@ mod shadow_slots;
 mod this_as_value;
 
 // Public re-exports for the visible API (`pub fn emit_i64_function` etc.).
-pub use clamp_detect::{detect_clamp3, detect_clamp_u8, is_integer_specializable, returns_integer};
+pub use clamp_detect::{
+    detect_clamp3, detect_clamp_u8, is_integer_specializable, returns_i32_identity_arg,
+    returns_integer,
+};
 pub use i64_emit::emit_i64_function;
 
 // Internal-to-crate re-exports — explicit names because globs don't
@@ -44,11 +48,12 @@ pub(crate) use escape_objects::{
     check_object_literal_escapes_in_expr, check_object_literal_escapes_in_stmts,
     collect_non_escaping_object_literals, find_object_literal_candidates,
 };
+pub(crate) use hir_facts::collect_hir_facts;
 pub(crate) use i32_locals::{
     collect_integer_let_ids, collect_localset_ids_in_expr_filtered, collect_localset_ids_in_stmts,
     collect_localset_ids_in_stmts_filtered, collect_non_int_localset_ids_in_stmts,
-    collect_strictly_i32_bounded_locals, is_bitwise_expr, is_flat_const_indexget,
-    is_strictly_i32_bounded_expr, is_ushr_zero, walk_writes_for_strict,
+    collect_strictly_i32_bounded_locals, collect_unsigned_i32_locals, is_bitwise_expr,
+    is_flat_const_indexget, is_strictly_i32_bounded_expr, is_ushr_zero, walk_writes_for_strict,
     walk_writes_in_expr_for_strict,
 };
 pub(crate) use i64_emit::{i64_body, i64_cond, i64_val};
