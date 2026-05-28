@@ -144,6 +144,17 @@ pub unsafe extern "C" fn js_native_module_property_by_name(
         let submodule = "stream/promises";
         return js_create_native_module_namespace(submodule.as_ptr(), submodule.len());
     }
+    // #2133: same shape for `node:fs.promises`. Route to the populated
+    // `fs_promises` singleton so destructured exports + FileHandle methods
+    // dispatch correctly.
+    if module_name == "fs" && property_name == "promises" {
+        return unsafe {
+            crate::node_submodules::js_node_submodule_namespace(
+                b"fs_promises".as_ptr(),
+                "fs_promises".len() as u32,
+            )
+        };
+    }
 
     if let Some(val) = get_native_module_constant(module_name, property_name, 0.0) {
         return val;
@@ -1602,6 +1613,14 @@ pub(crate) unsafe fn get_native_module_constant(
         },
         "fs" => match property {
             "constants" => Some(create_sub_namespace("fs.constants")),
+            // #2133: `fs.promises` — populated `fs_promises` singleton so
+            // `const { open } = fs.promises` (and FileHandle dispatch) work.
+            "promises" => Some(unsafe {
+                crate::node_submodules::js_node_submodule_namespace(
+                    b"fs_promises".as_ptr(),
+                    "fs_promises".len() as u32,
+                )
+            }),
             _ => fs_const(property),
         },
         "fs.constants" => fs_const(property),
