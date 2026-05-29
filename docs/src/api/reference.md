@@ -2014,6 +2014,7 @@ Total: 1521 entries across 84 modules.
 - `inspect` — module
 - `isDeepStrictEqual` — module
 - `parseArgs` — module
+- `parseEnv` — module
 - `promisify` — module
 - `stripVTControlCharacters` — module
 

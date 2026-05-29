@@ -2153,6 +2153,8 @@ declare module "util" {
   /** stdlib */
   export function parseArgs(...args: any[]): any;
   /** stdlib */
+  export function parseEnv(...args: any[]): any;
+  /** stdlib */
   export function promisify(...args: any[]): any;
   /** stdlib */
   export function stripVTControlCharacters(...args: any[]): any;
