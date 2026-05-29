@@ -131,6 +131,7 @@ Total: 1498 entries across 82 modules.
 - `notEqual` — module
 - `notStrictEqual` — module
 - `ok` — module
+- `partialDeepStrictEqual` — module
 - `rejects` — module
 - `strict` — module
 - `strictEqual` — module
@@ -163,6 +164,7 @@ Total: 1498 entries across 82 modules.
 - `notEqual` — module
 - `notStrictEqual` — module
 - `ok` — module
+- `partialDeepStrictEqual` — module
 - `rejects` — module
 - `strictEqual` — module
 - `throws` — module

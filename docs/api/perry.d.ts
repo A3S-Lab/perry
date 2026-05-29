@@ -58,6 +58,8 @@ declare module "assert" {
   /** stdlib */
   export function ok(...args: any[]): any;
   /** stdlib */
+  export function partialDeepStrictEqual(...args: any[]): any;
+  /** stdlib */
   export function rejects(...args: any[]): any;
   /** stdlib */
   export function strict(...args: any[]): any;
@@ -100,6 +102,8 @@ declare module "assert/strict" {
   export function notStrictEqual(...args: any[]): any;
   /** stdlib */
   export function ok(...args: any[]): any;
+  /** stdlib */
+  export function partialDeepStrictEqual(...args: any[]): any;
   /** stdlib */
   export function rejects(...args: any[]): any;
   /** stdlib */
