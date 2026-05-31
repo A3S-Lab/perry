@@ -10,8 +10,6 @@ use super::handle::*;
 type EventEmitterOn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 
 /// Dispatch a method call on a handle-based object.
-/// Called from perry-runtime's js_native_call_method when it detects a handle
-/// (pointer value < 0x100000, indicating an integer handle, not a real heap pointer).
 #[no_mangle]
 pub unsafe extern "C" fn js_handle_method_dispatch(
     handle: i64,
@@ -1047,10 +1045,6 @@ unsafe fn dispatch_external_net_socket(handle: i64, method: &str, args: &[f64]) 
     fn unbox_to_i64(v: f64) -> i64 {
         (v.to_bits() & 0x0000_FFFF_FFFF_FFFF) as i64
     }
-    // Pack a raw i64 handle back as a NaN-boxed POINTER_TAG f64 — the
-    // shape every chainable Socket method returns so subsequent
-    // `.on(...)` / `.write(...)` calls dispatch through the same
-    // small-handle range check at the top of `js_native_call_method`.
     fn nanbox_handle(h: i64) -> f64 {
         f64::from_bits(0x7FFD_0000_0000_0000u64 | (h as u64 & 0x0000_FFFF_FFFF_FFFF))
     }
@@ -1194,7 +1188,6 @@ unsafe fn dispatch_external_net_socket(handle: i64, method: &str, args: &[f64]) 
 }
 
 /// Dispatch a property access on a handle-based object.
-/// Called from perry-runtime's js_dynamic_object_get_property when it detects a handle.
 #[no_mangle]
 pub unsafe extern "C" fn js_handle_property_dispatch(
     handle: i64,
@@ -1232,6 +1225,10 @@ pub unsafe extern "C" fn js_handle_property_dispatch(
         && crate::streams::js_stream_handle_is_registered(handle as usize)
     {
         return crate::streams::dispatch_stream_property(handle as f64, property_name);
+    }
+
+    if let Some(value) = super::net_socket_bridge::bind_net_socket_property(handle, property_name) {
+        return value;
     }
 
     // zlib Transform streams: `typeof createGzip().write` must read
@@ -2017,6 +2014,7 @@ pub unsafe extern "C" fn js_stdlib_init_dispatch() {
     js_register_event_emitter_handle_probe(event_emitter_probe);
     #[cfg(feature = "bundled-events")]
     js_register_event_emitter_on(crate::events::js_event_emitter_on);
+    super::net_socket_bridge::register_net_socket_handle_probe();
     // #1577: route captured-then-called `crypto.*` methods (which reach the
     // runtime's native-module dispatch) back to the stdlib crypto impls.
     #[cfg(feature = "crypto")]

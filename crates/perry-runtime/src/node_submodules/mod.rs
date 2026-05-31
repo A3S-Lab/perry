@@ -1024,6 +1024,12 @@ fn ensure_namespace_singleton(submod: &'static SubmoduleSpec) -> *mut ObjectHead
             crate::object::js_object_set_field_by_name(obj, name_header, value);
         }
     }
+    if submod.key == "timers" {
+        let value = crate::object::timers_promises_parent_namespace();
+        let name = b"promises";
+        let name_header = js_string_from_bytes(name.as_ptr(), name.len() as u32);
+        crate::object::js_object_set_field_by_name(obj, name_header, value);
+    }
     if submod.key == "trace_events" {
         let default_obj = js_object_alloc(0, submod.exports.len() as u32);
         for spec in submod.exports {
@@ -1222,6 +1228,9 @@ pub unsafe extern "C" fn js_node_submodule_export_as_function(
             return value;
         }
     }
+    if submod.key == "timers" && name == "promises" {
+        return crate::object::timers_promises_parent_namespace();
+    }
     if let Some(value) = special_export_value(submod.key, name) {
         return value;
     }
@@ -1296,6 +1305,9 @@ pub unsafe extern "C" fn js_node_submodule_namespace_member(
         if let Some(value) = submodule_default_object_value(submod) {
             return value;
         }
+    }
+    if submod.key == "timers" && name == "promises" {
+        return crate::object::timers_promises_parent_namespace();
     }
     if let Some(value) = special_export_value(submod.key, name) {
         return value;

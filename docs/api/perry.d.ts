@@ -1,6 +1,6 @@
 // Auto-generated from Perry's API manifest (#465). Do not edit by hand.
 // Source: perry-api-manifest::API_MANIFEST
-// Coverage: 2409 entries across 104 modules
+// Coverage: 2464 entries across 106 modules
 
 type PerryU32 = number & { readonly __perryU32?: never };
 type PerryU64 = number & { readonly __perryU64?: never };
@@ -1470,6 +1470,8 @@ declare module "fs" {
   /** stdlib */
   export function open(...args: any[]): any;
   /** stdlib */
+  export function openAsBlob(...args: any[]): any;
+  /** stdlib */
   export function openSync(...args: any[]): any;
   /** stdlib */
   export function opendir(...args: any[]): any;
@@ -1867,9 +1869,13 @@ declare module "net" {
   /** stdlib */
   export class Socket { [key: string]: any; }
   /** stdlib */
+  export class Stream { [key: string]: any; }
+  /** stdlib */
   export function Server(p0: any, p1: any): any;
   /** stdlib */
   export function Socket(...args: any[]): any;
+  /** stdlib */
+  export function Stream(...args: any[]): any;
   /** stdlib */
   export function _createServerHandle(p0: any, p1: any, p2: any, p3: any, p4: any): any;
   /** stdlib */
@@ -2958,7 +2964,23 @@ declare module "slugify" {
 
 declare module "sqlite" {
   /** stdlib */
-  export function DatabaseSync(p0: string): any;
+  export class DatabaseSync { [key: string]: any; }
+  /** stdlib */
+  export class SQLTagStore { [key: string]: any; }
+  /** stdlib */
+  export class Session { [key: string]: any; }
+  /** stdlib */
+  export class StatementSync { [key: string]: any; }
+  /** stdlib */
+  export const constants: any;
+  /** stdlib */
+  export function DatabaseSync(...args: any[]): any;
+  /** stdlib */
+  export function Session(...args: any[]): any;
+  /** stdlib */
+  export function StatementSync(...args: any[]): any;
+  /** stdlib */
+  export function backup(...args: any[]): any;
 }
 
 declare module "stream" {
@@ -3214,6 +3236,34 @@ declare module "test/reporters" {
   export function spec(...args: any[]): any;
   /** stdlib */
   export function tap(...args: any[]): any;
+}
+
+declare module "timers" {
+  /** stdlib */
+  export const promises: any;
+  /** stdlib */
+  export function clearImmediate(...args: any[]): any;
+  /** stdlib */
+  export function clearInterval(...args: any[]): any;
+  /** stdlib */
+  export function clearTimeout(...args: any[]): any;
+  /** stdlib */
+  export function setImmediate(...args: any[]): any;
+  /** stdlib */
+  export function setInterval(...args: any[]): any;
+  /** stdlib */
+  export function setTimeout(...args: any[]): any;
+}
+
+declare module "timers/promises" {
+  /** stdlib */
+  export const scheduler: any;
+  /** stdlib */
+  export function setImmediate(...args: any[]): any;
+  /** stdlib */
+  export function setInterval(...args: any[]): any;
+  /** stdlib */
+  export function setTimeout(...args: any[]): any;
 }
 
 declare module "tls" {
@@ -3649,6 +3699,8 @@ declare module "zlib" {
   export class ZstdCompress { [key: string]: any; }
   /** stdlib */
   export class ZstdDecompress { [key: string]: any; }
+  /** stdlib */
+  export const codes: any;
   /** stdlib */
   export const constants: any;
   /** stdlib */
