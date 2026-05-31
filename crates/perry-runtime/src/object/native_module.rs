@@ -1343,8 +1343,13 @@ pub(crate) fn native_module_enumerable_keys(module_name: &str) -> Option<&'stati
         "constants" => Some(deprecated_constants_namespace_keys()),
         "constants.default" => Some(deprecated_constants_keys()),
 =======
+<<<<<<< HEAD
+        "constants" => Some(deprecated_constants_namespace_keys()),
+        "constants.default" => Some(deprecated_constants_keys()),
+=======
         "constants" => Some(deprecated_constants_keys()),
         "buffer" => Some(BUFFER_NAMESPACE_KEYS),
+>>>>>>> origin/main
 >>>>>>> origin/main
         "querystring" => Some(QUERYSTRING_NAMESPACE_KEYS),
         "querystring.default" => Some(QUERYSTRING_DEFAULT_KEYS),
@@ -1446,7 +1451,11 @@ fn cjs_default_export_value(module_name: &str) -> Option<f64> {
 <<<<<<< HEAD
         "async_hooks" | "constants" | "os" | "path" | "querystring" | "url" | "util" => {
 =======
+<<<<<<< HEAD
+        "async_hooks" | "constants" | "os" | "path" | "querystring" | "url" | "util" => {
+=======
         "async_hooks" | "os" | "path" | "punycode" | "querystring" | "url" | "util" => {
+>>>>>>> origin/main
 >>>>>>> origin/main
             create_cjs_default_namespace(module_name)
         }
@@ -4577,6 +4586,9 @@ pub(crate) unsafe fn get_native_module_constant(
             _ => None,
         },
 <<<<<<< HEAD
+=======
+<<<<<<< HEAD
+>>>>>>> origin/main
         "constants" => match property {
             "default" if !is_cjs_default_object => cjs_default_export_value("constants"),
             _ => fs_const(property)
@@ -4594,6 +4606,8 @@ pub(crate) unsafe fn get_native_module_constant(
                     }
                 }),
         },
+<<<<<<< HEAD
+=======
 =======
         "constants" => fs_const(property)
             .or_else(|| fs_const_tail(property))
@@ -4616,6 +4630,7 @@ pub(crate) unsafe fn get_native_module_constant(
             _ => None,
         },
         "sqlite.constants" => sqlite_const(property),
+>>>>>>> origin/main
 >>>>>>> origin/main
         "path" => match property {
             "default" if !is_cjs_default_object => cjs_default_export_value("path"),
