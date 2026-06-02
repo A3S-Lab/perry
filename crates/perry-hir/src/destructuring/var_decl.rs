@@ -1492,6 +1492,9 @@ pub(crate) fn lower_var_decl_with_destructuring(
                 None
             };
 
+            if let Some(init_ast) = decl.init.as_ref() {
+                result.extend(predeclare_implicit_assignment_targets(ctx, init_ast));
+            }
             let init = decl.init.as_ref().map(|e| lower_expr(ctx, e)).transpose()?;
             if matches!(ty, Type::Any) {
                 match &init {
@@ -1535,6 +1538,7 @@ pub(crate) fn lower_var_decl_with_destructuring(
                 && ctx.inside_block_scope == 0
                 && ctx.pre_registered_module_vars.remove(&name)
             {
+                ctx.pre_registered_module_var_decls.remove(&name);
                 // Reuse pre-registered LocalId from module-level forward-declaration pass.
                 // #1758: gated on MODULE scope — a nested local of the same name
                 // (`function helper() { const zipWith = ... }` where the module also
@@ -1841,6 +1845,9 @@ pub(crate) fn lower_var_decl_with_destructuring(
             // For other patterns, fall back to existing behavior
             let name = get_binding_name(&decl.name)?;
             let ty = extract_binding_type(&decl.name);
+            if let Some(init_ast) = decl.init.as_ref() {
+                result.extend(predeclare_implicit_assignment_targets(ctx, init_ast));
+            }
             let init = decl.init.as_ref().map(|e| lower_expr(ctx, e)).transpose()?;
             // #321: a generator function EXPRESSION bound to a name (`const g =
             // function*(){}`) — register the name so `for (x of g())` / `[...g()]`
@@ -1863,6 +1870,7 @@ pub(crate) fn lower_var_decl_with_destructuring(
                 && ctx.inside_block_scope == 0
                 && ctx.pre_registered_module_vars.remove(&name)
             {
+                ctx.pre_registered_module_var_decls.remove(&name);
                 // #1758: module-scope only — see the sibling guard above.
                 let id = ctx.lookup_local(&name).unwrap();
                 if let Some((_, _, existing_ty)) =
