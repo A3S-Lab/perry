@@ -2300,6 +2300,30 @@ pub extern "C" fn js_object_get_field_by_name(
                     if val.to_bits() != crate::value::TAG_UNDEFINED {
                         return JSValue::from_bits(val.to_bits());
                     }
+                    // #3664: `g.constructor` for a generator/async-generator
+                    // function resolves through its [[Prototype]] (`%Generator%`)
+                    // to `%GeneratorFunction%` / `%AsyncGeneratorFunction%`.
+                    // Other functions have no `constructor` own-prop in Perry's
+                    // model (they fall through to `undefined`, as before).
+                    if name_str == "constructor" {
+                        if let Some(ctor) =
+                            crate::object::generator_function_constructor_of(obj as usize)
+                        {
+                            return JSValue::from_bits(ctor.to_bits());
+                        }
+                    }
+                    // #3664: `g.prototype` for a generator/async-generator
+                    // function is a lazily-created object whose [[Prototype]] is
+                    // `%Generator.prototype%`. Non-generator functions fall
+                    // through (unchanged). The dynamic-prop check above already
+                    // returned any cached/user-assigned `prototype`.
+                    if name_str == "prototype" {
+                        if let Some(proto) =
+                            crate::object::generator_function_prototype_of(obj as usize)
+                        {
+                            return JSValue::from_bits(proto.to_bits());
+                        }
+                    }
                     // #2059: `fn.name` — every function carries a built-in own
                     // `name` data property. Resolve the codegen-registered name
                     // (keyed by the wrapper func_ptr, the same registry the
