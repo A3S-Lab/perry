@@ -2799,6 +2799,11 @@ pub extern "C" fn js_object_get_field_by_name(
                 return JSValue::undefined();
             }
         }
+        if super::is_arguments_object(obj) {
+            if let Some(value) = super::arguments_object_get_field(obj, key) {
+                return value;
+            }
+        }
 
         // #1387: `PerformanceEntry#toJSON` is a synthesized (non-enumerable)
         // method — entry objects are plain shaped objects with no stored

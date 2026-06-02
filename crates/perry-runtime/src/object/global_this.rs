@@ -529,6 +529,24 @@ pub(super) fn global_this_rest_array_values(rest: f64) -> Vec<f64> {
         .collect()
 }
 
+extern "C" fn function_prototype_call_thunk(
+    _closure: *const crate::closure::ClosureHeader,
+    this_arg: f64,
+    rest: f64,
+) -> f64 {
+    let target = f64::from_bits(IMPLICIT_THIS.with(|c| c.get()));
+    let args = global_this_rest_array_values(rest);
+    let (args_ptr, args_len) = if args.is_empty() {
+        (std::ptr::null::<f64>(), 0)
+    } else {
+        (args.as_ptr(), args.len())
+    };
+    let prev_this = IMPLICIT_THIS.with(|c| c.replace(this_arg.to_bits()));
+    let result = unsafe { crate::closure::js_native_call_value(target, args_ptr, args_len) };
+    IMPLICIT_THIS.with(|c| c.set(prev_this));
+    result
+}
+
 extern "C" fn global_this_set_timeout_thunk(
     _closure: *const crate::closure::ClosureHeader,
     callback: f64,
@@ -683,6 +701,14 @@ extern "C" fn object_prototype_has_own_property_thunk(
     }
 }
 
+extern "C" fn object_prototype_property_is_enumerable_thunk(
+    _closure: *const crate::closure::ClosureHeader,
+    key: f64,
+) -> f64 {
+    let this_value = f64::from_bits(IMPLICIT_THIS.with(|c| c.get()));
+    super::js_object_property_is_enumerable(this_value, key)
+}
+
 extern "C" fn error_prototype_to_string_thunk(
     _closure: *const crate::closure::ClosureHeader,
 ) -> f64 {
@@ -777,21 +803,6 @@ unsafe fn function_apply_args(args_array: f64) -> Vec<f64> {
     out
 }
 
-extern "C" fn function_prototype_call_thunk(
-    _closure: *const crate::closure::ClosureHeader,
-    this_arg: f64,
-    rest_array: f64,
-) -> f64 {
-    unsafe {
-        let target = f64::from_bits(IMPLICIT_THIS.with(|c| c.get()));
-        let args = function_apply_args(rest_array);
-        let prev_this = IMPLICIT_THIS.with(|c| c.replace(this_arg.to_bits()));
-        let result = crate::closure::js_native_call_value(target, args.as_ptr(), args.len());
-        IMPLICIT_THIS.with(|c| c.set(prev_this));
-        result
-    }
-}
-
 extern "C" fn function_prototype_apply_thunk(
     _closure: *const crate::closure::ClosureHeader,
     this_arg: f64,
@@ -877,7 +888,15 @@ extern "C" fn array_prototype_slice_thunk(
     if arr_ptr.is_null() {
         return f64::from_bits(crate::value::TAG_UNDEFINED);
     }
-    let result = crate::array::js_array_slice_values(arr_ptr, start_val, end_val);
+    let result = unsafe {
+        if let Some(arr) =
+            crate::object::arguments_object_to_array(arr_ptr as *const crate::object::ObjectHeader)
+        {
+            crate::array::js_array_slice_values(arr, start_val, end_val)
+        } else {
+            crate::array::js_array_slice_values(arr_ptr, start_val, end_val)
+        }
+    };
     f64::from_bits(crate::value::js_nanbox_pointer(result as i64).to_bits())
 }
 
@@ -2738,6 +2757,18 @@ fn populate_builtin_prototype_methods(builtin_name: &str, proto_obj: *mut Object
             );
             install_proto_method(
                 proto_obj,
+                "hasOwnProperty",
+                object_prototype_has_own_property_thunk as *const u8,
+                1,
+            );
+            install_proto_method(
+                proto_obj,
+                "propertyIsEnumerable",
+                object_prototype_property_is_enumerable_thunk as *const u8,
+                1,
+            );
+            install_proto_method(
+                proto_obj,
                 "toLocaleString",
                 object_prototype_to_locale_string_thunk as *const u8,
                 0,
@@ -2754,7 +2785,12 @@ fn populate_builtin_prototype_methods(builtin_name: &str, proto_obj: *mut Object
                 object_prototype_has_own_property_thunk as *const u8,
                 1,
             );
-            install_noop_proto_methods(proto_obj, &[("propertyIsEnumerable", 1)]);
+            install_proto_method(
+                proto_obj,
+                "propertyIsEnumerable",
+                object_prototype_property_is_enumerable_thunk as *const u8,
+                1,
+            );
         }
         "Function" => {
             install_proto_method(
