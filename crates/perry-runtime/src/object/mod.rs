@@ -1665,6 +1665,10 @@ pub unsafe extern "C" fn js_object_to_string(value: f64) -> f64 {
     } else {
         0
     };
+    if raw_addr >= 0x1000 && crate::date::is_date_cell_addr(raw_addr) {
+        let str_ptr = crate::string::js_string_from_bytes(b"[object Date]".as_ptr(), 13);
+        return f64::from_bits(STRING_TAG | (str_ptr as u64 & POINTER_MASK));
+    }
     if raw_addr >= 0x1000 && crate::buffer::is_registered_buffer(raw_addr) {
         let tag = if crate::buffer::crypto_key_meta(raw_addr).is_some() {
             "CryptoKey"
