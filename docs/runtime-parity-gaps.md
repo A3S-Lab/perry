@@ -683,7 +683,7 @@ Runtime-created fs SystemError metadata is covered by parity fixtures: sync, cal
 
 ### node:http
 
-**Gap APIs: 89** · Already covered: 52
+**Gap APIs: 88** · Already covered: 53
 
 #### Missing from Perry
 
@@ -725,7 +725,6 @@ Runtime-created fs SystemError metadata is covered by parity fixtures: sync, cal
 - `request.socket`
 - `request.writableEnded`
 - `request.writableFinished`
-- `server[Symbol.asyncDispose]()`
 - `server.headersTimeout`
 - `server.keepAliveTimeout`
 - `server.listening`
