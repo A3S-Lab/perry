@@ -4472,6 +4472,7 @@ pub static API_MANIFEST: &[ApiEntry] = &[
     // Experimental VM module rows are gated at runtime and are not public
     // no-flag named exports, but the codegen dispatch table still needs
     // manifest counterparts for the lifecycle/cached-data methods.
+    internal_method("vm", "Module", false, None),
     internal_method("vm", "SourceTextModule", false, None),
     internal_method("vm", "SyntheticModule", false, None),
     internal_method("vm", "status", true, None),
