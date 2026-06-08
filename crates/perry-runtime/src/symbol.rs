@@ -1981,6 +1981,13 @@ fn throw_iterator_result_not_object() -> ! {
     crate::exception::js_throw(crate::value::js_nanbox_pointer(err as i64));
 }
 
+fn throw_value_not_iterable() -> ! {
+    let msg = b"is not iterable";
+    let msg_str = crate::string::js_string_from_bytes(msg.as_ptr(), msg.len() as u32);
+    let err = crate::error::js_typeerror_new(msg_str);
+    crate::exception::js_throw(crate::value::js_nanbox_pointer(err as i64));
+}
+
 /// #1831: resolve the iterator for a `yield*` operand.
 ///
 /// `yield* X` must drive `X[Symbol.iterator]()` — for a generator **call** the
@@ -2031,6 +2038,17 @@ pub extern "C" fn js_get_iterator(val_f64: f64) -> f64 {
             if crate::array::is_builtin_iterator_class_id(raw) {
                 return val_f64;
             }
+        }
+    }
+    // A primitive number / boolean / null / undefined is not iterable. Per
+    // GetIterator this is a TypeError; bail before the `[Symbol.iterator]`
+    // lookup, which would otherwise dereference a raw (non-NaN-boxed) double as
+    // an object pointer and crash (`for (x of 37) {}`). Strings ARE iterable, so
+    // they fall through to the symbol lookup below.
+    {
+        let jsv = crate::value::JSValue::from_bits(val_f64.to_bits());
+        if !jsv.is_pointer() && !jsv.is_any_string() {
+            throw_value_not_iterable();
         }
     }
     let iter_wk = well_known_symbol("iterator");
