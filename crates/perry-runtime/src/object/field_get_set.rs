@@ -2676,6 +2676,25 @@ pub extern "C" fn js_object_get_field_by_name(
             return JSValue::undefined();
         }
     }
+    // A primitive string receiver inherits `.constructor` from String.prototype:
+    // `"x".constructor === String` (test262 language/types/string/S8.4_A9/A12).
+    // The common string members (`.length`, indices, methods) are served by the
+    // codegen fast paths and never reach this generic slow path, so only the
+    // inherited `constructor` read needs routing here; resolve it to the same
+    // global `String` value bare-`String` yields so identity holds.
+    {
+        let bits = obj as u64;
+        if !key.is_null() && crate::value::JSValue::from_bits(bits).is_any_string() {
+            unsafe {
+                let key_ptr = (key as *const u8).add(std::mem::size_of::<crate::StringHeader>());
+                let key_len = (*key).byte_len as usize;
+                if std::slice::from_raw_parts(key_ptr, key_len) == b"constructor" {
+                    let ctor = super::js_get_global_this_builtin_value(b"String".as_ptr(), 6);
+                    return JSValue::from_bits(ctor.to_bits());
+                }
+            }
+        }
+    }
     // Native module registry handles can arrive here either as raw small
     // integers or as POINTER_TAG-boxed small integers. Route them before any
     // GC-header probes such as Date/Promise checks.
@@ -3997,6 +4016,14 @@ pub extern "C" fn js_object_get_field_by_name(
                 if key_bytes == b"length" {
                     let s = obj as *const crate::StringHeader;
                     return JSValue::number((*s).utf16_len as f64);
+                }
+                // A primitive string inherits `.constructor` from String.prototype:
+                // `"x".constructor === String` (test262 language/types/string/
+                // S8.4_A9/A12). Resolve to the same global `String` value bare-
+                // `String` yields so identity holds — mirrors the Array branch above.
+                if key_bytes == b"constructor" {
+                    let v = js_get_global_this_builtin_value(b"String".as_ptr(), 6);
+                    return JSValue::from_bits(v.to_bits());
                 }
                 if let Some((kind, asym_type)) = crate::buffer::asymmetric_key_meta(obj as usize) {
                     if key_bytes == b"type" {
