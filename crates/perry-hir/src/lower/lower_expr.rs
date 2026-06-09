@@ -1258,16 +1258,26 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                     }
                 }
             }
-            if unary.op == ast::UnaryOp::Delete {
-                if let ast::Expr::Member(member) = unary.arg.as_ref() {
+            // Static `delete` folding only applies when no `with` environment
+            // is active: inside `with(o) { delete x }`, `x` may resolve to a
+            // configurable property of `o` and must be deleted at runtime
+            // (Test262 11.4.1-4.a-6), so we leave those to the dynamic path.
+            if unary.op == ast::UnaryOp::Delete && ctx.with_env_stack.is_empty() {
+                // Peel parens: `delete (x)` deletes the inner reference.
+                let mut bare = unary.arg.as_ref();
+                while let ast::Expr::Paren(p) = bare {
+                    bare = p.expr.as_ref();
+                }
+                if let ast::Expr::Member(member) = bare {
                     if let (ast::Expr::Ident(obj), ast::MemberProp::Ident(prop)) =
                         (member.obj.as_ref(), &member.prop)
                     {
                         let obj_name = obj.sym.as_ref();
                         let prop_name = prop.sym.as_ref();
-                        if obj_name == "Number"
-                            && ctx.lookup_local(obj_name).is_none()
-                            && ctx.lookup_func(obj_name).is_none()
+                        let is_global = ctx.lookup_local(obj_name).is_none()
+                            && ctx.lookup_func(obj_name).is_none();
+                        if is_global
+                            && obj_name == "Number"
                             && matches!(
                                 prop_name,
                                 "NaN"
@@ -1282,6 +1292,75 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                         {
                             return Ok(Expr::Bool(false));
                         }
+                        // `Math`'s numeric constants are non-configurable, so
+                        // `delete Math.PI` is `false` (Math's *methods* stay
+                        // configurable, hence `delete Math.abs` is `true` and
+                        // is left to the generic path). Test262 S8.12.7_A1.
+                        if is_global
+                            && obj_name == "Math"
+                            && matches!(
+                                prop_name,
+                                "E" | "LN10"
+                                    | "LN2"
+                                    | "LOG10E"
+                                    | "LOG2E"
+                                    | "PI"
+                                    | "SQRT1_2"
+                                    | "SQRT2"
+                            )
+                        {
+                            return Ok(Expr::Bool(false));
+                        }
+                    }
+                }
+                // `delete <BindingIdentifier>` — deleting a reference to a
+                // resolvable binding (var / let / const / function / param /
+                // class / import) is non-configurable, so it evaluates to
+                // `false` without removing anything (spec 13.5.1.2). The bare
+                // globals `undefined` / `NaN` / `Infinity` are likewise
+                // non-configurable global properties → `false`. Any other
+                // unresolvable bare identifier (an implicit global from
+                // `x = 1`, or a configurable global builtin) is `true` in
+                // sloppy mode — lowering it as a literal avoids the spurious
+                // ReferenceError the operand-evaluation path would throw.
+                if let ast::Expr::Ident(id) = bare {
+                    let name = id.sym.as_ref();
+                    // Bare globals that are non-configurable → false.
+                    if name == "arguments" || matches!(name, "undefined" | "NaN" | "Infinity") {
+                        return Ok(Expr::Bool(false));
+                    }
+                    if let Some(lid) = ctx.lookup_local(name) {
+                        // `x = 1` with no declaration creates a *configurable*
+                        // global property (`delete x` → true); a real
+                        // var/let/const/param binding is non-configurable
+                        // (→ false). Distinguish via the implicit-global set.
+                        if ctx.sloppy_implicit_global_ids.contains(&lid) {
+                            return Ok(Expr::Bool(true));
+                        }
+                        // At module top level a bare `x = 1` becomes an ordinary
+                        // module-level local indistinguishable from `var x = 1`
+                        // (the implicit-global path isn't taken there), so we
+                        // can't statically tell a non-configurable `var`/`let`
+                        // binding from a configurable implicit global — defer to
+                        // the runtime delete (Test262 S11.4.1_A3.2_T1). Inside a
+                        // function, an implicit global *does* go through the
+                        // sloppy-global set, so a plain local here is a genuine
+                        // binding → false.
+                        if !ctx.module_level_ids.contains(&lid) {
+                            return Ok(Expr::Bool(false));
+                        }
+                        // module-level local: fall through to the dynamic path.
+                    } else if ctx.lookup_func(name).is_some()
+                        || ctx.lookup_class(name).is_some()
+                        || ctx.lookup_imported_func(name).is_some()
+                    {
+                        return Ok(Expr::Bool(false));
+                    } else {
+                        // Truly unresolvable bare identifier (no binding, no
+                        // known global) → `true` in sloppy mode; lowering it as
+                        // a literal avoids a spurious ReferenceError from the
+                        // operand-evaluation path.
+                        return Ok(Expr::Bool(true));
                     }
                 }
             }
