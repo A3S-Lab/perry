@@ -442,14 +442,14 @@ impl LoweringContext {
             .map(|(_, f)| f.as_slice())
     }
 
-    /// Issue #665: register the getter+setter property names for a class.
+    /// Issue #665: register getter and setter property names for a class.
     /// Mirrors `register_class_field_names`; consumed by the ctor-body
     /// field-detection pass to skip names that are accessors. Stored as the
     /// own+inherited union so a child lookup sees the full chain in one hop.
     pub(crate) fn register_class_accessor_names(
         &mut self,
         class_name: String,
-        accessor_names: Vec<String>,
+        accessor_names: crate::ClassAccessorNames,
     ) {
         if let Some(entry) = self
             .class_accessor_names
@@ -462,15 +462,18 @@ impl LoweringContext {
         }
     }
 
-    /// Look up the accessor (getter+setter) property names registered for a
+    /// Look up the accessor property names registered for a
     /// class. The stored list includes inherited accessors (mirroring how
     /// `class_field_names` stores the own+inherited union), so callers do
     /// not need to walk the parent chain themselves.
-    pub(crate) fn lookup_class_accessor_names(&self, class_name: &str) -> Option<&[String]> {
+    pub(crate) fn lookup_class_accessor_names(
+        &self,
+        class_name: &str,
+    ) -> Option<&crate::ClassAccessorNames> {
         self.class_accessor_names
             .iter()
             .find(|(n, _)| n == class_name)
-            .map(|(_, f)| f.as_slice())
+            .map(|(_, f)| f)
     }
 
     /// Issue #302: register declared field types for a class (parallel to
@@ -515,6 +518,21 @@ impl LoweringContext {
             if !self.class_field_names.iter().any(|(n, _)| n == name) {
                 let names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
                 self.class_field_names.push((name.clone(), names));
+            }
+        }
+    }
+
+    /// Pre-seed class accessor names with cross-module class info collected
+    /// from already-lowered dependencies. This lets constructor-field
+    /// inference avoid creating data slots for inherited imported accessors.
+    pub fn seed_imported_class_accessors(
+        &mut self,
+        seeds: &std::collections::HashMap<String, crate::ClassAccessorNames>,
+    ) {
+        for (name, accessors) in seeds {
+            if !self.class_accessor_names.iter().any(|(n, _)| n == name) {
+                self.class_accessor_names
+                    .push((name.clone(), accessors.clone()));
             }
         }
     }

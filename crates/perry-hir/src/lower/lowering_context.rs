@@ -10,6 +10,7 @@ use perry_types::{FuncId, GlobalId, LocalId, Type, TypeParam};
 use std::collections::{HashMap, HashSet};
 
 use crate::ir::*;
+use crate::ClassAccessorNames;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WithEnvFrame {
@@ -107,7 +108,7 @@ pub struct LoweringContext {
     /// avoiding the creation of shadow fields that cause later index shift bugs after
     /// inheritance resolution in codegen.
     pub(crate) class_field_names: Vec<(String, Vec<String>)>,
-    /// Issue #665 (sixth pass): per-class set of getter+setter property names.
+    /// Issue #665 (sixth pass): per-class set of getter and setter property names.
     /// Used by the "infer fields from ctor body `this.x = ...`" pass to avoid
     /// mis-categorising a setter assignment as an own data field — the
     /// rate-limiter-flexible `set points(v)` / `this.points = opts.points`
@@ -117,7 +118,7 @@ pub struct LoweringContext {
     /// Populated alongside `register_class_field_names`; looked up via
     /// `lookup_class_accessor_names` and walked across the parent chain when
     /// processing a subclass's ctor body.
-    pub(crate) class_accessor_names: Vec<(String, Vec<String>)>,
+    pub(crate) class_accessor_names: Vec<(String, ClassAccessorNames)>,
     /// Issue #562: class name → `(module, class)` tuple from
     /// `native_extends`. Populated when lowering each class, consumed by
     /// `destructuring.rs` to register `let x = new SubclassOfStream()`
@@ -611,9 +612,10 @@ pub struct LoweringContext {
     /// `lower_module_full`; consumed by `const_fold_fn`.
     pub(crate) fn_ctor_env: super::fn_ctor_env::FnCtorEnv,
     /// Current recursion depth of `lower_expr` (#5259). Incremented on entry,
-    /// decremented on exit. Once it exceeds `MAX_EXPR_LOWER_DEPTH`, lowering
-    /// bails with a clean "nested too deeply" diagnostic instead of letting a
-    /// pathologically-nested expression chain (bundler/minifier output like
-    /// `1+1+…+1` or `o.a.a.…a`) overflow the native stack and SIGABRT.
+    /// decremented on exit. Once it exceeds either the broad
+    /// `MAX_EXPR_LOWER_DEPTH` ceiling or the lower stack-heavy chain ceiling,
+    /// lowering bails with a clean "nested too deeply" diagnostic instead of
+    /// letting pathologically-nested expressions overflow the native stack and
+    /// SIGABRT.
     pub(crate) expr_lower_depth: u32,
 }
