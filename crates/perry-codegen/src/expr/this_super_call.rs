@@ -771,8 +771,28 @@ pub(crate) fn lower(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
                         }));
                     }
                 }
-                let saved_scope =
-                    bind_inline_constructor_params(ctx, &parent_ctor.params, &lowered_args);
+                // #5437: fill the parent's cap params from its decl-site
+                // capture snapshot. The snapshot is authoritative for EVERY
+                // parent cap param — `bind_inline_constructor_params` consumes
+                // the values the child-forwarding loop appended above only to
+                // keep the user/cap tail-split aligned, then discards them in
+                // favour of `js_class_capture_value`. This matters when the
+                // captured local is out of scope at the super-call site (the
+                // forwarded value would be `undefined`); the snapshot still
+                // holds the correct decl-site capture. `backfill` sets
+                // `caps_absent_from_args=false` because the caps ARE present in
+                // `lowered_args` (this is not the caps-absent member-new path).
+                let parent_capture_fill = ctx
+                    .class_ids
+                    .get(effective_parent_name.as_str())
+                    .copied()
+                    .map(crate::lower_call::CaptureFill::backfill);
+                let saved_scope = bind_inline_constructor_params(
+                    ctx,
+                    &parent_ctor.params,
+                    &lowered_args,
+                    parent_capture_fill,
+                );
 
                 ctx.class_stack.push(effective_parent_name.clone());
                 crate::stmt::lower_stmts(ctx, &parent_ctor.body)?;
