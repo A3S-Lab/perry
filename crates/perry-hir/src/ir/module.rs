@@ -24,6 +24,23 @@ pub struct Module {
     pub globals: Vec<Global>,
     /// Function definitions
     pub functions: Vec<Function>,
+    /// #5579: names + FuncIds of bare top-level `function` declarations, in
+    /// source order. For a *Script* (a non-ESM entry program), these become
+    /// own properties of the global object per GlobalDeclarationInstantiation,
+    /// so `Object.prototype.hasOwnProperty.call(globalThis, name)` is true.
+    /// ESM modules (imports/exports/top-level await) do NOT reflect. Codegen
+    /// consumes this in the entry-module branch to emit the `globalThis[name]
+    /// = <fn>` stores. Only `hir.functions` carries nested closures and
+    /// object-literal methods too, which must NOT be reflected — hence this
+    /// dedicated list populated only at the top-level statement site.
+    pub script_global_functions: Vec<(String, FuncId)>,
+    /// #5579: true iff this module's source references the `globalThis`
+    /// identifier. Codegen reflects `script_global_functions` onto the global
+    /// object only when this holds — otherwise the reflection is unobservable
+    /// (no code reads the global object's function properties) and would only
+    /// add dynamic-property-helper calls to module init for pure programs. Set
+    /// at lowering from the installed module source.
+    pub references_global_this: bool,
     /// Top-level statements to execute
     pub init: Vec<Stmt>,
     /// Exported native module instances: (export_name, module_name, class_name)
@@ -124,6 +141,8 @@ impl Module {
             enums: Vec::new(),
             globals: Vec::new(),
             functions: Vec::new(),
+            script_global_functions: Vec::new(),
+            references_global_this: false,
             init: Vec::new(),
             exported_native_instances: Vec::new(),
             exported_func_return_native_instances: Vec::new(),
