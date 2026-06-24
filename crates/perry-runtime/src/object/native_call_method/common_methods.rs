@@ -440,7 +440,11 @@ pub(super) unsafe fn dispatch_common(
                 if static_target {
                     super::static_this_arm(this_arg);
                 }
-                let result = crate::closure::js_native_call_value(object, rest_ptr, rest_len);
+                // A concise/object-literal method reads `this` from a baked
+                // capture slot, not IMPLICIT_THIS; rebind to the explicit
+                // `.call(thisArg)` receiver (no-op for arrows / plain fns).
+                let call_target = crate::closure::rebind_explicit_this(object, this_arg);
+                let result = crate::closure::js_native_call_value(call_target, rest_ptr, rest_len);
                 if static_target {
                     super::static_this_disarm();
                 }
@@ -555,8 +559,15 @@ pub(super) unsafe fn dispatch_common(
                 if static_target {
                     super::static_this_arm(this_arg);
                 }
-                let result =
-                    crate::closure::js_native_call_value(object, call_args_ptr, call_args_len);
+                // Rebind a concise/object-literal method's baked `this` slot to
+                // the explicit `.apply(thisArg)` receiver (no-op for arrows /
+                // plain fns) — see the matching `call` arm.
+                let apply_target = crate::closure::rebind_explicit_this(object, this_arg);
+                let result = crate::closure::js_native_call_value(
+                    apply_target,
+                    call_args_ptr,
+                    call_args_len,
+                );
                 if static_target {
                     super::static_this_disarm();
                 }

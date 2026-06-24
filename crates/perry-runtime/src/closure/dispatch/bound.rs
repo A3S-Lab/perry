@@ -78,6 +78,10 @@ pub unsafe fn dispatch_bound_function(closure: *const ClosureHeader, args: &[f64
     }
     combined.extend_from_slice(args);
 
+    // A bound concise/object-literal method reads `this` from its baked capture
+    // slot, not IMPLICIT_THIS — rebind it to the bound receiver so the bound
+    // `this` is honored (arrows/non-captures_this targets are returned as-is).
+    let target = rebind_explicit_this(target, bound_this);
     let prev_this = crate::object::js_implicit_this_set(bound_this);
     let (call_ptr, call_len) = if combined.is_empty() {
         (std::ptr::null::<f64>(), 0usize)
@@ -145,6 +149,52 @@ pub(crate) fn coerce_call_this(target: f64, this_arg: f64) -> f64 {
         return this_arg;
     }
     crate::object::js_object_coerce(this_arg)
+}
+
+/// `call`/`apply`/`bind`/`Reflect.apply` supply an EXPLICIT `this`. A concise /
+/// object-literal method (and object-literal accessor / symbol method) is
+/// lowered with `captures_this` and its reserved (last) capture slot baked to
+/// the *defining object* at construction time — so its body reads `this` from
+/// that slot, NOT from `IMPLICIT_THIS`. Setting `IMPLICIT_THIS` therefore can't
+/// redirect such a method to an explicit receiver: the baked slot wins, and the
+/// explicit `this` is silently ignored.
+///
+/// This is exactly the shape schema/validation libraries (zod's `$constructor`)
+/// rely on: `inst[k] = proto[k].bind(inst)` over the prototype's own keys, and
+/// `this.m = this.m.bind(this)` in a base-class constructor. Without rebinding,
+/// every `inst.clone()` / `inst.check()` / `inst.optional()` ran with `this`
+/// pinned to the prototype, dropping the instance — cascading to mis-built
+/// schema values downstream.
+///
+/// Clone the target with its `this` slot rebound to `this_arg` so an explicit
+/// receiver is honored. Returns `target` UNCHANGED for:
+///   - arrow functions (lexical `this` — they must ignore an explicit receiver,
+///     yet still carry `CAPTURES_THIS_FLAG`, so they are excluded explicitly);
+///   - non-`captures_this` functions (they already read `IMPLICIT_THIS`);
+///   - bound functions and non-closure values
+///     (`clone_closure_rebind_this` no-ops on these — it only rewrites a
+///     `CAPTURES_THIS` slot).
+#[inline]
+pub(crate) fn rebind_explicit_this(target: f64, this_arg: f64) -> f64 {
+    let bits = target.to_bits();
+    if bits & 0xFFFF_0000_0000_0000 != 0x7FFD_0000_0000_0000 {
+        return target;
+    }
+    let ptr = (bits & 0x0000_FFFF_FFFF_FFFF) as usize;
+    // Reject the `[0, 0x100000)` native-handle band BEFORE probing the pointer:
+    // Fetch/http/axios/fastify ids (`0x40000+`) are NaN-boxed with POINTER_TAG
+    // but are not heap pointers — `closure_is_arrow` (and the downstream
+    // `clone_closure_rebind_this`) would dereference one and SIGSEGV (#4740).
+    if ptr < 0x100000 {
+        return target;
+    }
+    // Arrows capture lexical `this`; an explicit receiver must not override it.
+    // (They carry CAPTURES_THIS_FLAG, so `clone_closure_rebind_this` alone would
+    // wrongly rewrite their lexical-this slot.)
+    if crate::closure::closure_is_arrow(ptr as *const ClosureHeader) {
+        return target;
+    }
+    f64::from_bits(crate::closure::clone_closure_rebind_this(bits, this_arg))
 }
 
 /// Read a callable's own `name` *property* as a Rust `String`, if present and a
