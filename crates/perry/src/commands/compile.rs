@@ -91,9 +91,10 @@ pub use resolve::find_perry_workspace_root;
 pub(crate) use resolve::validate_native_library_manifest_value;
 use resolve::{
     cached_resolve_import, compute_module_prefix, declaration_sidecar_for_resolved_import,
-    extract_compile_package_dir, has_perry_native_library, is_declaration_file,
-    is_in_compile_package, is_in_perry_native_package, is_js_file, is_recognized_text_asset,
-    parse_native_library_manifest, parse_package_specifier, resolve_import,
+    ergonomic_export_alias, extract_compile_package_dir, has_perry_native_library,
+    is_declaration_file, is_in_compile_package, is_in_perry_native_package, is_js_file,
+    is_recognized_text_asset, parse_native_library_manifest, parse_package_specifier,
+    resolve_import,
 };
 use strip_dedup::{
     dedup_native_lib_for_tier3, dedup_runtime_for_tier3, dedup_stdlib_for_tier3,
@@ -2351,6 +2352,20 @@ pub fn run_with_parse_cache(
             // to generate `perry_fn_<source_prefix>__<name>`.
             let mut import_function_prefixes: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
+            // Issue #5621: ergonomic camelCase binding → snake_case
+            // `js_<pkg>_*` FFI symbol. A `perry.nativeLibrary` package may
+            // expose spec-faithful camelCase exports (`requestAdapter`)
+            // over its manifest symbols (`js_webgpu_request_adapter`). When
+            // a specifier matches a manifest function via the standard
+            // `js_<pkg>_<snake>` ⇒ camelCase derivation (rather than a
+            // byte-for-byte name match), we skip the wrapper registration
+            // below AND record the alias here so the call site
+            // (`lower_call`) rewrites the binding to its manifest symbol —
+            // the `ffi_signatures` lookup then hits and codegen emits the
+            // call against the real FFI symbol instead of the bare alias.
+            let mut import_function_ffi_aliases:
+                std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
             // Issue #678: parallel to `import_function_prefixes`. When the
             // import traverses a re-export rename (`export { default as render
             // } from './render.js'`), the consumer sees `render` but the
@@ -2738,19 +2753,76 @@ pub fn run_with_parse_cache(
                         perry_hir::ImportSpecifier::Namespace { .. } => unreachable!(),
                     };
 
-                    // PerryTS/storekit#1: skip the wrapper-fn registration
-                    // when this specifier names an FFI function declared in
-                    // the source package's `perry.nativeLibrary.functions`
-                    // manifest. See the comment at `native_library_for_import`
-                    // above for the full rationale — the short version is
-                    // that the source `.ts` is ambient and has no Perry
-                    // wrapper for the linker to resolve, so we want the
-                    // FFI-manifest path in `lower_call.rs` to win.
-                    if native_library_for_import
-                        .map(|nl| nl.functions.iter().any(|f| f.name == exported_name))
-                        .unwrap_or(false)
-                    {
-                        continue;
+                    // PerryTS/storekit#1 + #5621: skip the wrapper-fn
+                    // registration when this specifier names an FFI function
+                    // declared in the source package's
+                    // `perry.nativeLibrary.functions` manifest. See the
+                    // comment at `native_library_for_import` above for the
+                    // full rationale — the short version is that the source
+                    // `.ts` is ambient and has no Perry wrapper for the
+                    // linker to resolve, so we want the FFI-manifest path in
+                    // `lower_call.rs` to win.
+                    //
+                    // Two binding conventions route here:
+                    //   1. Exact match — the binding name IS the symbol
+                    //      (`js_storekit_load_products`), the raw ambient
+                    //      export style used by `@perryts/storekit`.
+                    //   2. Ergonomic camelCase (#5621) — the binding
+                    //      (`requestAdapter`) is the `js_<pkg>_<snake>` ⇒
+                    //      camelCase derivation of the symbol
+                    //      (`js_webgpu_request_adapter`). Record the
+                    //      alias so the call site rewrites the binding to
+                    //      its manifest symbol; exact matches need no alias.
+                    //
+                    // The manifest is matched against the *exported* name
+                    // (the name the package surfaces), but the alias is
+                    // keyed by the *local* binding — call sites see the
+                    // local name, so `import { requestAdapter as
+                    // getAdapter }` must record `getAdapter → symbol`.
+                    if let Some(nl) = native_library_for_import {
+                        // Exact match (raw ambient symbol export, e.g.
+                        // `@perryts/storekit`) wins and needs no derivation.
+                        let exact_symbol = nl
+                            .functions
+                            .iter()
+                            .find(|f| f.name == exported_name)
+                            .map(|f| f.name.clone());
+                        // Otherwise collect ALL ergonomic matches so an
+                        // ambiguous manifest (two symbols deriving the same
+                        // camelCase name, e.g. `js_pkg_do_thing` +
+                        // `js_pkg_doThing`) is rejected rather than silently
+                        // bound to whichever happens to come first.
+                        let ergonomic_matches: Vec<String> = if exact_symbol.is_some() {
+                            Vec::new()
+                        } else {
+                            nl.functions
+                                .iter()
+                                .filter(|f| {
+                                    ergonomic_export_alias(&nl.module, &f.name).as_deref()
+                                        == Some(exported_name.as_str())
+                                })
+                                .map(|f| f.name.clone())
+                                .collect()
+                        };
+                        if ergonomic_matches.len() > 1 {
+                            return Err(format!(
+                                "native library `{}` has ambiguous ergonomic exports for \
+                                 `{}`: the manifest symbols {:?} all derive the same \
+                                 camelCase binding. Rename the symbols so each derives a \
+                                 distinct binding, or import one by its raw `js_*` name.",
+                                nl.module, exported_name, ergonomic_matches
+                            ));
+                        }
+                        let matched_symbol =
+                            exact_symbol.or_else(|| ergonomic_matches.into_iter().next());
+                        if let Some(symbol) = matched_symbol {
+                            // No alias needed when the binding already IS
+                            // the symbol (raw exact-match, unaliased).
+                            if symbol != local_name {
+                                import_function_ffi_aliases.insert(local_name.clone(), symbol);
+                            }
+                            continue;
+                        }
                     }
 
                     // Issue #310: when the source module re-exports the
@@ -4113,6 +4185,7 @@ pub fn run_with_parse_cache(
                 is_entry_module: is_entry,
                 non_entry_module_prefixes,
                 import_function_prefixes,
+                import_function_ffi_aliases,
                 import_function_origin_names,
                 import_function_v8_specifiers,
                 import_function_node_submodule,
